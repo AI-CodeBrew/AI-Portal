@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { verifyHubSignature256 } from "@/lib/crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { runSalesAgent, isSalesAgentConfigured } from "@/lib/ai/run-sales-agent";
+import { getRecentChatHistory } from "@/lib/ai/chat-history";
 import {
   getStoreWhatsAppCredentials,
   resolveMetaSecret,
@@ -214,19 +215,7 @@ export async function handleWhatsAppWebhookMessage(
 
           if (isSalesAgentConfigured()) {
             try {
-              const { data: history } = await supabase
-                .from("whatsapp_messages")
-                .select("direction, content")
-                .eq("conversation_id", conversation.id)
-                .order("created_at", { ascending: true })
-                .limit(20);
-
-              const chatHistory = (history ?? []).map((m) => ({
-                role: (m.direction === "in" ? "user" : "assistant") as
-                  | "user"
-                  | "assistant",
-                content: m.content,
-              }));
+              const chatHistory = await getRecentChatHistory(conversation.id);
 
               replyText = await runSalesAgent(
                 {

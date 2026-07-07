@@ -64,8 +64,50 @@ export function resolveShopifySecret(
   try {
     return decrypt(encryptedOrPlain);
   } catch {
-    return encryptedOrPlain;
+    console.error(
+      "Shopify secret decrypt failed — ENCRYPTION_KEY may differ from when secret was saved."
+    );
+    return null;
   }
+}
+
+function getShopifyAccessToken(encryptedToken: string): string {
+  try {
+    return decrypt(encryptedToken);
+  } catch {
+    throw new Error(
+      "Shopify access token could not be decrypted. Reconnect Shopify in Integrations."
+    );
+  }
+}
+
+function parseShopifyGid(gid: string): string {
+  const parts = gid.split("/");
+  return parts[parts.length - 1] ?? gid;
+}
+
+function stripHtml(html: string): string {
+  return html
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export async function shopifyGraphql(
+  shopDomain: string,
+  encryptedToken: string,
+  query: string,
+  variables?: Record<string, unknown>
+): Promise<Response> {
+  const token = getShopifyAccessToken(encryptedToken);
+  return fetch(`https://${shopDomain}/admin/api/${API_VERSION}/graphql.json`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Shopify-Access-Token": token,
+    },
+    body: JSON.stringify({ query, variables }),
+  });
 }
 
 export async function shopifyAdminFetch(
@@ -74,7 +116,7 @@ export async function shopifyAdminFetch(
   path: string,
   options: RequestInit = {}
 ): Promise<Response> {
-  const token = decrypt(encryptedToken);
+  const token = getShopifyAccessToken(encryptedToken);
   const url = `https://${shopDomain}/admin/api/${API_VERSION}${path}`;
 
   return fetch(url, {
@@ -204,17 +246,125 @@ export async function searchProducts(
   encryptedToken: string,
   query: string
 ) {
-  const params = new URLSearchParams({ title: query, limit: "10" });
+  const trimmed = query.trim();
+  if (!trimmed) return [];
+
+  type ProductResult = {
+    id: number;
+    title: string;
+    description: string | null;
+    variants: Array<{
+      id: number;
+      title: string;
+      price: string;
+      inventory_quantity: number;
+      in_stock: boolean;
+    }>;
+  };
+
+  const mapGraphqlProduct = (node: {
+    id: string;
+    title: string;
+    description?: string | null;
+    variants: {
+      edges: Array<{
+        node: {
+          id: string;
+          title: string;
+          price: string;
+          inventoryQuantity: number | null;
+          availableForSale: boolean;
+        };
+      }>;
+    };
+  }): ProductResult => ({
+    id: Number(parseShopifyGid(node.id)),
+    title: node.title,
+    description: node.description
+      ? stripHtml(node.description).slice(0, 500)
+      : null,
+    variants: node.variants.edges.map(({ node: v }) => ({
+      id: Number(parseShopifyGid(v.id)),
+      title: v.title,
+      price: v.price,
+      inventory_quantity: v.inventoryQuantity ?? 0,
+      in_stock: v.availableForSale && (v.inventoryQuantity ?? 0) > 0,
+    })),
+  });
+
+  const gql = `
+    query SearchProducts($query: String!) {
+      products(first: 10, query: $query) {
+        edges {
+          node {
+            id
+            title
+            description
+            variants(first: 20) {
+              edges {
+                node {
+                  id
+                  title
+                  price
+                  inventoryQuantity
+                  availableForSale
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  const searchQueries = [
+    `title:*${trimmed}*`,
+    trimmed,
+    trimmed.split(/\s+/).map((w) => `title:*${w}*`).join(" AND "),
+  ];
+
+  for (const searchQuery of searchQueries) {
+    try {
+      const res = await shopifyGraphql(shopDomain, encryptedToken, gql, {
+        query: searchQuery,
+      });
+      if (!res.ok) continue;
+
+      const data = (await res.json()) as {
+        data?: {
+          products?: {
+            edges: Array<{ node: Parameters<typeof mapGraphqlProduct>[0] }>;
+          };
+        };
+        errors?: unknown[];
+      };
+
+      if (data.errors?.length) continue;
+
+      const products = (data.data?.products?.edges ?? []).map(({ node }) =>
+        mapGraphqlProduct(node)
+      );
+      if (products.length > 0) return products;
+    } catch {
+      // try next strategy
+    }
+  }
+
+  // REST fallback: list active products and match title locally (partial match)
   const res = await shopifyAdminFetch(
     shopDomain,
     encryptedToken,
-    `/products.json?${params}`
+    "/products.json?limit=100&status=active&fields=id,title,body_html,variants"
   );
-  if (!res.ok) throw new Error(`Product search failed: ${await res.text()}`);
+  if (!res.ok) {
+    throw new Error(`Product search failed: ${await res.text()}`);
+  }
+
   const data = (await res.json()) as {
     products: Array<{
       id: number;
       title: string;
+      body_html?: string;
       variants: Array<{
         id: number;
         title: string;
@@ -223,16 +373,31 @@ export async function searchProducts(
       }>;
     }>;
   };
-  return data.products.map((p) => ({
-    id: p.id,
-    title: p.title,
-    variants: p.variants.map((v) => ({
-      id: v.id,
-      title: v.title,
-      price: v.price,
-      inventory_quantity: v.inventory_quantity,
-    })),
-  }));
+
+  const q = trimmed.toLowerCase();
+  const words = q.split(/\s+/).filter(Boolean);
+
+  return data.products
+    .filter((p) => {
+      const title = p.title.toLowerCase();
+      return (
+        title.includes(q) ||
+        words.every((word) => title.includes(word))
+      );
+    })
+    .slice(0, 10)
+    .map((p) => ({
+      id: p.id,
+      title: p.title,
+      description: p.body_html ? stripHtml(p.body_html).slice(0, 500) : null,
+      variants: p.variants.map((v) => ({
+        id: v.id,
+        title: v.title,
+        price: v.price,
+        inventory_quantity: v.inventory_quantity,
+        in_stock: v.inventory_quantity > 0,
+      })),
+    }));
 }
 
 export async function checkStock(

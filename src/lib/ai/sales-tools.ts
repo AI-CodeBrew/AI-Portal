@@ -9,18 +9,23 @@ import type { Store } from "@/lib/types";
 
 export const SALES_SYSTEM_PROMPT = `You are a helpful, professional sales agent for an e-commerce store on WhatsApp.
 
-Your goal is to help customers find products, answer questions, and close sales.
+Your goal is to help customers find products, answer questions about prices and details, and close sales.
 
-Rules:
+CRITICAL — product questions:
+- If the customer mentions a product name, asks for a price, or asks "do you have X" — you MUST call search_products first with the product name or keyword.
+- Never say you don't have a product without calling search_products.
+- Never invent product names, prices, or stock. Only use data returned by tools.
+- When search_products returns results, tell the customer: product name, price(s), in-stock status, and a short description if available.
+- For the most accurate price/stock on a specific size or color, call check_stock with that variant_id.
+- If multiple variants exist (sizes/colors), list the options briefly and ask which they want.
+
+Other rules:
+- Use the full recent conversation history — short follow-ups like "what about large?" or "how much?" refer to products mentioned earlier.
 - Be friendly, concise, and persuasive. Use short messages suitable for WhatsApp.
-- NEVER quote prices or confirm availability without calling check_stock first.
-- Use search_products when customers ask about items or browse.
 - When a customer wants to buy, confirm items and quantities, then use create_draft_order.
 - Use get_order_status when customers ask about existing orders.
-- Gently guide toward completing the purchase (size, quantity, delivery confirmation).
-- If you cannot help (complaints, refunds, custom requests, or they ask for a human), call escalate_to_human.
-- Do not make up product information. Only use data from tool results.
-- Currency is in the store's default currency.`;
+- Gently guide toward completing the purchase.
+- If you cannot help (complaints, refunds, custom requests, or they ask for a human), call escalate_to_human.`;
 
 export interface AgentContext {
   store: Store;
@@ -34,7 +39,8 @@ export const OPENAI_SALES_TOOLS = [
     type: "function" as const,
     function: {
       name: "search_products",
-      description: "Search the store catalog by product name or keyword",
+      description:
+        "Search the store catalog by product name or keyword. ALWAYS use this when the customer asks about a product, price, or availability.",
       parameters: {
         type: "object",
         properties: {
@@ -128,7 +134,7 @@ export async function executeSalesTool(
     return {
       result: {
         error:
-          "Shopify store is not connected. Please ask the merchant to connect their store.",
+          "Shopify store is not connected. Please ask the merchant to connect their store in Integrations.",
       },
     };
   }
@@ -136,100 +142,116 @@ export async function executeSalesTool(
   const shopDomain = store.shop_domain!;
   const shopifyToken = store.shopify_access_token!;
 
-  switch (name) {
-    case "search_products":
-      return {
-        result: await searchProducts(
-          shopDomain,
-          shopifyToken,
-          input.query as string
-        ),
-      };
-
-    case "check_stock":
-      return {
-        result: await checkStock(
-          shopDomain,
-          shopifyToken,
-          input.variant_id as string
-        ),
-      };
-
-    case "get_order_status":
-      return {
-        result: await getOrderStatus(
-          shopDomain,
-          shopifyToken,
-          input.order_number as string
-        ),
-      };
-
-    case "create_draft_order": {
-      const draft = await createDraftOrder(shopDomain, shopifyToken, {
-        phone: customerPhone,
-        name: input.customer_name as string | undefined,
-        lineItems: input.line_items as Array<{
-          variant_id: string;
-          quantity: number;
-        }>,
-      });
-
-      let custId = customerId;
-      if (!custId) {
-        const { data: cust } = await supabase
-          .from("customers")
-          .upsert(
-            {
-              store_id: store.id,
-              phone: customerPhone,
-              name: (input.customer_name as string) ?? null,
-            },
-            { onConflict: "store_id,phone" }
-          )
-          .select("id")
-          .single();
-        custId = cust?.id ?? null;
+  try {
+    switch (name) {
+      case "search_products": {
+        const query = String(input.query ?? "").trim();
+        if (!query) {
+          return { result: { error: "Search query is required", products: [] } };
+        }
+        const products = await searchProducts(shopDomain, shopifyToken, query);
+        return {
+          result: {
+            query,
+            count: products.length,
+            products,
+            message:
+              products.length === 0
+                ? `No products found matching "${query}". Try a shorter keyword.`
+                : `Found ${products.length} product(s).`,
+          },
+        };
       }
 
-      const { data: order } = await supabase
-        .from("orders")
-        .insert({
-          store_id: store.id,
-          customer_id: custId,
-          shopify_draft_order_id: draft.draft_order_id,
-          order_number: draft.order_number,
-          items: draft.items,
-          total: draft.total,
-          currency: draft.currency,
-          status: "pending",
-          source: "whatsapp_ai",
-        })
-        .select("id")
-        .single();
+      case "check_stock":
+        return {
+          result: await checkStock(
+            shopDomain,
+            shopifyToken,
+            input.variant_id as string
+          ),
+        };
 
-      return {
-        result: {
-          success: true,
-          order_number: draft.order_number,
-          total: draft.total,
-          message:
-            "Draft order created. A team member will confirm it shortly.",
-        },
-        orderCreated: order?.id,
-      };
+      case "get_order_status":
+        return {
+          result: await getOrderStatus(
+            shopDomain,
+            shopifyToken,
+            input.order_number as string
+          ),
+        };
+
+      case "create_draft_order": {
+        const draft = await createDraftOrder(shopDomain, shopifyToken, {
+          phone: customerPhone,
+          name: input.customer_name as string | undefined,
+          lineItems: input.line_items as Array<{
+            variant_id: string;
+            quantity: number;
+          }>,
+        });
+
+        let custId = customerId;
+        if (!custId) {
+          const { data: cust } = await supabase
+            .from("customers")
+            .upsert(
+              {
+                store_id: store.id,
+                phone: customerPhone,
+                name: (input.customer_name as string) ?? null,
+              },
+              { onConflict: "store_id,phone" }
+            )
+            .select("id")
+            .single();
+          custId = cust?.id ?? null;
+        }
+
+        const { data: order } = await supabase
+          .from("orders")
+          .insert({
+            store_id: store.id,
+            customer_id: custId,
+            shopify_draft_order_id: draft.draft_order_id,
+            order_number: draft.order_number,
+            items: draft.items,
+            total: draft.total,
+            currency: draft.currency,
+            status: "pending",
+            source: "whatsapp_ai",
+          })
+          .select("id")
+          .single();
+
+        return {
+          result: {
+            success: true,
+            order_number: draft.order_number,
+            total: draft.total,
+            message:
+              "Draft order created. A team member will confirm it shortly.",
+          },
+          orderCreated: order?.id,
+        };
+      }
+
+      case "escalate_to_human":
+        await supabase
+          .from("whatsapp_conversations")
+          .update({ status: "human_handoff" })
+          .eq("id", conversationId);
+        return {
+          result: { escalated: true, reason: input.reason },
+          escalated: true,
+        };
+
+      default:
+        return { result: { error: `Unknown tool: ${name}` } };
     }
-
-    case "escalate_to_human":
-      await supabase
-        .from("whatsapp_conversations")
-        .update({ status: "human_handoff" })
-        .eq("id", conversationId);
-      return {
-        result: { escalated: true, reason: input.reason },
-        escalated: true,
-      };
-
-    default:
-      return { result: { error: `Unknown tool: ${name}` } };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Tool execution failed";
+    console.error(`[sales-agent] ${name} failed:`, err);
+    return { result: { error: message } };
   }
 }

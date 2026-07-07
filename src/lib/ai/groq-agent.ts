@@ -4,9 +4,30 @@ import {
   executeSalesTool,
   type AgentContext,
 } from "./sales-tools";
+import { CHAT_HISTORY_LIMIT } from "./chat-history";
 
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 const DEFAULT_MODEL = "llama-3.3-70b-versatile";
+
+const PRODUCT_QUERY_PATTERN =
+  /\b(price|cost|how much|do you have|available|in stock|product|buy|sell|show me|looking for|details|about)\b/i;
+
+function lastUserMessage(
+  history: Array<{ role: "user" | "assistant"; content: string }>
+): string {
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i].role === "user") return history[i].content;
+  }
+  return "";
+}
+
+function looksLikeProductQuery(text: string): boolean {
+  const t = text.trim();
+  if (t.length < 2) return false;
+  if (PRODUCT_QUERY_PATTERN.test(t)) return true;
+  // Short messages that are likely a product name (e.g. "Classic T-Shirt")
+  return t.length <= 80 && !/^(hi|hello|hey|thanks|thank you|ok|yes|no)\b/i.test(t);
+}
 
 type ChatMessage =
   | { role: "system" | "user" | "assistant"; content: string }
@@ -58,7 +79,7 @@ async function groqChat(messages: ChatMessage[]): Promise<GroqResponse> {
       tools: OPENAI_SALES_TOOLS,
       tool_choice: "auto",
       max_tokens: 1024,
-      temperature: 0.4,
+      temperature: 0.2,
     }),
   });
 
@@ -73,9 +94,18 @@ export async function runSalesAgentWithGroq(
   ctx: AgentContext,
   history: Array<{ role: "user" | "assistant"; content: string }>
 ): Promise<string> {
+  const storeLabel = ctx.store.store_name || ctx.store.shop_domain || "our store";
+  const latestUser = lastUserMessage(history);
+  const productHint = looksLikeProductQuery(latestUser)
+    ? `\n\nThe customer's latest message appears to be about a product ("${latestUser.slice(0, 120)}"). You MUST call search_products with a relevant keyword before replying.`
+    : "";
+
   const messages: ChatMessage[] = [
-    { role: "system", content: SALES_SYSTEM_PROMPT },
-    ...history.map((m) => ({
+    {
+      role: "system",
+      content: `${SALES_SYSTEM_PROMPT}\n\nYou are selling for: ${storeLabel}.${productHint}\n\nYou receive the last ${CHAT_HISTORY_LIMIT} messages of this chat (oldest to newest).`,
+    },
+    ...history.slice(-CHAT_HISTORY_LIMIT).map((m) => ({
       role: m.role,
       content: m.content,
     })),
