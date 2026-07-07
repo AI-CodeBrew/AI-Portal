@@ -146,10 +146,17 @@ export function WhatsAppIntegrationPanel() {
     return () => window.removeEventListener("message", handleMessage);
   }, []);
 
+  const webhookBase =
+    process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "") || siteOrigin;
+
   const webhookUrl =
-    store?.id && siteOrigin
-      ? `${siteOrigin}${getWhatsAppWebhookPath(store.id)}`
+    store?.id && webhookBase
+      ? `${webhookBase}${getWhatsAppWebhookPath(store.id)}`
       : "";
+
+  const webhookLooksLocal =
+    Boolean(webhookUrl) &&
+    (webhookUrl.includes("localhost") || webhookUrl.includes("127.0.0.1"));
 
   async function copyText(text: string, label: string) {
     try {
@@ -483,9 +490,17 @@ export function WhatsAppIntegrationPanel() {
                 <CopyField
                   label="Callback URL (paste in Meta)"
                   value={webhookUrl || "Loading..."}
-                  hint="This URL is unique to your store on this portal."
+                  hint="Must be your live Vercel URL — Meta cannot reach localhost."
                   onCopy={() => copyText(webhookUrl, "Callback URL")}
                 />
+                {webhookLooksLocal && (
+                  <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                    This URL uses localhost. Set{" "}
+                    <strong>NEXT_PUBLIC_APP_URL</strong> on Vercel to your
+                    production domain, redeploy, then copy the webhook URL again
+                    from this page on your live site.
+                  </p>
+                )}
                 <CopyField
                   label="Verify token (paste in Meta)"
                   value={verifyToken || "Save step 1 to generate"}

@@ -131,6 +131,8 @@ export interface ShopifyOrder {
     first_name?: string;
     last_name?: string;
   };
+  shipping_address?: { phone?: string; name?: string; first_name?: string; last_name?: string };
+  billing_address?: { phone?: string; name?: string; first_name?: string; last_name?: string };
   line_items: Array<{
     title: string;
     quantity: number;
@@ -153,13 +155,28 @@ export function parseShopifyOrder(order: ShopifyOrder): {
   orderNumber: string;
   currency: string | null;
 } {
-  const phone = order.phone || order.customer?.phone || null;
+  const phone =
+    order.phone ||
+    order.customer?.phone ||
+    order.shipping_address?.phone ||
+    order.billing_address?.phone ||
+    null;
 
-  const name = order.customer
-    ? [order.customer.first_name, order.customer.last_name]
-        .filter(Boolean)
-        .join(" ") || null
-    : null;
+  const name =
+    (order.customer
+      ? [order.customer.first_name, order.customer.last_name]
+          .filter(Boolean)
+          .join(" ")
+      : null) ||
+    order.shipping_address?.name ||
+    [order.shipping_address?.first_name, order.shipping_address?.last_name]
+      .filter(Boolean)
+      .join(" ") ||
+    order.billing_address?.name ||
+    [order.billing_address?.first_name, order.billing_address?.last_name]
+      .filter(Boolean)
+      .join(" ") ||
+    null;
 
   const items: OrderItem[] = order.line_items.map((li) => ({
     title: li.title,
@@ -344,6 +361,23 @@ export async function getOrderStatus(
     fulfillment_status: order.fulfillment_status,
     total: order.total_price,
   };
+}
+
+export async function fetchShopifyOrderContact(
+  shopDomain: string,
+  encryptedToken: string,
+  shopifyOrderId: string
+): Promise<{ phone: string | null; name: string | null }> {
+  const res = await shopifyAdminFetch(
+    shopDomain,
+    encryptedToken,
+    `/orders/${shopifyOrderId}.json`
+  );
+  if (!res.ok) return { phone: null, name: null };
+
+  const data = (await res.json()) as { order: ShopifyOrder };
+  const parsed = parseShopifyOrder(data.order);
+  return { phone: parsed.phone, name: parsed.name };
 }
 
 export async function confirmOrderOnShopify(

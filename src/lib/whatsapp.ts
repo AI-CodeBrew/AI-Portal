@@ -15,7 +15,10 @@ export function resolveMetaSecret(
   try {
     return decrypt(encryptedOrPlain);
   } catch {
-    return encryptedOrPlain;
+    console.error(
+      "Meta app secret decrypt failed — ENCRYPTION_KEY may differ from when secret was saved."
+    );
+    return null;
   }
 }
 
@@ -176,7 +179,10 @@ export function getStoreWhatsAppCredentials(store: {
     try {
       accessToken = decrypt(encryptedToken);
     } catch {
-      accessToken = encryptedToken;
+      console.error(
+        "WhatsApp token decrypt failed — ENCRYPTION_KEY may differ from when token was saved. Reconnect WhatsApp."
+      );
+      accessToken = null;
     }
   } else if (process.env.WHATSAPP_ACCESS_TOKEN) {
     accessToken = process.env.WHATSAPP_ACCESS_TOKEN;

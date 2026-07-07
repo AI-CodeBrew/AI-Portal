@@ -237,11 +237,19 @@ export function OrdersList() {
       const res = await fetch(`/api/orders/${id}/confirm`, { method: "POST" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Confirm failed");
-      setSuccessMsg(
-        data.shopify_sync_status === "synced"
-          ? "Order confirmed and synced to Shopify."
-          : "Order confirmed. Shopify sync had an issue — check the sync status."
-      );
+
+      let successText = "Order confirmed.";
+      if (data.shopify_sync_status === "synced") {
+        successText += " Synced to Shopify.";
+      } else if (data.shopify_sync_status === "failed") {
+        successText += " Shopify sync had an issue.";
+      }
+      if (data.whatsapp_sent) {
+        successText += " Customer notified on WhatsApp.";
+      } else if (data.whatsapp_error) {
+        successText += ` WhatsApp not sent: ${data.whatsapp_error}`;
+      }
+      setSuccessMsg(successText);
       await loadPage(page, statusFilter);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Confirm failed");
