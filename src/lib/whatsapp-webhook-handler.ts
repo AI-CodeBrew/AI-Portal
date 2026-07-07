@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyHubSignature256 } from "@/lib/crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { runSalesAgent } from "@/lib/anthropic/agent";
+import { runSalesAgent, isSalesAgentConfigured } from "@/lib/ai/run-sales-agent";
 import {
   getStoreWhatsAppCredentials,
   resolveMetaSecret,
@@ -172,7 +172,7 @@ export async function handleWhatsAppWebhookMessage(
         }));
 
         let replyText: string;
-        if (process.env.ANTHROPIC_API_KEY) {
+        if (isSalesAgentConfigured()) {
           replyText = await runSalesAgent(
             {
               store: activeStore,

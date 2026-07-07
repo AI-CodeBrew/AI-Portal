@@ -375,6 +375,9 @@ export function WhatsAppIntegrationPanel() {
                 <p className="font-semibold text-emerald-900">WhatsApp is live</p>
                 <p className="text-xs text-emerald-700">
                   Phone ID: {store?.whatsapp_phone_number_id}
+                  {store?.shopify_connected
+                    ? " · AI sales agent will reply to customer messages"
+                    : " · Connect Shopify too so AI can search products and close deals"}
                 </p>
               </div>
             </div>
@@ -664,7 +667,13 @@ export function WhatsAppIntegrationPanel() {
             )}
           </section>
 
-          <div className="rounded-lg bg-slate-50 p-4 text-xs text-slate-600">
+          <div className="rounded-lg bg-slate-50 p-4 text-xs text-slate-600 space-y-2">
+            <p>
+              <strong>AI sales agent:</strong> after WhatsApp + Shopify are
+              connected, customers get automatic replies on WhatsApp. The AI
+              searches products, checks stock, creates draft orders, and helps
+              close the sale.
+            </p>
             <p>
               <strong>Template:</strong> approve <code>order_confirmed</code> in
               Meta Business Manager so customers get order updates.
