@@ -1,14 +1,7 @@
 import { Suspense } from "react";
 import { IntegrationsNav } from "@/components/IntegrationsNav";
 import { ShopifyIntegrationPanel } from "@/components/ShopifyIntegrationPanel";
-
-function getAppUrl() {
-  return (
-    process.env.NEXT_PUBLIC_APP_URL ||
-    process.env.SHOPIFY_APP_URL ||
-    "http://localhost:3000"
-  );
-}
+import { getAppUrl } from "@/lib/app-url";
 
 export default function ShopifyIntegrationPage() {
   return (

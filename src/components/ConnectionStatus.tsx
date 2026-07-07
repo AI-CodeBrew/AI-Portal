@@ -101,7 +101,7 @@ export function WhatsAppConnectionSteps({
         detail={
           isConnected
             ? `Connected — Phone ID ${phoneNumberId}`
-            : "Use embedded signup or paste your Cloud API tokens"
+            : "Click Connect with Meta after pasting webhook in step 2"
         }
       />
       <Step

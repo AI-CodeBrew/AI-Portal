@@ -4,8 +4,11 @@ import {
   handleWhatsAppWebhookVerify,
 } from "@/lib/whatsapp-webhook-handler";
 
-export async function GET(request: NextRequest) {
-  const storeId = request.nextUrl.searchParams.get("store") ?? undefined;
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ storeId: string }> }
+) {
+  const { storeId } = await params;
   return handleWhatsAppWebhookVerify(request, storeId);
 }
 

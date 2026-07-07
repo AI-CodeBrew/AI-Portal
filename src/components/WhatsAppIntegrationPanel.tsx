@@ -8,6 +8,7 @@ import {
   WhatsAppConnectionSteps,
 } from "@/components/ConnectionStatus";
 import { BrandIconBox } from "@/components/BrandIcons";
+import { getWhatsAppWebhookPath } from "@/lib/whatsapp-webhook";
 import { useStoreStatus } from "@/hooks/useStoreStatus";
 
 declare global {
@@ -23,8 +24,44 @@ declare global {
   }
 }
 
-export function WhatsAppIntegrationPanel({ appUrl }: { appUrl: string }) {
+function CopyField({
+  label,
+  value,
+  hint,
+  onCopy,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  onCopy: () => void;
+}) {
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+            {label}
+          </p>
+          <p className="mt-1 break-all font-mono text-sm text-slate-900">
+            {value}
+          </p>
+          {hint && <p className="mt-1 text-xs text-slate-500">{hint}</p>}
+        </div>
+        <button
+          type="button"
+          onClick={onCopy}
+          className="shrink-0 rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+        >
+          Copy
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export function WhatsAppIntegrationPanel() {
   const { store, refresh: refreshStore } = useStoreStatus();
+  const [siteOrigin, setSiteOrigin] = useState("");
   const [metaAppId, setMetaAppId] = useState("");
   const [metaAppSecret, setMetaAppSecret] = useState("");
   const [metaConfigId, setMetaConfigId] = useState("");
@@ -34,12 +71,17 @@ export function WhatsAppIntegrationPanel({ appUrl }: { appUrl: string }) {
   const [accessToken, setAccessToken] = useState("");
   const [saving, setSaving] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  const [showManual, setShowManual] = useState(false);
   const [message, setMessage] = useState<{
     type: "info" | "error" | "success";
     text: string;
   } | null>(null);
   const [fbReady, setFbReady] = useState(false);
   const searchParams = useSearchParams();
+
+  useEffect(() => {
+    setSiteOrigin(window.location.origin);
+  }, []);
 
   useEffect(() => {
     if (store) {
@@ -104,9 +146,19 @@ export function WhatsAppIntegrationPanel({ appUrl }: { appUrl: string }) {
     return () => window.removeEventListener("message", handleMessage);
   }, []);
 
-  const webhookUrl = store?.id
-    ? `${appUrl}/api/whatsapp-webhook?store=${store.id}`
-    : `${appUrl}/api/whatsapp-webhook`;
+  const webhookUrl =
+    store?.id && siteOrigin
+      ? `${siteOrigin}${getWhatsAppWebhookPath(store.id)}`
+      : "";
+
+  async function copyText(text: string, label: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setMessage({ type: "success", text: `${label} copied to clipboard.` });
+    } catch {
+      setMessage({ type: "error", text: "Could not copy. Select and copy manually." });
+    }
+  }
 
   async function saveCredentials(): Promise<boolean> {
     if (!metaAppId.trim()) {
@@ -130,7 +182,6 @@ export function WhatsAppIntegrationPanel({ appUrl }: { appUrl: string }) {
         metaAppId,
         metaAppSecret,
         metaConfigId,
-        verifyToken: verifyToken || undefined,
       }),
     });
     const data = await res.json();
@@ -144,7 +195,7 @@ export function WhatsAppIntegrationPanel({ appUrl }: { appUrl: string }) {
     if (data.verifyToken) setVerifyToken(data.verifyToken);
     setMessage({
       type: "success",
-      text: "Credentials saved. Configure the webhook in Meta, then connect your number.",
+      text: "Saved! Copy the webhook details below into Meta, then connect your number.",
     });
     setMetaAppSecret("");
     await refreshStore();
@@ -173,7 +224,7 @@ export function WhatsAppIntegrationPanel({ appUrl }: { appUrl: string }) {
       if (!phoneNumberId.trim() || !wabaId.trim() || !accessToken.trim()) {
         setMessage({
           type: "error",
-          text: "Phone Number ID, WABA ID, and Access Token are required for manual connect.",
+          text: "Phone Number ID, WABA ID, and Access Token are required.",
         });
         setConnecting(false);
         return;
@@ -206,7 +257,7 @@ export function WhatsAppIntegrationPanel({ appUrl }: { appUrl: string }) {
     if (!configId) {
       setMessage({
         type: "error",
-        text: "Embedded Signup Config ID is required for one-click connect.",
+        text: "Add your Embedded Signup Config ID first, or use manual connect.",
       });
       setConnecting(false);
       return;
@@ -267,6 +318,7 @@ export function WhatsAppIntegrationPanel({ appUrl }: { appUrl: string }) {
   }
 
   const connected = store?.whatsapp_connected ?? false;
+  const credentialsReady = store?.has_whatsapp_credentials ?? false;
   const msgStyles = {
     success: "border-emerald-200 bg-emerald-50 text-emerald-800",
     error: "border-red-200 bg-red-50 text-red-800",
@@ -295,7 +347,7 @@ export function WhatsAppIntegrationPanel({ appUrl }: { appUrl: string }) {
               />
             </div>
             <p className="text-sm text-slate-600">
-              Order confirmations, AI sales chat, and human inbox
+              Send order confirmations and chat with customers
             </p>
           </div>
         </div>
@@ -310,8 +362,8 @@ export function WhatsAppIntegrationPanel({ appUrl }: { appUrl: string }) {
           )}
 
           <WhatsAppConnectionSteps
-            hasCredentials={store?.has_whatsapp_credentials ?? false}
-            webhookConfigured={Boolean(store?.whatsapp_verify_token)}
+            hasCredentials={credentialsReady}
+            webhookConfigured={Boolean(verifyToken)}
             isConnected={connected}
             phoneNumberId={store?.whatsapp_phone_number_id}
           />
@@ -320,187 +372,302 @@ export function WhatsAppIntegrationPanel({ appUrl }: { appUrl: string }) {
             <div className="flex items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3">
               <span className="text-2xl">✓</span>
               <div>
-                <p className="font-semibold text-emerald-900">Active</p>
+                <p className="font-semibold text-emerald-900">WhatsApp is live</p>
                 <p className="text-xs text-emerald-700">
-                  Phone ID: {store?.whatsapp_phone_number_id} · WABA:{" "}
-                  {store?.whatsapp_waba_id}
+                  Phone ID: {store?.whatsapp_phone_number_id}
                 </p>
               </div>
             </div>
           )}
 
-          <div>
-            <h3 className="mb-3 text-sm font-bold text-slate-900">
-              Step 1 — Meta app credentials
+          {/* Step 1 */}
+          <section className="rounded-xl border border-slate-200 p-5">
+            <h3 className="text-base font-bold text-slate-900">
+              1. Add your Meta app details
             </h3>
-            <div className="grid gap-4 sm:grid-cols-2">
+            <p className="mt-1 text-sm text-slate-600">
+              Create a free app at{" "}
+              <a
+                href="https://developers.facebook.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-medium text-blue-600 underline"
+              >
+                developers.facebook.com
+              </a>
+              , add the <strong>WhatsApp</strong> product, then copy:
+            </p>
+            <ul className="mt-2 list-inside list-disc space-y-1 text-sm text-slate-600">
+              <li>
+                <strong>App ID</strong> — App settings → Basic → App ID
+              </li>
+              <li>
+                <strong>App Secret</strong> — App settings → Basic → App secret
+                (click Show)
+              </li>
+              <li>
+                <strong>Config ID</strong> (optional) — WhatsApp → Embedded
+                Signup → Configuration ID
+              </li>
+            </ul>
+
+            <div className="mt-4 grid gap-4 sm:grid-cols-2">
               <div>
                 <label className="mb-1 block text-sm font-medium text-slate-700">
-                  Meta App ID *
+                  Meta App ID
                 </label>
                 <input
                   value={metaAppId}
                   onChange={(e) => setMetaAppId(e.target.value)}
-                  placeholder="From developers.facebook.com"
+                  placeholder="e.g. 123456789012345"
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm"
                 />
               </div>
               <div>
                 <label className="mb-1 block text-sm font-medium text-slate-700">
-                  Meta App Secret *
+                  Meta App Secret
                 </label>
                 <input
                   type="password"
                   value={metaAppSecret}
                   onChange={(e) => setMetaAppSecret(e.target.value)}
                   placeholder={
-                    store?.has_whatsapp_credentials ? "Leave blank to keep" : ""
+                    credentialsReady ? "Leave blank to keep current" : "Required"
                   }
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm"
                 />
               </div>
               <div className="sm:col-span-2">
                 <label className="mb-1 block text-sm font-medium text-slate-700">
-                  Embedded Signup Config ID
+                  Embedded Signup Config ID{" "}
+                  <span className="font-normal text-slate-500">(optional)</span>
                 </label>
                 <input
                   value={metaConfigId}
                   onChange={(e) => setMetaConfigId(e.target.value)}
-                  placeholder="For one-click connect (WhatsApp → Embedded Signup)"
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm"
-                />
-              </div>
-              <div className="sm:col-span-2">
-                <label className="mb-1 block text-sm font-medium text-slate-700">
-                  Webhook verify token
-                </label>
-                <input
-                  value={verifyToken}
-                  onChange={(e) => setVerifyToken(e.target.value)}
-                  placeholder="Auto-generated on save if left blank"
+                  placeholder="For one-click connect — WhatsApp → Embedded Signup in Meta"
                   className="w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm"
                 />
               </div>
             </div>
-          </div>
 
-          <div>
-            <h3 className="mb-3 text-sm font-bold text-slate-900">
-              Step 2 — Webhook in Meta Developer Console
-            </h3>
-            <div className="rounded-lg bg-slate-50 p-4 text-xs text-slate-600 space-y-2">
-              <p>
-                In your Meta app → <strong>WhatsApp → Configuration</strong>,
-                set:
-              </p>
-              <p>
-                <strong>Callback URL:</strong>{" "}
-                <code className="text-slate-800">{webhookUrl}</code>
-              </p>
-              <p>
-                <strong>Verify token:</strong>{" "}
-                <code className="text-slate-800">
-                  {verifyToken || "(save credentials to generate)"}
-                </code>
-              </p>
-              <p>Subscribe to the <code>messages</code> field.</p>
-            </div>
-          </div>
-
-          <div>
-            <h3 className="mb-3 text-sm font-bold text-slate-900">
-              Step 3 — Connect your WhatsApp number
-            </h3>
-            <p className="mb-3 text-sm text-slate-600">
-              Use embedded signup (recommended) or paste tokens from Meta
-              manually.
-            </p>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div>
-                <label className="mb-1 block text-sm font-medium text-slate-700">
-                  Phone Number ID
-                </label>
-                <input
-                  value={phoneNumberId}
-                  onChange={(e) => setPhoneNumberId(e.target.value)}
-                  placeholder="From WhatsApp → API Setup"
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm"
-                />
-              </div>
-              <div>
-                <label className="mb-1 block text-sm font-medium text-slate-700">
-                  WABA ID
-                </label>
-                <input
-                  value={wabaId}
-                  onChange={(e) => setWabaId(e.target.value)}
-                  placeholder="WhatsApp Business Account ID"
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm"
-                />
-              </div>
-              <div className="sm:col-span-2">
-                <label className="mb-1 block text-sm font-medium text-slate-700">
-                  Permanent access token (manual only)
-                </label>
-                <input
-                  type="password"
-                  value={accessToken}
-                  onChange={(e) => setAccessToken(e.target.value)}
-                  placeholder="From WhatsApp → API Setup → temporary/permanent token"
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm"
-                />
-              </div>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
             <button
               onClick={() => saveCredentials()}
               disabled={saving || connecting}
-              className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold hover:bg-slate-50 disabled:opacity-50"
+              className="mt-4 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
             >
-              {saving ? "Saving..." : "Save credentials"}
+              {saving ? "Saving..." : "Save & generate webhook token"}
             </button>
-            <button
-              onClick={() => connectWhatsApp(false)}
-              disabled={saving || connecting}
-              className="rounded-lg bg-[#25D366] px-4 py-2 text-sm font-semibold text-white hover:bg-[#1da851] disabled:opacity-50"
-            >
-              {connecting
-                ? "Connecting..."
-                : connected
-                  ? "Reconnect (embedded)"
-                  : "Connect (embedded signup)"}
-            </button>
-            <button
-              onClick={() => connectWhatsApp(true)}
-              disabled={saving || connecting}
-              className="rounded-lg border border-[#25D366] px-4 py-2 text-sm font-semibold text-[#128C7E] hover:bg-emerald-50 disabled:opacity-50"
-            >
-              Connect manually
-            </button>
-          </div>
+          </section>
 
-          <div className="rounded-lg bg-slate-50 p-4 text-xs text-slate-600 space-y-2">
-            <p>
-              <strong>Where to get credentials:</strong>{" "}
-              <a
-                href="https://developers.facebook.com"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-blue-700 underline"
+          {/* Step 2 */}
+          <section className="rounded-xl border border-blue-200 bg-blue-50/50 p-5">
+            <h3 className="text-base font-bold text-slate-900">
+              2. Paste these into Meta
+            </h3>
+            <p className="mt-1 text-sm text-slate-600">
+              Open your Meta app → <strong>WhatsApp</strong> →{" "}
+              <strong>Configuration</strong> → Webhook section. Paste both values
+              below, then click <strong>Verify and save</strong>.
+            </p>
+
+            {!credentialsReady ? (
+              <p className="mt-4 rounded-lg border border-dashed border-blue-200 bg-white px-4 py-3 text-sm text-slate-600">
+                Complete step 1 first — your personal webhook URL will appear here.
+              </p>
+            ) : (
+              <div className="mt-4 space-y-3">
+                <CopyField
+                  label="Callback URL (paste in Meta)"
+                  value={webhookUrl || "Loading..."}
+                  hint="This URL is unique to your store on this portal."
+                  onCopy={() => copyText(webhookUrl, "Callback URL")}
+                />
+                <CopyField
+                  label="Verify token (paste in Meta)"
+                  value={verifyToken || "Save step 1 to generate"}
+                  onCopy={() => copyText(verifyToken, "Verify token")}
+                />
+                <p className="text-xs text-slate-600">
+                  Also subscribe to the <strong>messages</strong> field in Meta.
+                </p>
+                <a
+                  href="https://developers.facebook.com/apps/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex text-sm font-semibold text-blue-700 hover:underline"
+                >
+                  Open Meta Developer Console →
+                </a>
+              </div>
+            )}
+          </section>
+
+          {/* Step 3 */}
+          <section className="rounded-xl border border-slate-200 p-5">
+            <h3 className="text-base font-bold text-slate-900">
+              3. Connect your WhatsApp number
+            </h3>
+            <p className="mt-1 text-sm text-slate-600">
+              After Meta webhook is verified, connect your business number.
+            </p>
+
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                onClick={() => connectWhatsApp(false)}
+                disabled={saving || connecting || !credentialsReady}
+                className="rounded-lg bg-[#25D366] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#1da851] disabled:opacity-50"
               >
-                developers.facebook.com
-              </a>{" "}
-              → your app → WhatsApp → API Setup
-            </p>
+                {connecting
+                  ? "Connecting..."
+                  : connected
+                    ? "Reconnect with Meta"
+                    : "Connect with Meta"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowManual((v) => !v)}
+                className="rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                {showManual ? "Hide manual setup" : "Manual setup instead"}
+              </button>
+            </div>
+
+            {showManual && (
+              <div className="mt-4 space-y-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
+                <div>
+                  <p className="text-sm font-semibold text-slate-900">
+                    Where to find these in Meta
+                  </p>
+                  <p className="mt-1 text-sm text-slate-600">
+                    Open{" "}
+                    <a
+                      href="https://developers.facebook.com/apps/"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-medium text-blue-600 underline"
+                    >
+                      developers.facebook.com/apps
+                    </a>{" "}
+                    → select your app → <strong>WhatsApp</strong> →{" "}
+                    <strong>API Setup</strong>
+                  </p>
+                </div>
+
+                <ol className="space-y-3 text-sm text-slate-700">
+                  <li className="rounded-lg border border-slate-200 bg-white p-3">
+                    <p className="font-semibold text-slate-900">
+                      Phone Number ID
+                    </p>
+                    <p className="mt-1 text-slate-600">
+                      On the <strong>API Setup</strong> page, under{" "}
+                      <strong>Send and receive messages</strong>, find your phone
+                      number. Copy the <strong>Phone number ID</strong> (a long
+                      number like <code>123456789012345</code>). Not your actual
+                      +92… phone number.
+                    </p>
+                  </li>
+                  <li className="rounded-lg border border-slate-200 bg-white p-3">
+                    <p className="font-semibold text-slate-900">WABA ID</p>
+                    <p className="mt-1 text-slate-600">
+                      On the same <strong>API Setup</strong> page, at the top
+                      look for <strong>WhatsApp Business Account ID</strong>{" "}
+                      (or open WhatsApp → <strong>Account tools</strong> → Account
+                      overview). Copy that ID.
+                    </p>
+                  </li>
+                  <li className="rounded-lg border border-slate-200 bg-white p-3">
+                    <p className="font-semibold text-slate-900">
+                      Permanent access token
+                    </p>
+                    <p className="mt-1 text-slate-600">
+                      Meta only shows a <em>temporary</em> token on API Setup for
+                      testing. For a permanent token:
+                    </p>
+                    <ol className="mt-2 list-inside list-decimal space-y-1 text-slate-600">
+                      <li>
+                        Go to{" "}
+                        <a
+                          href="https://business.facebook.com/settings/system-users"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-600 underline"
+                        >
+                          Meta Business Settings → System users
+                        </a>
+                      </li>
+                      <li>
+                        Create a system user (or pick an existing one) →{" "}
+                        <strong>Add assets</strong> → assign your WhatsApp
+                        Business Account
+                      </li>
+                      <li>
+                        Click <strong>Generate new token</strong> → select your
+                        app → enable{" "}
+                        <code>whatsapp_business_messaging</code> and{" "}
+                        <code>whatsapp_business_management</code>
+                      </li>
+                      <li>Copy the token and paste it below (it is shown once)</li>
+                    </ol>
+                    <p className="mt-2 text-xs text-slate-500">
+                      Tip: If you only see a temporary token on API Setup, you can
+                      use that for quick testing — but it expires in 24 hours. Use
+                      a system-user token for production.
+                    </p>
+                  </li>
+                </ol>
+
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-700">
+                      Phone Number ID
+                    </label>
+                    <input
+                      value={phoneNumberId}
+                      onChange={(e) => setPhoneNumberId(e.target.value)}
+                      placeholder="From API Setup → Phone number ID"
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-700">
+                      WABA ID
+                    </label>
+                    <input
+                      value={wabaId}
+                      onChange={(e) => setWabaId(e.target.value)}
+                      placeholder="WhatsApp Business Account ID"
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm"
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="mb-1 block text-sm font-medium text-slate-700">
+                      Access token
+                    </label>
+                    <input
+                      type="password"
+                      value={accessToken}
+                      onChange={(e) => setAccessToken(e.target.value)}
+                      placeholder="System user token (permanent) or temporary token from API Setup"
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm"
+                    />
+                  </div>
+                </div>
+                <button
+                  onClick={() => connectWhatsApp(true)}
+                  disabled={saving || connecting}
+                  className="rounded-lg border border-[#25D366] px-4 py-2 text-sm font-semibold text-[#128C7E] hover:bg-emerald-50 disabled:opacity-50"
+                >
+                  Connect manually
+                </button>
+              </div>
+            )}
+          </section>
+
+          <div className="rounded-lg bg-slate-50 p-4 text-xs text-slate-600">
             <p>
-              <strong>Template required:</strong> approve{" "}
-              <code>order_confirmed</code> in Meta Business Manager before
-              order confirmations send.
-            </p>
-            <p>
-              Each reseller uses their own Meta app — no code changes needed.
+              <strong>Template:</strong> approve <code>order_confirmed</code> in
+              Meta Business Manager so customers get order updates.
             </p>
           </div>
         </div>

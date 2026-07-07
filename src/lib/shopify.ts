@@ -1,22 +1,18 @@
 import { decrypt } from "./crypto";
 import type { OrderItem } from "./types";
+import { getAppUrl } from "./app-url";
 
-const API_VERSION = "2024-10";
+export { getAppUrl };
 
 export const DEFAULT_SHOPIFY_SCOPES =
   "read_orders,write_orders,read_products,read_customers,write_draft_orders";
+
+const API_VERSION = "2024-10";
 
 export interface ShopifyAppCredentials {
   apiKey: string;
   apiSecret: string;
   scopes?: string;
-}
-
-export function getAppUrl(requestUrl?: string): string {
-  if (process.env.SHOPIFY_APP_URL) return process.env.SHOPIFY_APP_URL;
-  if (process.env.NEXT_PUBLIC_APP_URL) return process.env.NEXT_PUBLIC_APP_URL;
-  if (requestUrl) return new URL(requestUrl).origin;
-  return "http://localhost:3000";
 }
 
 export function getShopifyAuthUrl(

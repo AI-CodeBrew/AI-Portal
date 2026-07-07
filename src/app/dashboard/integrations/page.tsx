@@ -2,18 +2,11 @@ import Link from "next/link";
 import { IntegrationsNav } from "@/components/IntegrationsNav";
 import { ConnectionBadge } from "@/components/ConnectionStatus";
 import { BrandIconBox } from "@/components/BrandIcons";
+import { getAppUrl } from "@/lib/app-url";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getAuthUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
-
-function getAppUrl() {
-  return (
-    process.env.NEXT_PUBLIC_APP_URL ||
-    process.env.SHOPIFY_APP_URL ||
-    "http://localhost:3000"
-  );
-}
 
 async function getStoreForUser() {
   const user = await getAuthUser();
