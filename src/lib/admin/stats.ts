@@ -1,6 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getAdminResellers } from "@/lib/admin/resellers";
-import { getAdminOrders } from "@/lib/admin/orders";
+import { getAdminRecentOrders } from "@/lib/admin/orders";
 
 export interface AdminPlatformStats {
   resellers: number;
@@ -33,9 +33,10 @@ export interface AdminPlatformStats {
 export async function getAdminPlatformStats(): Promise<AdminPlatformStats> {
   const supabase = createAdminClient();
   const { resellers } = await getAdminResellers();
-  const orders = await getAdminOrders();
+  const recentOrdersData = await getAdminRecentOrders(5);
 
   const [
+    orderTotalRes,
     pendingRes,
     confirmedRes,
     chatTotalRes,
@@ -44,6 +45,7 @@ export async function getAdminPlatformStats(): Promise<AdminPlatformStats> {
     whatsappRes,
     adLinksRes,
   ] = await Promise.all([
+    supabase.from("orders").select("*", { count: "exact", head: true }),
     supabase
       .from("orders")
       .select("*", { count: "exact", head: true })
@@ -83,7 +85,7 @@ export async function getAdminPlatformStats(): Promise<AdminPlatformStats> {
     joined: r.created_at,
   }));
 
-  const recentOrders = orders.slice(0, 5).map((o) => ({
+  const recentOrders = recentOrdersData.map((o) => ({
     id: o.id,
     orderNumber: o.order_number,
     storeName: o.stores?.store_name ?? o.stores?.shop_domain ?? null,
@@ -96,7 +98,7 @@ export async function getAdminPlatformStats(): Promise<AdminPlatformStats> {
   return {
     resellers: resellers.length,
     orders: {
-      total: orders.length,
+      total: orderTotalRes.count ?? 0,
       pending: pendingRes.count ?? 0,
       confirmed: confirmedRes.count ?? 0,
     },

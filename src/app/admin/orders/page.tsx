@@ -1,22 +1,18 @@
 import { Suspense } from "react";
 import { getAdminResellers } from "@/lib/admin/resellers";
-import { getAdminOrders } from "@/lib/admin/orders";
 import { AdminPageHeader } from "@/components/AdminPageHeader";
 import { AdminOrdersView } from "@/components/AdminOrdersView";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminOrdersPage() {
-  const [{ resellers, error }, orders] = await Promise.all([
-    getAdminResellers(),
-    getAdminOrders(),
-  ]);
+  const { resellers, error } = await getAdminResellers();
 
   return (
     <div>
       <AdminPageHeader
         title="All Orders"
-        description="Browse orders by reseller. View only — resellers confirm orders from their dashboard."
+        description="Browse orders by reseller with pagination. View only — resellers confirm orders from their dashboard."
       />
 
       {error && (
@@ -32,7 +28,7 @@ export default async function AdminOrdersPage() {
           </div>
         }
       >
-        <AdminOrdersView resellers={resellers} orders={orders} />
+        <AdminOrdersView resellers={resellers} />
       </Suspense>
     </div>
   );
