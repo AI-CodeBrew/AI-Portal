@@ -12,8 +12,11 @@ export async function POST(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    if (user.role !== "reseller" && user.role !== "admin") {
-      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    if (user.role !== "reseller") {
+      return NextResponse.json(
+        { error: "Only resellers can confirm orders" },
+        { status: 403 }
+      );
     }
 
     const { id } = await params;

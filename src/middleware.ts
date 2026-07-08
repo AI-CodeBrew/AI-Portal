@@ -71,13 +71,13 @@ export async function middleware(request: NextRequest) {
 
   if (pathname === "/" || pathname === "/login" || pathname === "/signup") {
     const url = request.nextUrl.clone();
-    url.pathname = role === "admin" ? "/admin" : "/dashboard/orders";
+    url.pathname = role === "admin" ? "/admin" : "/dashboard";
     return NextResponse.redirect(url);
   }
 
   if (ADMIN_PATHS.some((p) => pathname.startsWith(p)) && role !== "admin") {
     const url = request.nextUrl.clone();
-    url.pathname = "/dashboard/orders";
+    url.pathname = "/dashboard";
     return NextResponse.redirect(url);
   }
 

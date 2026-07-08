@@ -4,13 +4,18 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import type { Order, OrderStatus } from "@/lib/types";
-import { createClient } from "@/lib/supabase/client";
 import { useStoreStatus } from "@/hooks/useStoreStatus";
 import { formatMoney } from "@/lib/currency";
-
-const PAGE_SIZE = 25;
-
-type StatusFilter = "all" | OrderStatus;
+import {
+  getOrdersListCache,
+  setOrdersListCache,
+  isOrdersCacheFresh,
+  clearOrdersListCache,
+  AUTO_REFRESH_MS,
+  type StatusFilter,
+  type OrdersListCache,
+} from "@/lib/orders-list-cache";
+import { OrderTrackingModal } from "@/components/OrderTrackingModal";
 
 const STATUS_FILTERS: {
   value: StatusFilter;
@@ -49,6 +54,34 @@ const STATUS_FILTERS: {
   },
 ];
 
+const PAGE_SIZE = 25;
+
+function hydrateFromCache(): {
+  orders: Order[];
+  page: number;
+  totalPages: number;
+  shopifyTotal: number;
+  filteredTotal: number;
+  statusFilter: StatusFilter;
+  statusCounts: OrdersListCache["statusCounts"];
+  nextPageInfo: string | null;
+  syncedPages: number;
+} | null {
+  const cached = getOrdersListCache();
+  if (!cached) return null;
+  return {
+    orders: cached.orders,
+    page: cached.page,
+    totalPages: cached.totalPages,
+    shopifyTotal: cached.shopifyTotal,
+    filteredTotal: cached.filteredTotal,
+    statusFilter: cached.statusFilter,
+    statusCounts: cached.statusCounts,
+    nextPageInfo: cached.nextPageInfo,
+    syncedPages: cached.syncedPages,
+  };
+}
+
 function formatDate(iso: string) {
   return new Date(iso).toLocaleString(undefined, {
     dateStyle: "medium",
@@ -80,148 +113,185 @@ function StatusPill({ status }: { status: OrderStatus }) {
 }
 
 export function OrdersList() {
-  const [orders, setOrders] = useState<Order[]>([]);
-  const [loading, setLoading] = useState(true);
+  const cached = hydrateFromCache();
+  const cacheIsFresh = Boolean(cached && isOrdersCacheFresh());
+  const [orders, setOrders] = useState<Order[]>(cached?.orders ?? []);
+  const [loading, setLoading] = useState(!cacheIsFresh);
   const [syncing, setSyncing] = useState(false);
   const [confirming, setConfirming] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
-  const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [shopifyTotal, setShopifyTotal] = useState(0);
-  const [filteredTotal, setFilteredTotal] = useState(0);
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("pending");
-  const [statusCounts, setStatusCounts] = useState({
-    all: 0,
-    pending: 0,
-    confirmed: 0,
-    cancelled: 0,
-  });
+  const [page, setPage] = useState(cached?.page ?? 1);
+  const [totalPages, setTotalPages] = useState(cached?.totalPages ?? 1);
+  const [shopifyTotal, setShopifyTotal] = useState(cached?.shopifyTotal ?? 0);
+  const [filteredTotal, setFilteredTotal] = useState(cached?.filteredTotal ?? 0);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>(
+    cached?.statusFilter ?? "pending"
+  );
+  const [statusCounts, setStatusCounts] = useState(
+    cached?.statusCounts ?? {
+      all: 0,
+      pending: 0,
+      confirmed: 0,
+      cancelled: 0,
+    }
+  );
 
-  const nextPageInfoRef = useRef<string | null>(null);
-  const syncedPagesRef = useRef(0);
+  const nextPageInfoRef = useRef<string | null>(cached?.nextPageInfo ?? null);
+  const syncedPagesRef = useRef(cached?.syncedPages ?? 0);
+  const initialLoadDoneRef = useRef(cacheIsFresh);
+  const [trackingOrder, setTrackingOrder] = useState<Order | null>(null);
 
   const { store, refresh: refreshStore } = useStoreStatus();
   const searchParams = useSearchParams();
 
-  const syncFromShopify = useCallback(
-    async (targetPage: number) => {
-      if (!store?.shopify_connected || statusFilter !== "all") return;
-
-      setSyncing(true);
-      try {
-        while (syncedPagesRef.current < targetPage) {
-          const res = await fetch("/api/orders/sync", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              pageInfo: nextPageInfoRef.current ?? undefined,
-              limit: PAGE_SIZE,
-            }),
-          });
-          const data = await res.json();
-          if (!res.ok) throw new Error(data.error ?? "Sync failed");
-
-          nextPageInfoRef.current = data.nextPageInfo ?? null;
-          syncedPagesRef.current += 1;
-          setShopifyTotal(data.shopifyTotal ?? 0);
-
-          if (!data.nextPageInfo && data.synced === 0) break;
-          if (!data.nextPageInfo && syncedPagesRef.current < targetPage) break;
-        }
-      } finally {
-        setSyncing(false);
+  const applyOrdersData = useCallback(
+    (
+      data: {
+        orders?: Order[];
+        total?: number;
+        totalPages?: number;
+        statusCounts?: typeof statusCounts;
+      },
+      p: number,
+      status: StatusFilter,
+      shopifyTotalValue: number
+    ) => {
+      const nextOrders = data.orders ?? [];
+      const nextFilteredTotal = data.total ?? 0;
+      const nextStatusCounts = data.statusCounts ?? statusCounts;
+      let nextTotalPages = data.totalPages ?? 1;
+      if (status === "all" && shopifyTotalValue > 0) {
+        nextTotalPages = Math.ceil(shopifyTotalValue / PAGE_SIZE);
       }
+
+      setOrders(nextOrders);
+      setFilteredTotal(nextFilteredTotal);
+      setStatusCounts(nextStatusCounts);
+      setTotalPages(nextTotalPages);
+
+      setOrdersListCache({
+        orders: nextOrders,
+        page: p,
+        totalPages: nextTotalPages,
+        shopifyTotal: shopifyTotalValue,
+        filteredTotal: nextFilteredTotal,
+        statusFilter: status,
+        statusCounts: nextStatusCounts,
+        nextPageInfo: nextPageInfoRef.current,
+        syncedPages: syncedPagesRef.current,
+        fetchedAt: Date.now(),
+      });
     },
-    [store?.shopify_connected, statusFilter]
+    [statusCounts]
   );
 
   const fetchOrdersPage = useCallback(
-    async (p: number, status: StatusFilter) => {
+    async (p: number, status: StatusFilter, shopifyTotalValue = shopifyTotal) => {
       const res = await fetch(
         `/api/orders?page=${p}&limit=${PAGE_SIZE}&status=${status}`
       );
       if (!res.ok) throw new Error("Failed to load orders");
       const data = await res.json();
-      setOrders(data.orders ?? []);
-      setFilteredTotal(data.total ?? 0);
-      setStatusCounts(
-        data.statusCounts ?? {
-          all: 0,
-          pending: 0,
-          confirmed: 0,
-          cancelled: 0,
-        }
-      );
-
-      if (status === "all" && shopifyTotal > 0) {
-        setTotalPages(Math.ceil(shopifyTotal / PAGE_SIZE));
-      } else {
-        setTotalPages(data.totalPages ?? 1);
-      }
+      applyOrdersData(data, p, status, shopifyTotalValue);
     },
-    [shopifyTotal]
+    [shopifyTotal, applyOrdersData]
   );
 
   const loadPage = useCallback(
-    async (p: number, status: StatusFilter = statusFilter) => {
-      setLoading(true);
+    async (
+      p: number,
+      status: StatusFilter = statusFilter,
+      options?: { syncShopify?: boolean; showLoading?: boolean }
+    ) => {
+      const syncShopify = options?.syncShopify ?? true;
+      const showLoading = options?.showLoading ?? true;
+
+      if (showLoading) {
+        setLoading(true);
+      }
       setError(null);
       try {
-        await syncFromShopify(p);
-        await fetchOrdersPage(p, status);
+        let currentShopifyTotal = shopifyTotal;
+        if (syncShopify) {
+          if (!store?.shopify_connected || status !== "all") {
+            // skip shopify sync
+          } else {
+            setSyncing(true);
+            try {
+              while (syncedPagesRef.current < p) {
+                const res = await fetch("/api/orders/sync", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    pageInfo: nextPageInfoRef.current ?? undefined,
+                    limit: PAGE_SIZE,
+                  }),
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error ?? "Sync failed");
+
+                nextPageInfoRef.current = data.nextPageInfo ?? null;
+                syncedPagesRef.current += 1;
+                currentShopifyTotal = data.shopifyTotal ?? currentShopifyTotal;
+                setShopifyTotal(currentShopifyTotal);
+
+                if (!data.nextPageInfo && data.synced === 0) break;
+                if (!data.nextPageInfo && syncedPagesRef.current < p) break;
+              }
+            } finally {
+              setSyncing(false);
+            }
+          }
+        }
+        await fetchOrdersPage(p, status, currentShopifyTotal);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load");
       } finally {
-        setLoading(false);
+        if (showLoading) {
+          setLoading(false);
+        }
       }
     },
-    [syncFromShopify, fetchOrdersPage, statusFilter]
+    [fetchOrdersPage, statusFilter, store?.shopify_connected, shopifyTotal]
   );
 
   useEffect(() => {
     if (searchParams.get("connected") === "shopify") {
       setSuccessMsg("Shopify connected! Syncing your orders...");
+      clearOrdersListCache();
+      initialLoadDoneRef.current = false;
       refreshStore();
     }
   }, [searchParams, refreshStore]);
 
   useEffect(() => {
-    if (store?.shopify_connected) {
-      loadPage(page, statusFilter);
-    } else {
+    if (!store?.shopify_connected) {
       setLoading(false);
+      return;
     }
+
+    if (initialLoadDoneRef.current && isOrdersCacheFresh()) {
+      setLoading(false);
+      return;
+    }
+
+    initialLoadDoneRef.current = true;
+    loadPage(page, statusFilter);
   }, [store?.shopify_connected]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    const supabase = createClient();
-    const channel = supabase
-      .channel("orders-realtime")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "orders" },
-        () => fetchOrdersPage(page, statusFilter)
-      )
-      .subscribe();
+    if (!store?.shopify_connected) return;
 
-    const poll = setInterval(() => {
-      if (store?.shopify_connected) {
-        syncFromShopify(1).then(() => fetchOrdersPage(page, statusFilter));
-      }
-    }, 30000);
+    const interval = setInterval(() => {
+      loadPage(page, statusFilter, {
+        syncShopify: statusFilter === "all",
+        showLoading: false,
+      });
+    }, AUTO_REFRESH_MS);
 
-    return () => {
-      supabase.removeChannel(channel);
-      clearInterval(poll);
-    };
-  }, [
-    page,
-    statusFilter,
-    store?.shopify_connected,
-    fetchOrdersPage,
-    syncFromShopify,
-  ]);
+    return () => clearInterval(interval);
+  }, [store?.shopify_connected, page, statusFilter, loadPage]);
 
   useEffect(() => {
     if (statusFilter === "all" && shopifyTotal > 0) {
@@ -258,22 +328,55 @@ export function OrdersList() {
     }
   }
 
+  function handleTrackingSaved(
+    orderId: string,
+    tracking: {
+      trackingNumber: string | null;
+      trackingCompany: string | null;
+    }
+  ) {
+    setOrders((prev) =>
+      prev.map((o) =>
+        o.id === orderId
+          ? {
+              ...o,
+              tracking_number: tracking.trackingNumber,
+              tracking_company: tracking.trackingCompany,
+            }
+          : o
+      )
+    );
+    setSuccessMsg(
+      tracking.trackingNumber
+        ? "Tracking saved and synced to Shopify."
+        : "Tracking saved."
+    );
+  }
+
   async function handleRefresh() {
     nextPageInfoRef.current = null;
     syncedPagesRef.current = 0;
-    await loadPage(page, statusFilter);
-    setSuccessMsg("Orders refreshed from Shopify.");
+    await loadPage(page, statusFilter, {
+      syncShopify: statusFilter === "all",
+      showLoading: true,
+    });
+    setSuccessMsg("Orders refreshed.");
   }
 
   function changeFilter(next: StatusFilter) {
     setStatusFilter(next);
     setPage(1);
-    loadPage(1, next);
+    nextPageInfoRef.current = null;
+    syncedPagesRef.current = 0;
+    loadPage(1, next, { syncShopify: next === "all", showLoading: true });
   }
 
   function goToPage(p: number) {
     setPage(p);
-    loadPage(p, statusFilter);
+    loadPage(p, statusFilter, {
+      syncShopify: statusFilter === "all",
+      showLoading: true,
+    });
   }
 
   if (!store?.shopify_connected && !loading) {
@@ -308,11 +411,18 @@ export function OrdersList() {
               ? ` · showing ${filteredTotal.toLocaleString()} ${statusFilter}`
               : ""}
           </p>
+          {!loading && isOrdersCacheFresh() && (
+            <p className="mt-1 text-xs text-slate-500">
+              Showing cached data · use Refresh or wait for auto-refresh (10
+              min)
+            </p>
+          )}
         </div>
         <button
           onClick={handleRefresh}
           disabled={syncing || loading}
           className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          title="Fetch latest orders from Shopify and database"
         >
           <span className={syncing ? "animate-spin" : ""}>↻</span>
           {syncing ? "Syncing..." : "Refresh"}
@@ -416,7 +526,7 @@ export function OrdersList() {
                     Status
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    Shopify sync
+                    Tracking
                   </th>
                   <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500">
                     Action
@@ -439,7 +549,11 @@ export function OrdersList() {
                       : "—";
 
                   return (
-                    <tr key={order.id} className="hover:bg-slate-50/80">
+                    <tr
+                      key={order.id}
+                      className="cursor-pointer hover:bg-slate-50/80"
+                      onClick={() => setTrackingOrder(order)}
+                    >
                       <td className="px-4 py-4">
                         <p className="font-semibold text-slate-900">
                           {order.order_number ?? order.id.slice(0, 8)}
@@ -468,28 +582,27 @@ export function OrdersList() {
                         <StatusPill status={order.status} />
                       </td>
                       <td className="px-4 py-4">
-                        {order.status === "confirmed" ? (
-                          <span
-                            className={`text-xs font-semibold ${
-                              order.shopify_sync_status === "synced"
-                                ? "text-emerald-700"
-                                : order.shopify_sync_status === "failed"
-                                  ? "text-red-700"
-                                  : "text-slate-500"
-                            }`}
-                            title={order.shopify_sync_error ?? undefined}
-                          >
-                            {order.shopify_sync_status === "synced"
-                              ? "Synced"
-                              : order.shopify_sync_status === "failed"
-                                ? "Failed"
-                                : "—"}
-                          </span>
+                        {order.tracking_number ? (
+                          <div>
+                            <p className="text-sm font-medium text-slate-900">
+                              {order.tracking_number}
+                            </p>
+                            {order.tracking_company && (
+                              <p className="text-xs text-slate-500">
+                                {order.tracking_company}
+                              </p>
+                            )}
+                          </div>
                         ) : (
-                          <span className="text-xs text-slate-400">—</span>
+                          <span className="text-xs text-slate-400">
+                            Add tracking
+                          </span>
                         )}
                       </td>
-                      <td className="px-4 py-4 text-right">
+                      <td
+                        className="px-4 py-4 text-right"
+                        onClick={(e) => e.stopPropagation()}
+                      >
                         {order.status === "pending" ? (
                           <button
                             onClick={() => confirmOrder(order.id)}
@@ -527,7 +640,11 @@ export function OrdersList() {
               }>;
 
               return (
-                <div key={order.id} className="p-4">
+                <div
+                  key={order.id}
+                  className="cursor-pointer p-4 hover:bg-slate-50/80"
+                  onClick={() => setTrackingOrder(order)}
+                >
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <p className="font-semibold text-slate-900">
@@ -563,24 +680,55 @@ export function OrdersList() {
                     </p>
                   )}
 
+                  {order.tracking_number && (
+                    <p className="mt-2 text-xs font-medium text-slate-700">
+                      Tracking: {order.tracking_number}
+                      {order.tracking_company
+                        ? ` (${order.tracking_company})`
+                        : ""}
+                    </p>
+                  )}
+
+                  <div
+                    className="mt-4 flex flex-wrap gap-2"
+                    onClick={(e) => e.stopPropagation()}
+                  >
                   {order.status === "pending" ? (
                     <button
                       onClick={() => confirmOrder(order.id)}
                       disabled={confirming === order.id}
-                      className="mt-4 w-full rounded-lg bg-blue-600 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+                      className="flex-1 rounded-lg bg-blue-600 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
                     >
                       {confirming === order.id ? "Confirming..." : "Confirm order"}
                     </button>
                   ) : order.confirmed_at ? (
-                    <p className="mt-3 text-xs text-slate-500">
+                    <p className="text-xs text-slate-500">
                       Confirmed {formatDate(order.confirmed_at)}
                     </p>
                   ) : null}
+                  <button
+                    type="button"
+                    onClick={() => setTrackingOrder(order)}
+                    className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    Tracking
+                  </button>
+                  </div>
                 </div>
               );
             })}
           </div>
         </div>
+      )}
+
+      {trackingOrder && (
+        <OrderTrackingModal
+          order={trackingOrder}
+          onClose={() => setTrackingOrder(null)}
+          onSaved={(tracking) =>
+            handleTrackingSaved(trackingOrder.id, tracking)
+          }
+        />
       )}
 
       {totalPages > 1 && (

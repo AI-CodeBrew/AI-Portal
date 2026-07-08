@@ -109,6 +109,30 @@ export function normalizePhone(phone: string): string {
   return phone.replace(/\D/g, "");
 }
 
+export async function getWhatsAppDisplayPhone(
+  phoneNumberId: string,
+  accessToken: string
+): Promise<string | null> {
+  try {
+    const res = await fetch(
+      `${GRAPH_API}/${phoneNumberId}?fields=display_phone_number`,
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }
+    );
+    if (!res.ok) return null;
+
+    const data = (await res.json()) as {
+      display_phone_number?: string;
+    };
+    return data.display_phone_number
+      ? normalizePhone(data.display_phone_number)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function exchangeEmbeddedSignupToken(
   code: string,
   creds: MetaAppCredentials

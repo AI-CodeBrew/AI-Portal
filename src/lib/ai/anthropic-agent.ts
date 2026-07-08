@@ -1,9 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
-import {
-  SALES_SYSTEM_PROMPT,
-  executeSalesTool,
-  type AgentContext,
-} from "./sales-tools";
+import { executeSalesTool, type AgentContext } from "./sales-tools";
+import { buildSalesSystemPrompt } from "./build-system-prompt";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -80,6 +77,8 @@ export async function runSalesAgentWithAnthropic(
   ctx: AgentContext,
   history: Array<{ role: "user" | "assistant"; content: string }>
 ): Promise<string> {
+  const storeLabel = ctx.store.store_name || ctx.store.shop_domain || "our store";
+
   const messages: Anthropic.MessageParam[] = history.map((m) => ({
     role: m.role,
     content: m.content,
@@ -88,7 +87,12 @@ export async function runSalesAgentWithAnthropic(
   const systemBlocks: Anthropic.TextBlockParam[] = [
     {
       type: "text",
-      text: SALES_SYSTEM_PROMPT,
+      text: buildSalesSystemPrompt({
+        storeLabel,
+        storeCurrency: ctx.storeCurrency,
+        aiConfig: ctx.aiConfig,
+        adProductContext: ctx.adProductContext,
+      }),
       cache_control: { type: "ephemeral" },
     },
   ];

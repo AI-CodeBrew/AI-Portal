@@ -1,54 +1,39 @@
-import { createAdminClient } from "@/lib/supabase/admin";
-import { AdminOrdersList } from "@/components/AdminOrdersList";
+import { Suspense } from "react";
+import { getAdminResellers } from "@/lib/admin/resellers";
+import { getAdminOrders } from "@/lib/admin/orders";
+import { AdminPageHeader } from "@/components/AdminPageHeader";
+import { AdminOrdersView } from "@/components/AdminOrdersView";
 
 export const dynamic = "force-dynamic";
 
-async function getAllOrders() {
-  const supabase = createAdminClient();
-  const { data } = await supabase
-    .from("orders")
-    .select(
-      `
-      id,
-      order_number,
-      total,
-      currency,
-      status,
-      source,
-      customers (phone, name),
-      stores (shop_domain, owner_email)
-    `
-    )
-    .order("created_at", { ascending: false })
-    .limit(100);
-
-  return data ?? [];
-}
-
 export default async function AdminOrdersPage() {
-  const raw = await getAllOrders();
-
-  const orders = raw.map((order) => ({
-    ...order,
-    customers: Array.isArray(order.customers)
-      ? order.customers[0] ?? null
-      : order.customers,
-    stores: Array.isArray(order.stores)
-      ? order.stores[0] ?? null
-      : order.stores,
-  }));
+  const [{ resellers, error }, orders] = await Promise.all([
+    getAdminResellers(),
+    getAdminOrders(),
+  ]);
 
   return (
     <div>
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-slate-900">All Orders</h1>
-        <p className="mt-1 text-sm text-slate-600">
-          Confirm orders — customer gets a WhatsApp message when WhatsApp is
-          connected for that store.
-        </p>
-      </div>
+      <AdminPageHeader
+        title="All Orders"
+        description="Browse orders by reseller. View only — resellers confirm orders from their dashboard."
+      />
 
-      <AdminOrdersList orders={orders} />
+      {error && (
+        <div className="mb-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+          Could not load resellers: {error}
+        </div>
+      )}
+
+      <Suspense
+        fallback={
+          <div className="rounded-xl border border-slate-200 bg-white p-8 text-sm text-slate-600">
+            Loading orders...
+          </div>
+        }
+      >
+        <AdminOrdersView resellers={resellers} orders={orders} />
+      </Suspense>
     </div>
   );
 }

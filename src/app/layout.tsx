@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "AI Commerce Portal",
-  description: "Multi-merchant e-commerce operations portal",
+  title: "Arabia AI — Commerce Portal",
+  description: "WhatsApp + Shopify automation powered by Arabia AI",
 };
 
 export default function RootLayout({

@@ -3,19 +3,29 @@ import {
   checkStock,
   createDraftOrder,
   getOrderStatus,
+  getShopCurrency,
 } from "@/lib/shopify";
+import { formatMoney } from "@/lib/currency";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Store } from "@/lib/types";
+import type { ResolvedStoreAiConfig } from "./ai-settings-types";
+import type { AdProductContext } from "@/lib/ads/types";
 
 export const SALES_SYSTEM_PROMPT = `You are a helpful, professional sales agent for an e-commerce store on WhatsApp.
 
 Your goal is to help customers find products, answer questions about prices and details, and close sales.
 
+CRITICAL — currency and prices:
+- The store has ONE currency (provided in your context as store_currency, e.g. PKR, USD).
+- Tool results include price_formatted — ALWAYS show prices using price_formatted exactly.
+- NEVER use $ or say "dollars" unless store_currency is USD.
+- For PKR use Rs / PKR formatting from price_formatted. Never convert to another currency.
+
 CRITICAL — product questions:
 - If the customer mentions a product name, asks for a price, or asks "do you have X" — you MUST call search_products first with the product name or keyword.
 - Never say you don't have a product without calling search_products.
 - Never invent product names, prices, or stock. Only use data returned by tools.
-- When search_products returns results, tell the customer: product name, price(s), in-stock status, and a short description if available.
+- When search_products returns results, tell the customer: product name, price_formatted, in-stock status, and a short description if available.
 - For the most accurate price/stock on a specific size or color, call check_stock with that variant_id.
 - If multiple variants exist (sizes/colors), list the options briefly and ask which they want.
 
@@ -32,6 +42,13 @@ export interface AgentContext {
   conversationId: string;
   customerPhone: string;
   customerId: string | null;
+  storeCurrency?: string | null;
+  aiConfig?: ResolvedStoreAiConfig | null;
+  adProductContext?: AdProductContext | null;
+}
+
+function formatVariantPrice(price: string, currency: string) {
+  return formatMoney(parseFloat(price), currency);
 }
 
 export const OPENAI_SALES_TOOLS = [
@@ -142,6 +159,15 @@ export async function executeSalesTool(
   const shopDomain = store.shop_domain!;
   const shopifyToken = store.shopify_access_token!;
 
+  let currency = ctx.storeCurrency ?? null;
+  if (!currency) {
+    try {
+      currency = await getShopCurrency(shopDomain, shopifyToken);
+    } catch (err) {
+      console.error("[sales-agent] Failed to fetch shop currency:", err);
+    }
+  }
+
   try {
     switch (name) {
       case "search_products": {
@@ -150,36 +176,67 @@ export async function executeSalesTool(
           return { result: { error: "Search query is required", products: [] } };
         }
         const products = await searchProducts(shopDomain, shopifyToken, query);
+        const withCurrency = products.map((p) => ({
+          ...p,
+          currency,
+          variants: p.variants.map((v) => ({
+            ...v,
+            currency,
+            price_formatted: formatVariantPrice(v.price, currency ?? "USD"),
+          })),
+        }));
         return {
           result: {
             query,
-            count: products.length,
-            products,
+            currency,
+            count: withCurrency.length,
+            products: withCurrency,
             message:
-              products.length === 0
+              withCurrency.length === 0
                 ? `No products found matching "${query}". Try a shorter keyword.`
-                : `Found ${products.length} product(s).`,
+                : `Found ${withCurrency.length} product(s). Prices are in ${currency}.`,
           },
         };
       }
 
-      case "check_stock":
+      case "check_stock": {
+        const stock = await checkStock(
+          shopDomain,
+          shopifyToken,
+          input.variant_id as string
+        );
         return {
-          result: await checkStock(
-            shopDomain,
-            shopifyToken,
-            input.variant_id as string
-          ),
+          result: {
+            ...stock,
+            currency,
+            price_formatted: formatVariantPrice(
+              stock.price,
+              currency ?? "USD"
+            ),
+          },
         };
+      }
 
-      case "get_order_status":
-        return {
-          result: await getOrderStatus(
-            shopDomain,
-            shopifyToken,
-            input.order_number as string
-          ),
-        };
+      case "get_order_status": {
+        const status = await getOrderStatus(
+          shopDomain,
+          shopifyToken,
+          input.order_number as string
+        );
+        if (status.found && status.total) {
+          return {
+            result: {
+              ...status,
+              currency,
+              total_formatted: formatMoney(
+                parseFloat(status.total),
+                currency ?? "USD"
+              ),
+            },
+          };
+        }
+        return { result: { ...status, currency } };
+      }
 
       case "create_draft_order": {
         const draft = await createDraftOrder(shopDomain, shopifyToken, {
@@ -229,6 +286,11 @@ export async function executeSalesTool(
             success: true,
             order_number: draft.order_number,
             total: draft.total,
+            currency: draft.currency ?? currency,
+            total_formatted: formatMoney(
+              draft.total,
+              draft.currency ?? currency ?? "USD"
+            ),
             message:
               "Draft order created. A team member will confirm it shortly.",
           },

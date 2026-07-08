@@ -3,6 +3,17 @@ import { verifyHubSignature256 } from "@/lib/crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { runSalesAgent, isSalesAgentConfigured } from "@/lib/ai/run-sales-agent";
 import { getRecentChatHistory } from "@/lib/ai/chat-history";
+import { quotaLimitMessage } from "@/lib/ai/plans";
+import { tryConsumeAiQuota } from "@/lib/ai/quota";
+import {
+  getStoreAiSettings,
+  personalizeOpeningMessage,
+} from "@/lib/ai/store-ai-settings";
+import {
+  resolveAdProductContext,
+  resolveAdLinkBySlug,
+} from "@/lib/ads/ad-links-service";
+import { parseAdRefFromMessage } from "@/lib/ads/whatsapp-ad-links";
 import {
   getStoreWhatsAppCredentials,
   resolveMetaSecret,
@@ -181,6 +192,8 @@ export async function handleWhatsAppWebhookMessage(
             .limit(1)
             .maybeSingle();
 
+          let isNewConversation = false;
+
           if (!conversation) {
             const { data: newConv } = await supabase
               .from("whatsapp_conversations")
@@ -192,6 +205,7 @@ export async function handleWhatsAppWebhookMessage(
               .select("*")
               .single();
             conversation = newConv;
+            isNewConversation = true;
           }
 
           if (!conversation) continue;
@@ -211,21 +225,92 @@ export async function handleWhatsAppWebhookMessage(
             continue;
           }
 
+          const adSlug = parseAdRefFromMessage(inboundText);
+          if (adSlug) {
+            const adLink = await resolveAdLinkBySlug(activeStore.id, adSlug);
+            if (adLink) {
+              await supabase
+                .from("whatsapp_conversations")
+                .update({ ad_link_id: adLink.id })
+                .eq("id", conversation.id);
+              conversation = { ...conversation, ad_link_id: adLink.id };
+            }
+          }
+
+          const adProductContext = await resolveAdProductContext(
+            activeStore.id,
+            {
+              messageText: inboundText,
+              conversationAdLinkId:
+                (conversation as { ad_link_id?: string | null }).ad_link_id ??
+                null,
+            }
+          );
+
+          if (isNewConversation) {
+            try {
+              const aiSettings = await getStoreAiSettings(activeStore.id);
+              const opening = aiSettings.openingMessage?.trim();
+              if (opening) {
+                const storeName =
+                  activeStore.store_name ||
+                  activeStore.shop_domain?.replace(/\.myshopify\.com$/i, "") ||
+                  "our store";
+                const agentName =
+                  aiSettings.agentName?.trim() || storeName;
+                const openingText = personalizeOpeningMessage(opening, {
+                  agentName,
+                  storeName,
+                });
+                const openingSent = await sendReply(
+                  activeStore,
+                  customerPhone,
+                  openingText
+                );
+                await supabase.from("whatsapp_messages").insert({
+                  conversation_id: conversation.id,
+                  direction: "out",
+                  content: openingText,
+                });
+                if (!openingSent) {
+                  console.error(
+                    `[whatsapp-webhook] Opening message not sent to ${customerPhone}`
+                  );
+                }
+              }
+            } catch (openingErr) {
+              console.error("[whatsapp-webhook] Opening message error:", openingErr);
+            }
+          }
+
           let replyText: string;
 
           if (isSalesAgentConfigured()) {
             try {
-              const chatHistory = await getRecentChatHistory(conversation.id);
+              const quota = await tryConsumeAiQuota(activeStore.id);
 
-              replyText = await runSalesAgent(
-                {
-                  store: activeStore,
-                  conversationId: conversation.id,
-                  customerPhone,
-                  customerId: conversation.customer_id,
-                },
-                chatHistory
-              );
+              if (!quota.allowed) {
+                replyText = quotaLimitMessage(
+                  quota.usage.plan,
+                  quota.usage.used
+                );
+                console.log(
+                  `[whatsapp-webhook] AI quota exceeded store=${activeStore.id} used=${quota.usage.used}/${quota.usage.limit}`
+                );
+              } else {
+                const chatHistory = await getRecentChatHistory(conversation.id);
+
+                replyText = await runSalesAgent(
+                  {
+                    store: activeStore,
+                    conversationId: conversation.id,
+                    customerPhone,
+                    customerId: conversation.customer_id,
+                    adProductContext,
+                  },
+                  chatHistory
+                );
+              }
             } catch (agentErr) {
               console.error("[whatsapp-webhook] AI agent error:", agentErr);
               replyText =

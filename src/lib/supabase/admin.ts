@@ -6,7 +6,11 @@ export function createAdminClient() {
 
   if (!url) throw new Error("NEXT_PUBLIC_SUPABASE_URL is not set");
   if (!key) {
-    // Allow build to succeed; runtime will fail with clear error
+    if (process.env.NODE_ENV === "production") {
+      console.error(
+        "SUPABASE_SERVICE_ROLE_KEY is missing — admin pages cannot load reseller data."
+      );
+    }
     return createClient(url, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, {
       auth: { persistSession: false, autoRefreshToken: false },
     });

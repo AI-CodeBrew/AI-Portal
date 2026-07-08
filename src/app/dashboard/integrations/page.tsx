@@ -2,7 +2,8 @@ import Link from "next/link";
 import { IntegrationsNav } from "@/components/IntegrationsNav";
 import { ConnectionBadge } from "@/components/ConnectionStatus";
 import { BrandIconBox } from "@/components/BrandIcons";
-import { getAppUrl } from "@/lib/app-url";
+import { PlanUsageCard } from "@/components/PlanUsageCard";
+import { DashboardPageHeader } from "@/components/DashboardPageHeader";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getAuthUser } from "@/lib/auth";
 
@@ -52,7 +53,15 @@ export default async function IntegrationsOverviewPage() {
 
   return (
     <div>
-      <IntegrationsNav />
+      <DashboardPageHeader
+        title="Integrations"
+        description="Connect Shopify and WhatsApp as separate apps."
+      >
+        <IntegrationsNav />
+      </DashboardPageHeader>
+      <div className="mb-6">
+        <PlanUsageCard compact />
+      </div>
       <div className="grid gap-4 sm:grid-cols-2">
         {apps.map((app) => (
           <Link

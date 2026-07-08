@@ -4,6 +4,7 @@ import { Suspense, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { AuthBrandPanel } from "@/components/auth/AuthBrandPanel";
 
 function LoginForm() {
   const router = useRouter();
@@ -38,13 +39,13 @@ function LoginForm() {
 
     const dest =
       redirect ||
-      (profile?.role === "admin" ? "/admin" : "/dashboard/orders");
+      (profile?.role === "admin" ? "/admin" : "/dashboard");
     router.push(dest);
     router.refresh();
   }
 
   return (
-    <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+    <form onSubmit={handleSubmit} className="space-y-5">
       {error && (
         <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
           {error}
@@ -52,37 +53,51 @@ function LoginForm() {
       )}
 
       <div>
-        <label className="mb-1 block text-sm font-medium text-slate-700">
+        <label
+          htmlFor="email"
+          className="mb-1.5 block text-sm font-medium text-slate-700"
+        >
           Email
         </label>
         <input
+          id="email"
           type="email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
+          placeholder="you@brand.com"
           required
-          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+          className="w-full rounded-lg border border-slate-200 bg-white px-3.5 py-2.5 text-slate-900 placeholder:text-slate-400 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100"
         />
       </div>
 
       <div>
-        <label className="mb-1 block text-sm font-medium text-slate-700">
+        <label
+          htmlFor="password"
+          className="mb-1.5 block text-sm font-medium text-slate-700"
+        >
           Password
         </label>
         <input
+          id="password"
           type="password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           required
-          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+          className="w-full rounded-lg border border-slate-200 bg-white px-3.5 py-2.5 text-slate-900 placeholder:text-slate-400 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100"
         />
       </div>
 
       <button
         type="submit"
         disabled={loading}
-        className="w-full rounded-lg bg-blue-600 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+        className="flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-500 py-3 text-sm font-semibold text-white transition-colors hover:bg-emerald-600 disabled:opacity-50"
       >
         {loading ? "Signing in..." : "Sign in"}
+        {!loading && (
+          <span aria-hidden className="text-base">
+            →
+          </span>
+        )}
       </button>
     </form>
   );
@@ -90,26 +105,40 @@ function LoginForm() {
 
 export default function LoginPage() {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-50 px-4">
-      <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
-        <h1 className="text-2xl font-bold text-slate-900">Sign in</h1>
-        <p className="mt-1 text-sm text-slate-600">
-          Reseller dashboard or admin panel
-        </p>
+    <div className="flex min-h-screen flex-col lg:flex-row">
+      <div className="lg:w-1/2">
+        <AuthBrandPanel />
+      </div>
 
-        <Suspense fallback={<p className="mt-6 text-slate-600">Loading...</p>}>
-          <LoginForm />
-        </Suspense>
+      <div className="flex flex-1 items-center justify-center bg-[#F9FAFB] px-6 py-12 lg:w-1/2 lg:px-12">
+        <div className="w-full max-w-md rounded-2xl border border-slate-200/80 bg-white p-8 shadow-sm sm:p-10">
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
+            Welcome back
+          </h1>
+          <p className="mt-2 text-sm text-slate-500 sm:text-base">
+            Sign in to your Arabia AI reseller dashboard.
+          </p>
 
-        <p className="mt-6 text-center text-sm text-slate-600">
-          Don&apos;t have an account?{" "}
-          <Link
-            href="/signup"
-            className="font-semibold text-blue-600 hover:underline"
-          >
-            Sign up as reseller
-          </Link>
-        </p>
+          <div className="mt-8">
+            <Suspense
+              fallback={
+                <p className="text-sm text-slate-500">Loading...</p>
+              }
+            >
+              <LoginForm />
+            </Suspense>
+          </div>
+
+          <p className="mt-8 text-center text-sm text-slate-600">
+            New to Arabia AI?{" "}
+            <Link
+              href="/signup"
+              className="font-semibold text-emerald-600 hover:text-emerald-700 hover:underline"
+            >
+              Create an account
+            </Link>
+          </p>
+        </div>
       </div>
     </div>
   );

@@ -1,3 +1,13 @@
+const CURRENCY_LOCALES: Record<string, string> = {
+  PKR: "en-PK",
+  USD: "en-US",
+  GBP: "en-GB",
+  EUR: "de-DE",
+  AED: "en-AE",
+  SAR: "ar-SA",
+  INR: "en-IN",
+};
+
 export function formatMoney(
   amount: number | null | undefined,
   currency?: string | null
@@ -12,8 +22,10 @@ export function formatMoney(
     });
   }
 
+  const locale = CURRENCY_LOCALES[code];
+
   try {
-    return new Intl.NumberFormat(undefined, {
+    return new Intl.NumberFormat(locale, {
       style: "currency",
       currency: code,
     }).format(value);

@@ -21,6 +21,7 @@ export interface Store {
   whatsapp_waba_id: string | null;
   owner_email: string | null;
   owner_id: string | null;
+  plan_id?: string | null;
   created_at: string;
 }
 
@@ -66,6 +67,9 @@ export interface Order {
   confirmed_at: string | null;
   shopify_sync_status: ShopifySyncStatus | null;
   shopify_sync_error: string | null;
+  tracking_number: string | null;
+  tracking_company: string | null;
+  shopify_fulfillment_id: string | null;
   created_at: string;
   customers?: Customer | null;
 }

@@ -8,7 +8,7 @@ type InboxFilter = "all" | "ai" | "handoff";
 const FILTER_LABELS: Record<InboxFilter, string> = {
   all: "All",
   ai: "AI handling",
-  handoff: "Needs you",
+  handoff: "Manual",
 };
 
 export function InboxPanel() {
@@ -18,6 +18,7 @@ export function InboxPanel() {
   const [messages, setMessages] = useState<WhatsappMessage[]>([]);
   const [reply, setReply] = useState("");
   const [sending, setSending] = useState(false);
+  const [switchingMode, setSwitchingMode] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -70,13 +71,33 @@ export function InboxPanel() {
     setSending(false);
   }
 
+  async function switchMode(mode: "ai" | "manual") {
+    if (!selectedId) return;
+    setSwitchingMode(true);
+    try {
+      const res = await fetch("/api/inbox/mode", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversationId: selectedId, mode }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error ?? "Failed to update mode");
+      }
+      await fetchConversations();
+    } finally {
+      setSwitchingMode(false);
+    }
+  }
+
   function statusLabel(status: WhatsappConversation["status"]) {
-    if (status === "human_handoff") return "Needs you";
+    if (status === "human_handoff") return "Manual";
     if (status === "ai_handling") return "AI";
     return status;
   }
 
   const selected = conversations.find((c) => c.id === selectedId);
+  const isManual = selected?.status === "human_handoff";
 
   if (loading) {
     return <p className="text-slate-600">Loading inbox...</p>;
@@ -143,9 +164,53 @@ export function InboxPanel() {
 
           <div className="flex flex-1 flex-col bg-white">
             <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
-              <p className="font-semibold text-slate-900">
-                {selected ? `+${selected.customer_phone}` : "Select conversation"}
-              </p>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="font-semibold text-slate-900">
+                    {selected ? `+${selected.customer_phone}` : "Select conversation"}
+                  </p>
+                  {selected && (
+                    <p className="mt-0.5 text-xs text-slate-600">
+                      {isManual
+                        ? "You are replying — AI is paused for this chat"
+                        : "AI is handling replies automatically"}
+                    </p>
+                  )}
+                </div>
+
+                {selected && (
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                        isManual
+                          ? "bg-amber-100 text-amber-900"
+                          : "bg-emerald-100 text-emerald-900"
+                      }`}
+                    >
+                      {isManual ? "Manual" : "AI"}
+                    </span>
+                    {isManual ? (
+                      <button
+                        type="button"
+                        onClick={() => switchMode("ai")}
+                        disabled={switchingMode}
+                        className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                      >
+                        {switchingMode ? "Switching..." : "Switch to AI"}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => switchMode("manual")}
+                        disabled={switchingMode}
+                        className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+                      >
+                        {switchingMode ? "Switching..." : "Take over manually"}
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="flex-1 space-y-3 overflow-y-auto bg-slate-50 p-4">
@@ -169,10 +234,20 @@ export function InboxPanel() {
 
             {selected && (
               <div className="border-t border-slate-200 bg-white p-4">
+                {isManual && (
+                  <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                    Manual mode: reply below. The AI will not respond until you
+                    switch back to AI.
+                  </p>
+                )}
                 <textarea
                   value={reply}
                   onChange={(e) => setReply(e.target.value)}
-                  placeholder="Type your reply..."
+                  placeholder={
+                    isManual
+                      ? "Type your manual reply..."
+                      : "Type a reply (optional — AI is handling this chat)"
+                  }
                   rows={2}
                   className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
                 />
@@ -184,13 +259,23 @@ export function InboxPanel() {
                   >
                     Send
                   </button>
-                  <button
-                    onClick={() => sendReply("ai_handling")}
-                    disabled={sending || !reply.trim()}
-                    className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50"
-                  >
-                    Send & return to AI
-                  </button>
+                  {isManual ? (
+                    <button
+                      onClick={() => sendReply("ai_handling")}
+                      disabled={sending || !reply.trim()}
+                      className="rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-2 text-sm font-medium text-emerald-900 hover:bg-emerald-100 disabled:opacity-50"
+                    >
+                      Send & switch to AI
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => sendReply("ai_handling")}
+                      disabled={sending || !reply.trim()}
+                      className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50"
+                    >
+                      Send & keep AI on
+                    </button>
+                  )}
                   <button
                     onClick={() => sendReply("closed")}
                     disabled={sending || !reply.trim()}

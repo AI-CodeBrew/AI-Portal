@@ -5,7 +5,7 @@ import { getAppUrl } from "./app-url";
 export { getAppUrl };
 
 export const DEFAULT_SHOPIFY_SCOPES =
-  "read_orders,write_orders,read_products,read_customers,write_draft_orders";
+  "read_orders,write_orders,read_products,read_customers,write_draft_orders,read_merchant_managed_fulfillment_orders,write_merchant_managed_fulfillment_orders";
 
 const API_VERSION = "2024-10";
 
@@ -127,6 +127,36 @@ export async function shopifyAdminFetch(
       ...options.headers,
     },
   });
+}
+
+const shopCurrencyCache = new Map<
+  string,
+  { currency: string; expires: number }
+>();
+const SHOP_CURRENCY_TTL_MS = 5 * 60 * 1000;
+
+/** Shopify store currency code (e.g. PKR, USD) — prices in Admin API use this currency. */
+export async function getShopCurrency(
+  shopDomain: string,
+  encryptedToken: string
+): Promise<string> {
+  const cached = shopCurrencyCache.get(shopDomain);
+  if (cached && cached.expires > Date.now()) {
+    return cached.currency;
+  }
+
+  const res = await shopifyAdminFetch(shopDomain, encryptedToken, "/shop.json");
+  if (!res.ok) {
+    throw new Error(`Shop info failed: ${await res.text()}`);
+  }
+
+  const data = (await res.json()) as { shop: { currency?: string } };
+  const currency = (data.shop.currency || "USD").toUpperCase();
+  shopCurrencyCache.set(shopDomain, {
+    currency,
+    expires: Date.now() + SHOP_CURRENCY_TTL_MS,
+  });
+  return currency;
 }
 
 export async function registerShopifyWebhooks(
@@ -687,5 +717,163 @@ export async function fetchShopifyOrdersPage(
     orders: data.orders ?? [],
     nextPageInfo: next,
     previousPageInfo: previous,
+  };
+}
+
+export interface ShopifyTrackingInfo {
+  fulfillmentId: string | null;
+  trackingNumber: string | null;
+  trackingCompany: string | null;
+}
+
+export async function fetchShopifyOrderTracking(
+  shopDomain: string,
+  encryptedToken: string,
+  shopifyOrderId: string
+): Promise<ShopifyTrackingInfo> {
+  const res = await shopifyAdminFetch(
+    shopDomain,
+    encryptedToken,
+    `/orders/${shopifyOrderId}/fulfillments.json`
+  );
+
+  if (!res.ok) {
+    throw new Error(`Fulfillments fetch failed: ${await res.text()}`);
+  }
+
+  const data = (await res.json()) as {
+    fulfillments: Array<{
+      id: number;
+      tracking_number: string | null;
+      tracking_company: string | null;
+    }>;
+  };
+
+  const fulfillments = data.fulfillments ?? [];
+  if (fulfillments.length === 0) {
+    return {
+      fulfillmentId: null,
+      trackingNumber: null,
+      trackingCompany: null,
+    };
+  }
+
+  const withTracking = fulfillments.filter((f) => f.tracking_number);
+  const latest = withTracking[withTracking.length - 1] ?? fulfillments.at(-1)!;
+
+  return {
+    fulfillmentId: String(latest.id),
+    trackingNumber: latest.tracking_number,
+    trackingCompany: latest.tracking_company,
+  };
+}
+
+export async function setShopifyOrderTracking(
+  shopDomain: string,
+  encryptedToken: string,
+  shopifyOrderId: string,
+  params: {
+    trackingNumber: string;
+    trackingCompany?: string | null;
+    fulfillmentId?: string | null;
+  }
+): Promise<ShopifyTrackingInfo> {
+  const trackingInfo = {
+    number: params.trackingNumber.trim(),
+    company: params.trackingCompany?.trim() || undefined,
+  };
+
+  if (params.fulfillmentId) {
+    const res = await shopifyAdminFetch(
+      shopDomain,
+      encryptedToken,
+      `/fulfillments/${params.fulfillmentId}/update_tracking.json`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          fulfillment: {
+            notify_customer: true,
+            tracking_info: trackingInfo,
+          },
+        }),
+      }
+    );
+
+    if (!res.ok) {
+      throw new Error(`Update tracking failed: ${await res.text()}`);
+    }
+
+    return {
+      fulfillmentId: params.fulfillmentId,
+      trackingNumber: trackingInfo.number,
+      trackingCompany: trackingInfo.company ?? null,
+    };
+  }
+
+  const foRes = await shopifyAdminFetch(
+    shopDomain,
+    encryptedToken,
+    `/orders/${shopifyOrderId}/fulfillment_orders.json`
+  );
+
+  if (!foRes.ok) {
+    throw new Error(`Fulfillment orders fetch failed: ${await foRes.text()}`);
+  }
+
+  const foData = (await foRes.json()) as {
+    fulfillment_orders: Array<{ id: number; status: string }>;
+  };
+
+  const openOrders = (foData.fulfillment_orders ?? []).filter((fo) =>
+    ["open", "in_progress", "scheduled"].includes(fo.status)
+  );
+
+  if (openOrders.length === 0) {
+    const existing = await fetchShopifyOrderTracking(
+      shopDomain,
+      encryptedToken,
+      shopifyOrderId
+    );
+    if (existing.fulfillmentId) {
+      return setShopifyOrderTracking(shopDomain, encryptedToken, shopifyOrderId, {
+        ...params,
+        fulfillmentId: existing.fulfillmentId,
+      });
+    }
+    throw new Error(
+      "This order cannot be fulfilled on Shopify yet. Confirm the order first or check fulfillment status in Shopify."
+    );
+  }
+
+  const res = await shopifyAdminFetch(shopDomain, encryptedToken, `/fulfillments.json`, {
+    method: "POST",
+    body: JSON.stringify({
+      fulfillment: {
+        line_items_by_fulfillment_order: openOrders.map((fo) => ({
+          fulfillment_order_id: fo.id,
+        })),
+        notify_customer: true,
+        tracking_info: trackingInfo,
+      },
+    }),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Create fulfillment failed: ${await res.text()}`);
+  }
+
+  const data = (await res.json()) as {
+    fulfillment: {
+      id: number;
+      tracking_number: string | null;
+      tracking_company: string | null;
+    };
+  };
+
+  return {
+    fulfillmentId: String(data.fulfillment.id),
+    trackingNumber: data.fulfillment.tracking_number ?? trackingInfo.number,
+    trackingCompany:
+      data.fulfillment.tracking_company ?? trackingInfo.company ?? null,
   };
 }

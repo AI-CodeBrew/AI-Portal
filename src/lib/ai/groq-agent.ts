@@ -1,10 +1,10 @@
 import {
-  SALES_SYSTEM_PROMPT,
   OPENAI_SALES_TOOLS,
   executeSalesTool,
   type AgentContext,
 } from "./sales-tools";
 import { CHAT_HISTORY_LIMIT } from "./chat-history";
+import { buildSalesSystemPrompt } from "./build-system-prompt";
 
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 const DEFAULT_MODEL = "llama-3.3-70b-versatile";
@@ -96,14 +96,22 @@ export async function runSalesAgentWithGroq(
 ): Promise<string> {
   const storeLabel = ctx.store.store_name || ctx.store.shop_domain || "our store";
   const latestUser = lastUserMessage(history);
-  const productHint = looksLikeProductQuery(latestUser)
-    ? `\n\nThe customer's latest message appears to be about a product ("${latestUser.slice(0, 120)}"). You MUST call search_products with a relevant keyword before replying.`
-    : "";
+  const productHint = ctx.adProductContext
+    ? `\n\nThe customer clicked an ad for "${ctx.adProductContext.productTitle}". Use the ad product context below — do not ask what product they want unless they change topic.`
+    : looksLikeProductQuery(latestUser)
+      ? `\n\nThe customer's latest message appears to be about a product ("${latestUser.slice(0, 120)}"). You MUST call search_products with a relevant keyword before replying.`
+      : "";
 
   const messages: ChatMessage[] = [
     {
       role: "system",
-      content: `${SALES_SYSTEM_PROMPT}\n\nYou are selling for: ${storeLabel}.${productHint}\n\nYou receive the last ${CHAT_HISTORY_LIMIT} messages of this chat (oldest to newest).`,
+      content: buildSalesSystemPrompt({
+        storeLabel,
+        storeCurrency: ctx.storeCurrency,
+        productHint,
+        aiConfig: ctx.aiConfig,
+        adProductContext: ctx.adProductContext,
+      }),
     },
     ...history.slice(-CHAT_HISTORY_LIMIT).map((m) => ({
       role: m.role,

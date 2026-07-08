@@ -24,33 +24,26 @@ export function IntegrationsNav() {
   const pathname = usePathname();
 
   return (
-    <div className="mb-8">
-      <h1 className="text-2xl font-bold text-slate-900">Integrations</h1>
-      <p className="mt-1 text-sm text-slate-600">
-        Connect Shopify and WhatsApp as separate apps
-      </p>
-
-      <div className="mt-6 flex flex-wrap gap-1 border-b border-slate-200">
-        {tabs.map((tab) => {
-          const active = tab.exact
-            ? pathname === tab.href
-            : pathname.startsWith(tab.href);
-          return (
-            <Link
-              key={tab.href}
-              href={tab.href}
-              className={`inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
-                active
-                  ? "border-blue-600 text-blue-700"
-                  : "border-transparent text-slate-600 hover:text-slate-900"
-              }`}
-            >
-              {tab.icon}
-              {tab.label}
-            </Link>
-          );
-        })}
-      </div>
+    <div className="flex flex-wrap gap-1 border-b border-slate-200">
+      {tabs.map((tab) => {
+        const active = tab.exact
+          ? pathname === tab.href
+          : pathname.startsWith(tab.href);
+        return (
+          <Link
+            key={tab.href}
+            href={tab.href}
+            className={`-mb-px inline-flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors ${
+              active
+                ? "border-emerald-500 text-emerald-700"
+                : "border-transparent text-slate-600 hover:text-slate-900"
+            }`}
+          >
+            {tab.icon}
+            {tab.label}
+          </Link>
+        );
+      })}
     </div>
   );
 }
