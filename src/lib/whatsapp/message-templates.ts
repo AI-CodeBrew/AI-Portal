@@ -6,6 +6,9 @@ import {
 const GRAPH_API = "https://graph.facebook.com/v21.0";
 
 export type WaTemplateCategory = "UTILITY" | "MARKETING" | "AUTHENTICATION";
+/** Categories available when creating/editing templates in the portal */
+export type WaTemplateCategorySelectable = "UTILITY" | "MARKETING";
+
 export type WaTemplateStatus =
   | "draft"
   | "pending"
@@ -34,7 +37,7 @@ export interface WhatsAppMessageTemplate {
 
 export interface CreateWaTemplateInput {
   name: string;
-  category: WaTemplateCategory;
+  category: WaTemplateCategorySelectable;
   language: string;
   headerText?: string | null;
   bodyText: string;
@@ -177,13 +180,16 @@ export async function createWhatsAppTemplate(
   }
   if (!bodyText) return { error: "Body is required" };
 
+  const category: WaTemplateCategorySelectable =
+    input.category === "MARKETING" ? "MARKETING" : "UTILITY";
+
   const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("whatsapp_message_templates")
     .insert({
       store_id: storeId,
       name,
-      category: input.category || "UTILITY",
+      category,
       language: input.language || "en",
       header_text: input.headerText?.trim() || null,
       body_text: bodyText,
@@ -242,7 +248,10 @@ export async function updateWhatsAppTemplate(
     }
     payload.name = name;
   }
-  if (input.category !== undefined) payload.category = input.category;
+  if (input.category !== undefined) {
+    payload.category =
+      input.category === "MARKETING" ? "MARKETING" : "UTILITY";
+  }
   if (input.language !== undefined) payload.language = input.language;
   if (input.headerText !== undefined) {
     payload.header_text = input.headerText?.trim() || null;

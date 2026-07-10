@@ -4,7 +4,7 @@ import {
   deleteWhatsAppTemplate,
   submitWhatsAppTemplateToMeta,
   updateWhatsAppTemplate,
-  type WaTemplateCategory,
+  type WaTemplateCategorySelectable,
 } from "@/lib/whatsapp/message-templates";
 
 type Params = { params: Promise<{ id: string }> };
@@ -16,7 +16,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     const body = (await request.json()) as {
       action?: "update" | "submit";
       name?: string;
-      category?: WaTemplateCategory;
+      category?: WaTemplateCategorySelectable;
       language?: string;
       headerText?: string | null;
       bodyText?: string;

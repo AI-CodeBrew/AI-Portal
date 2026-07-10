@@ -5,7 +5,7 @@ import {
   listWhatsAppTemplates,
   syncWhatsAppTemplatesFromMeta,
   templateStats,
-  type WaTemplateCategory,
+  type WaTemplateCategorySelectable,
 } from "@/lib/whatsapp/message-templates";
 
 export async function GET(request: NextRequest) {
@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
     const { storeId } = await requireResellerStore();
     const body = (await request.json()) as {
       name?: string;
-      category?: WaTemplateCategory;
+      category?: WaTemplateCategorySelectable;
       language?: string;
       headerText?: string | null;
       bodyText?: string;

@@ -2,15 +2,14 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type {
-  WaTemplateCategory,
+  WaTemplateCategorySelectable,
   WaTemplateStatus,
   WhatsAppMessageTemplate,
 } from "@/lib/whatsapp/message-templates";
 
-const CATEGORIES: Array<{ id: WaTemplateCategory; label: string }> = [
+const CATEGORIES: Array<{ id: WaTemplateCategorySelectable; label: string }> = [
   { id: "UTILITY", label: "Utility (transactional)" },
   { id: "MARKETING", label: "Marketing" },
-  { id: "AUTHENTICATION", label: "Authentication" },
 ];
 
 const LANGUAGES = [
@@ -63,7 +62,7 @@ function StatusBadge({ status }: { status: WaTemplateStatus }) {
 function emptyForm() {
   return {
     name: "",
-    category: "UTILITY" as WaTemplateCategory,
+    category: "UTILITY" as WaTemplateCategorySelectable,
     language: "en",
     headerText: "",
     bodyText: "",
@@ -134,7 +133,8 @@ export function WhatsAppTemplatesPanel() {
     setEditing(t);
     setForm({
       name: t.name,
-      category: t.category,
+      category:
+        t.category === "MARKETING" ? "MARKETING" : "UTILITY",
       language: t.language,
       headerText: t.header_text ?? "",
       bodyText: t.body_text,
@@ -443,7 +443,7 @@ export function WhatsAppTemplatesPanel() {
                     onChange={(e) =>
                       setForm((f) => ({
                         ...f,
-                        category: e.target.value as WaTemplateCategory,
+                        category: e.target.value as WaTemplateCategorySelectable,
                       }))
                     }
                     className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
