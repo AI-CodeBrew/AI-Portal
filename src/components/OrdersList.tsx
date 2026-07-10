@@ -15,6 +15,7 @@ import {
   type StatusFilter,
 } from "@/lib/orders-list-cache";
 import { OrderTrackingModal } from "@/components/OrderTrackingModal";
+import { OrderFollowUpModal } from "@/components/OrderFollowUpModal";
 
 const STATUS_FILTERS: {
   value: StatusFilter;
@@ -118,6 +119,7 @@ export function OrdersList() {
     }
   );
   const [trackingOrder, setTrackingOrder] = useState<Order | null>(null);
+  const [followUpOrder, setFollowUpOrder] = useState<Order | null>(null);
 
   const nextPageInfoRef = useRef<string | null>(existing?.nextPageInfo ?? null);
   const syncedPagesRef = useRef(existing?.syncedPages ?? 0);
@@ -752,6 +754,13 @@ export function OrdersList() {
                         >
                           Tracking
                         </button>
+                        <button
+                          type="button"
+                          onClick={() => setFollowUpOrder(order)}
+                          className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-100"
+                        >
+                          Follow-up
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -799,6 +808,13 @@ export function OrdersList() {
                   >
                     Tracking
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => setFollowUpOrder(order)}
+                    className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-800"
+                  >
+                    Follow-up
+                  </button>
                 </div>
               </div>
             ))}
@@ -837,6 +853,17 @@ export function OrdersList() {
           order={trackingOrder}
           onClose={() => setTrackingOrder(null)}
           onSaved={handleTrackingSaved}
+        />
+      )}
+
+      {followUpOrder && (
+        <OrderFollowUpModal
+          order={followUpOrder}
+          onClose={() => setFollowUpOrder(null)}
+          onSent={(msg) => {
+            setSuccessMsg(msg);
+            setError(null);
+          }}
         />
       )}
     </div>

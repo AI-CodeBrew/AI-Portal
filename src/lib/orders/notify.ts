@@ -5,6 +5,7 @@ import {
   formatOrderConfirmationParams,
   normalizePhone,
 } from "@/lib/whatsapp";
+import { getApprovedWhatsAppOrderTemplate } from "@/lib/whatsapp/message-templates";
 import { formatMoney } from "@/lib/currency";
 import type { Store } from "@/lib/types";
 
@@ -39,12 +40,17 @@ export async function notifyCustomerOrderConfirmed(params: {
     params.currency
   );
 
+  const selected = await getApprovedWhatsAppOrderTemplate(params.store.id);
+  const templateName = selected?.name || "order_confirmed";
+  const languageCode = selected?.language || "en";
+
   try {
     await sendWhatsAppTemplate({
       phoneNumberId: waCreds.phoneNumberId,
       accessToken: waCreds.accessToken,
       to,
-      templateName: "order_confirmed",
+      templateName,
+      languageCode,
       bodyParams,
     });
     return { sent: true, method: "template" };

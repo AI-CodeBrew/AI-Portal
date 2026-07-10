@@ -1,21 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireResellerStore } from "@/lib/auth";
+import { requireAuth } from "@/lib/auth";
 import {
-  createPlanCheckoutStub,
-  disconnectStorePayTabs,
-  getStorePayTabsCredentials,
-  listStorePlanPayments,
-  updateStorePayTabsCredentials,
+  disconnectPlatformPayTabs,
+  getPlatformPayTabsCredentials,
+  listAllPlanPayments,
+  updatePlatformPayTabsCredentials,
   type PayTabsRegion,
 } from "@/lib/payments/paytabs";
-import type { PlanId } from "@/lib/ai/plans";
 
 export async function GET() {
   try {
-    const { storeId } = await requireResellerStore();
+    await requireAuth("admin");
     const [credentials, payments] = await Promise.all([
-      getStorePayTabsCredentials(storeId),
-      listStorePlanPayments(storeId),
+      getPlatformPayTabsCredentials(),
+      listAllPlanPayments(40),
     ]);
     return NextResponse.json({ credentials, payments });
   } catch {
@@ -25,9 +23,9 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    const { storeId } = await requireResellerStore();
+    await requireAuth("admin");
     const body = (await request.json()) as {
-      action?: "save" | "disconnect" | "checkout";
+      action?: "save" | "disconnect";
       profileId?: string;
       serverKey?: string;
       clientKey?: string | null;
@@ -35,34 +33,19 @@ export async function POST(request: NextRequest) {
       region?: PayTabsRegion;
       currency?: string;
       testMode?: boolean;
-      planId?: PlanId;
     };
 
     if (body.action === "disconnect") {
-      const result = await disconnectStorePayTabs(storeId);
+      const result = await disconnectPlatformPayTabs();
       if ("error" in result) {
         return NextResponse.json({ error: result.error }, { status: 400 });
       }
       return NextResponse.json({
-        credentials: await getStorePayTabsCredentials(storeId),
+        credentials: await getPlatformPayTabsCredentials(),
       });
     }
 
-    if (body.action === "checkout") {
-      if (!body.planId) {
-        return NextResponse.json(
-          { error: "planId is required" },
-          { status: 400 }
-        );
-      }
-      const result = await createPlanCheckoutStub(storeId, body.planId);
-      if ("error" in result) {
-        return NextResponse.json({ error: result.error }, { status: 400 });
-      }
-      return NextResponse.json(result);
-    }
-
-    const result = await updateStorePayTabsCredentials(storeId, {
+    const result = await updatePlatformPayTabsCredentials({
       profileId: body.profileId ?? "",
       serverKey: body.serverKey,
       clientKey: body.clientKey,

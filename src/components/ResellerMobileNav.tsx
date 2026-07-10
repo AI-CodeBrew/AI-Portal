@@ -8,8 +8,9 @@ const links = [
   { href: "/dashboard/orders", label: "Orders" },
   { href: "/dashboard/products", label: "Products" },
   { href: "/dashboard/inbox", label: "Inbox" },
-  { href: "/dashboard/ads", label: "Ads" },
+  { href: "/dashboard/ads", label: "Shopify" },
   { href: "/dashboard/ai", label: "AI" },
+  { href: "/dashboard/whatsapp-templates", label: "Templates" },
   { href: "/dashboard/integrations", label: "Setup" },
 ];
 

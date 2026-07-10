@@ -12,19 +12,19 @@ export const AI_PLANS: Record<PlanId, AiPlan> = {
     id: "basic",
     name: "Basic",
     monthlyLimit: 200,
-    description: "200 AI WhatsApp replies per month",
+    description: "200 AI requests / month",
   },
   pro: {
     id: "pro",
     name: "Pro",
     monthlyLimit: 2000,
-    description: "2,000 AI WhatsApp replies per month",
+    description: "2,000 AI requests / month",
   },
   max: {
     id: "max",
     name: "Max",
     monthlyLimit: 20000,
-    description: "20,000 AI WhatsApp replies per month",
+    description: "20,000 AI requests / month",
   },
 };
 
@@ -53,6 +53,6 @@ export function quotaLimitMessage(plan: AiPlan, used: number): string {
     `Your monthly AI reply limit has been reached on the ${plan.name} plan ` +
     `(${used.toLocaleString()}/${plan.monthlyLimit.toLocaleString()} used this month). ` +
     `Please upgrade your plan to continue automated WhatsApp replies. ` +
-    `Connect PayTabs under Integrations to purchase Pro or Max.`
+    `Open Plan & Usage in the portal to select Pro or Max and pay with PayTabs.`
   );
 }

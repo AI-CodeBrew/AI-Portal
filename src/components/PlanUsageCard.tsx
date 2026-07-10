@@ -104,7 +104,7 @@ export function PlanUsageCard({ compact }: { compact?: boolean }) {
               >
                 <p className="font-semibold text-slate-900">{plan.name}</p>
                 <p className="mt-1 text-xs text-slate-600">
-                  {plan.monthlyLimit.toLocaleString()} replies/mo
+                  {plan.monthlyLimit.toLocaleString()} AI requests / month
                 </p>
                 {current && (
                   <p className="mt-1 text-xs font-semibold text-blue-700">
@@ -120,8 +120,7 @@ export function PlanUsageCard({ compact }: { compact?: boolean }) {
       {usage.limitReached && (
         <p className="mt-4 text-sm font-medium text-red-800">
           WhatsApp customers will see a limit message instead of AI replies
-          until you upgrade. Contact your platform admin to upgrade to Pro or
-          Max.
+          until you upgrade. Open Plan & Usage to select Pro or Max and pay.
         </p>
       )}
     </div>

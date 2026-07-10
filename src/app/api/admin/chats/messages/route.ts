@@ -1,12 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
-import { getAdminConversationMessages } from "@/lib/admin/chats";
+import {
+  getAdminConversationMessages,
+  markAdminConversationRead,
+} from "@/lib/admin/chats";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export async function GET(request: NextRequest) {
   try {
     await requireAuth("admin");
     const conversationId = request.nextUrl.searchParams.get("conversationId");
+    const markRead = request.nextUrl.searchParams.get("markRead") !== "0";
 
     if (!conversationId) {
       return NextResponse.json(
@@ -27,7 +31,14 @@ export async function GET(request: NextRequest) {
     }
 
     const messages = await getAdminConversationMessages(conversationId);
-    return NextResponse.json({ messages });
+
+    let markedRead = false;
+    if (markRead) {
+      const result = await markAdminConversationRead(conversationId);
+      markedRead = !("error" in result);
+    }
+
+    return NextResponse.json({ messages, markedRead });
   } catch {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

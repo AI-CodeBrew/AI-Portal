@@ -1,14 +1,14 @@
-import { AdLinksPanel } from "@/components/AdLinksPanel";
+import { ShopifyProductsPanel } from "@/components/ShopifyProductsPanel";
 import { DashboardPageHeader } from "@/components/DashboardPageHeader";
 
 export default function AdsPage() {
   return (
     <div>
       <DashboardPageHeader
-        title="Ad Links"
-        description="Create WhatsApp links for Meta ads so the AI knows which product each customer is asking about."
+        title="Shopify Products"
+        description="Browse your Shopify catalog, view product details, and generate WhatsApp ad links to copy for Meta ads."
       />
-      <AdLinksPanel />
+      <ShopifyProductsPanel />
     </div>
   );
 }

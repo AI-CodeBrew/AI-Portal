@@ -3,6 +3,10 @@ import {
   getShopCurrency,
   searchProducts,
   shopifyAdminFetch,
+  listShopifyCatalogProducts,
+  getShopifyCatalogProduct,
+  type ShopifyCatalogProductDetail,
+  type ShopifyCatalogProductListItem,
 } from "@/lib/shopify";
 import {
   getStoreWhatsAppCredentials,
@@ -31,6 +35,139 @@ async function getStoreWithIntegrations(storeId: string) {
     .eq("id", storeId)
     .single();
   return data;
+}
+
+export async function listStoreShopifyProducts(
+  storeId: string,
+  options: {
+    query?: string;
+    cursor?: string | null;
+    direction?: "next" | "prev";
+    limit?: number;
+  } = {}
+): Promise<
+  | {
+      products: ShopifyCatalogProductListItem[];
+      nextCursor: string | null;
+      previousCursor: string | null;
+      hasNextPage: boolean;
+      hasPreviousPage: boolean;
+      currency: string;
+      whatsappConnected: boolean;
+    }
+  | { error: string }
+> {
+  const store = await getStoreWithIntegrations(storeId);
+  if (!store?.shop_domain || !store.shopify_access_token) {
+    return { error: "Connect Shopify in Integrations first." };
+  }
+
+  let currency = "USD";
+  try {
+    currency =
+      (await getShopCurrency(store.shop_domain, store.shopify_access_token)) ||
+      "USD";
+  } catch {
+    currency = "USD";
+  }
+
+  const page = await listShopifyCatalogProducts(
+    store.shop_domain,
+    store.shopify_access_token,
+    {
+      limit: options.limit ?? 25,
+      query: options.query,
+      cursor: options.cursor,
+      direction: options.direction,
+    }
+  );
+
+  const waCreds = getStoreWhatsAppCredentials(store);
+
+  return {
+    ...page,
+    products: page.products.map((p) => ({
+      ...p,
+      currency: p.currency ?? currency,
+    })),
+    currency,
+    whatsappConnected: Boolean(waCreds?.phoneNumberId),
+  };
+}
+
+export async function getStoreShopifyProduct(
+  storeId: string,
+  productId: number
+): Promise<
+  | {
+      product: ShopifyCatalogProductDetail;
+      currency: string;
+      whatsappConnected: boolean;
+      existingLink: AdWhatsAppLink | null;
+    }
+  | { error: string }
+> {
+  const store = await getStoreWithIntegrations(storeId);
+  if (!store?.shop_domain || !store.shopify_access_token) {
+    return { error: "Connect Shopify in Integrations first." };
+  }
+
+  const product = await getShopifyCatalogProduct(
+    store.shop_domain,
+    store.shopify_access_token,
+    productId
+  );
+  if (!product) {
+    return { error: "Product not found on Shopify." };
+  }
+
+  let currency = "USD";
+  try {
+    currency =
+      (await getShopCurrency(store.shop_domain, store.shopify_access_token)) ||
+      "USD";
+  } catch {
+    currency = "USD";
+  }
+
+  const waCreds = getStoreWhatsAppCredentials(store);
+  let existingLink: AdWhatsAppLink | null = null;
+
+  const supabase = createAdminClient();
+  const { data: linkRow } = await supabase
+    .from("ad_whatsapp_links")
+    .select("*")
+    .eq("store_id", storeId)
+    .eq("shopify_product_id", String(productId))
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (linkRow) {
+    existingLink = linkRow as AdWhatsAppLink;
+    if (waCreds?.phoneNumberId) {
+      const displayPhone = await getWhatsAppDisplayPhone(
+        waCreds.phoneNumberId,
+        waCreds.accessToken
+      );
+      if (displayPhone) {
+        existingLink = {
+          ...existingLink,
+          whatsapp_url: buildWhatsAppAdUrl(
+            displayPhone,
+            existingLink.prefill_message
+          ),
+        };
+      }
+    }
+  }
+
+  return {
+    product,
+    currency,
+    whatsappConnected: Boolean(waCreds?.phoneNumberId),
+    existingLink,
+  };
 }
 
 export async function searchAdProducts(

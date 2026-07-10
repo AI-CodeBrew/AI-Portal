@@ -32,7 +32,7 @@ export async function getStoreAiSettingsRaw(
   const { data } = await supabase
     .from("stores")
     .select(
-      "ai_agent_name, ai_opening_message, ai_reply_length, ai_order_template_id, ai_general_template_id"
+      "ai_agent_name, ai_opening_message, ai_reply_length, ai_order_template_id, ai_general_template_id, whatsapp_order_template_id"
     )
     .eq("id", storeId)
     .single();
@@ -43,6 +43,8 @@ export async function getStoreAiSettingsRaw(
     replyLength: (data?.ai_reply_length as AiReplyLength) ?? "medium",
     orderTemplateId: (data?.ai_order_template_id as string | null) ?? null,
     generalTemplateId: (data?.ai_general_template_id as string | null) ?? null,
+    whatsappOrderTemplateId:
+      (data?.whatsapp_order_template_id as string | null) ?? null,
   };
 }
 
@@ -87,8 +89,10 @@ export async function resolveStoreAiConfig(
     agentName: settings.agentName,
     openingMessage: settings.openingMessage,
     replyLength: settings.replyLength,
+    tone: settings.tone,
     orderTemplateId: settings.orderTemplateId,
     generalTemplateId: settings.generalTemplateId,
+    whatsappOrderTemplateId: raw.whatsappOrderTemplateId,
     orderTemplatePrompt,
     generalTemplatePrompt,
   };
@@ -127,6 +131,22 @@ export async function updateStoreAiSettings(
       }
     }
     payload.ai_general_template_id = input.generalTemplateId;
+  }
+  if (input.whatsappOrderTemplateId !== undefined) {
+    if (input.whatsappOrderTemplateId) {
+      const { data: waTpl } = await supabase
+        .from("whatsapp_message_templates")
+        .select("id, status")
+        .eq("id", input.whatsappOrderTemplateId)
+        .eq("store_id", storeId)
+        .maybeSingle();
+      if (!waTpl || waTpl.status !== "approved") {
+        return {
+          error: "Select a Meta-approved WhatsApp template for order messages",
+        };
+      }
+    }
+    payload.whatsapp_order_template_id = input.whatsappOrderTemplateId;
   }
 
   const { error } = await supabase
@@ -309,6 +329,7 @@ export function personalizeOpeningMessage(
   vars: { agentName: string; storeName: string }
 ): string {
   return template
+    .replace(/\{\{brand\}\}/gi, vars.storeName)
     .replace(/\{agent_name\}/gi, vars.agentName)
     .replace(/\{store_name\}/gi, vars.storeName);
 }

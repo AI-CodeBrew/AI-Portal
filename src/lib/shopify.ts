@@ -430,6 +430,401 @@ export async function searchProducts(
     }));
 }
 
+export interface ShopifyCatalogProductListItem {
+  id: number;
+  title: string;
+  handle: string | null;
+  status: string | null;
+  vendor: string | null;
+  productType: string | null;
+  description: string | null;
+  imageUrl: string | null;
+  priceFrom: string | null;
+  currency: string | null;
+  totalInventory: number | null;
+  variantCount: number;
+}
+
+export interface ShopifyCatalogProductDetail {
+  id: number;
+  title: string;
+  handle: string | null;
+  status: string | null;
+  vendor: string | null;
+  productType: string | null;
+  tags: string[];
+  description: string | null;
+  descriptionHtml: string | null;
+  images: Array<{ url: string; alt: string | null }>;
+  variants: Array<{
+    id: number;
+    title: string;
+    sku: string | null;
+    price: string;
+    compareAtPrice: string | null;
+    inventoryQuantity: number;
+    inStock: boolean;
+    barcode: string | null;
+  }>;
+  createdAt: string | null;
+  updatedAt: string | null;
+}
+
+export async function listShopifyCatalogProducts(
+  shopDomain: string,
+  encryptedToken: string,
+  options: {
+    limit?: number;
+    query?: string;
+    cursor?: string | null;
+    direction?: "next" | "prev";
+  } = {}
+): Promise<{
+  products: ShopifyCatalogProductListItem[];
+  nextCursor: string | null;
+  previousCursor: string | null;
+  hasNextPage: boolean;
+  hasPreviousPage: boolean;
+}> {
+  const limit = Math.min(Math.max(options.limit ?? 25, 1), 50);
+  const search = options.query?.trim() ?? "";
+  const direction = options.direction ?? "next";
+  const cursor = options.cursor?.trim() || null;
+
+  const queryFilter = search
+    ? `status:active title:*${search.replace(/"/g, "")}*`
+    : "status:active";
+
+  const gql =
+    direction === "prev"
+      ? `
+    query ListProducts($last: Int!, $before: String, $query: String!) {
+      products(last: $last, before: $before, query: $query, sortKey: UPDATED_AT, reverse: true) {
+        pageInfo { hasNextPage hasPreviousPage startCursor endCursor }
+        edges {
+          cursor
+          node {
+            id
+            title
+            handle
+            status
+            vendor
+            productType
+            description
+            totalInventory
+            featuredImage { url }
+            priceRangeV2 {
+              minVariantPrice { amount currencyCode }
+            }
+            variants(first: 50) {
+              edges { node { id } }
+            }
+          }
+        }
+      }
+    }
+  `
+      : `
+    query ListProducts($first: Int!, $after: String, $query: String!) {
+      products(first: $first, after: $after, query: $query, sortKey: UPDATED_AT, reverse: true) {
+        pageInfo { hasNextPage hasPreviousPage startCursor endCursor }
+        edges {
+          cursor
+          node {
+            id
+            title
+            handle
+            status
+            vendor
+            productType
+            description
+            totalInventory
+            featuredImage { url }
+            priceRangeV2 {
+              minVariantPrice { amount currencyCode }
+            }
+            variants(first: 50) {
+              edges { node { id } }
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  type Node = {
+    id: string;
+    title: string;
+    handle?: string | null;
+    status?: string | null;
+    vendor?: string | null;
+    productType?: string | null;
+    description?: string | null;
+    totalInventory?: number | null;
+    featuredImage?: { url: string } | null;
+    priceRangeV2?: {
+      minVariantPrice?: { amount: string; currencyCode: string } | null;
+    } | null;
+    variants?: { edges: Array<{ node: { id: string } }> };
+  };
+
+  const variables =
+    direction === "prev"
+      ? {
+          last: limit,
+          before: cursor,
+          query: queryFilter,
+        }
+      : {
+          first: limit,
+          after: cursor,
+          query: queryFilter,
+        };
+
+  const res = await shopifyGraphql(shopDomain, encryptedToken, gql, variables);
+  if (!res.ok) {
+    throw new Error(`Product list failed: ${await res.text()}`);
+  }
+
+  const data = (await res.json()) as {
+    data?: {
+      products?: {
+        pageInfo: {
+          hasNextPage: boolean;
+          hasPreviousPage: boolean;
+          startCursor: string | null;
+          endCursor: string | null;
+        };
+        edges: Array<{ cursor: string; node: Node }>;
+      };
+    };
+    errors?: Array<{ message: string }>;
+  };
+
+  if (data.errors?.length) {
+    // Fallback without variantsCount (older API shapes)
+    return listShopifyCatalogProductsRest(
+      shopDomain,
+      encryptedToken,
+      options
+    );
+  }
+
+  const connection = data.data?.products;
+  if (!connection) {
+    return listShopifyCatalogProductsRest(
+      shopDomain,
+      encryptedToken,
+      options
+    );
+  }
+
+  const products: ShopifyCatalogProductListItem[] = connection.edges.map(
+    ({ node }) => ({
+      id: Number(parseShopifyGid(node.id)),
+      title: node.title,
+      handle: node.handle ?? null,
+      status: node.status ?? null,
+      vendor: node.vendor ?? null,
+      productType: node.productType ?? null,
+      description: node.description
+        ? stripHtml(node.description).slice(0, 280)
+        : null,
+      imageUrl: node.featuredImage?.url ?? null,
+      priceFrom: node.priceRangeV2?.minVariantPrice?.amount ?? null,
+      currency: node.priceRangeV2?.minVariantPrice?.currencyCode ?? null,
+      totalInventory: node.totalInventory ?? null,
+      variantCount: node.variants?.edges.length ?? 0,
+    })
+  );
+
+  return {
+    products,
+    nextCursor: connection.pageInfo.hasNextPage
+      ? connection.pageInfo.endCursor
+      : null,
+    previousCursor: connection.pageInfo.hasPreviousPage
+      ? connection.pageInfo.startCursor
+      : null,
+    hasNextPage: connection.pageInfo.hasNextPage,
+    hasPreviousPage: connection.pageInfo.hasPreviousPage,
+  };
+}
+
+async function listShopifyCatalogProductsRest(
+  shopDomain: string,
+  encryptedToken: string,
+  options: {
+    limit?: number;
+    query?: string;
+    cursor?: string | null;
+    direction?: "next" | "prev";
+  }
+): Promise<{
+  products: ShopifyCatalogProductListItem[];
+  nextCursor: string | null;
+  previousCursor: string | null;
+  hasNextPage: boolean;
+  hasPreviousPage: boolean;
+}> {
+  const limit = Math.min(Math.max(options.limit ?? 25, 1), 50);
+  const search = options.query?.trim().toLowerCase() ?? "";
+
+  // REST cursor pagination only works without title filter; for search load a page and filter
+  let path: string;
+  if (options.cursor && !search) {
+    path = `/products.json?limit=${limit}&page_info=${encodeURIComponent(options.cursor)}`;
+  } else {
+    const params = new URLSearchParams({
+      limit: String(search ? 100 : limit),
+      status: "active",
+      fields:
+        "id,title,handle,status,vendor,product_type,body_html,image,variants,images",
+    });
+    path = `/products.json?${params}`;
+  }
+
+  const res = await shopifyAdminFetch(shopDomain, encryptedToken, path);
+  if (!res.ok) {
+    throw new Error(`Product list failed: ${await res.text()}`);
+  }
+
+  const data = (await res.json()) as {
+    products: Array<{
+      id: number;
+      title: string;
+      handle?: string;
+      status?: string;
+      vendor?: string;
+      product_type?: string;
+      body_html?: string;
+      image?: { src?: string } | null;
+      variants?: Array<{ price: string }>;
+      images?: Array<{ src: string }>;
+    }>;
+  };
+
+  let products = (data.products ?? []).map((p) => ({
+    id: p.id,
+    title: p.title,
+    handle: p.handle ?? null,
+    status: p.status ?? null,
+    vendor: p.vendor ?? null,
+    productType: p.product_type ?? null,
+    description: p.body_html ? stripHtml(p.body_html).slice(0, 280) : null,
+    imageUrl: p.image?.src ?? p.images?.[0]?.src ?? null,
+    priceFrom: p.variants?.[0]?.price ?? null,
+    currency: null as string | null,
+    totalInventory: null as number | null,
+    variantCount: p.variants?.length ?? 0,
+  }));
+
+  if (search) {
+    const words = search.split(/\s+/).filter(Boolean);
+    products = products
+      .filter((p) => {
+        const title = p.title.toLowerCase();
+        return (
+          title.includes(search) || words.every((w) => title.includes(w))
+        );
+      })
+      .slice(0, limit);
+    return {
+      products,
+      nextCursor: null,
+      previousCursor: null,
+      hasNextPage: false,
+      hasPreviousPage: false,
+    };
+  }
+
+  const linkHeader = res.headers.get("link");
+  const { next, previous } = parsePageInfoFromLink(linkHeader);
+
+  return {
+    products,
+    nextCursor: next,
+    previousCursor: previous,
+    hasNextPage: Boolean(next),
+    hasPreviousPage: Boolean(previous),
+  };
+}
+
+export async function getShopifyCatalogProduct(
+  shopDomain: string,
+  encryptedToken: string,
+  productId: number
+): Promise<ShopifyCatalogProductDetail | null> {
+  const res = await shopifyAdminFetch(
+    shopDomain,
+    encryptedToken,
+    `/products/${productId}.json`
+  );
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    throw new Error(`Product fetch failed: ${await res.text()}`);
+  }
+
+  const data = (await res.json()) as {
+    product: {
+      id: number;
+      title: string;
+      handle?: string;
+      status?: string;
+      vendor?: string;
+      product_type?: string;
+      tags?: string;
+      body_html?: string | null;
+      created_at?: string;
+      updated_at?: string;
+      images?: Array<{ src: string; alt?: string | null }>;
+      variants?: Array<{
+        id: number;
+        title: string;
+        sku?: string | null;
+        price: string;
+        compare_at_price?: string | null;
+        inventory_quantity?: number;
+        barcode?: string | null;
+      }>;
+    };
+  };
+
+  const p = data.product;
+  return {
+    id: p.id,
+    title: p.title,
+    handle: p.handle ?? null,
+    status: p.status ?? null,
+    vendor: p.vendor ?? null,
+    productType: p.product_type ?? null,
+    tags: p.tags
+      ? p.tags
+          .split(",")
+          .map((t) => t.trim())
+          .filter(Boolean)
+      : [],
+    description: p.body_html ? stripHtml(p.body_html).slice(0, 2000) : null,
+    descriptionHtml: p.body_html ?? null,
+    images: (p.images ?? []).map((img) => ({
+      url: img.src,
+      alt: img.alt ?? null,
+    })),
+    variants: (p.variants ?? []).map((v) => ({
+      id: v.id,
+      title: v.title,
+      sku: v.sku ?? null,
+      price: v.price,
+      compareAtPrice: v.compare_at_price ?? null,
+      inventoryQuantity: v.inventory_quantity ?? 0,
+      inStock: (v.inventory_quantity ?? 0) > 0,
+      barcode: v.barcode ?? null,
+    })),
+    createdAt: p.created_at ?? null,
+    updatedAt: p.updated_at ?? null,
+  };
+}
+
 export async function checkStock(
   shopDomain: string,
   encryptedToken: string,

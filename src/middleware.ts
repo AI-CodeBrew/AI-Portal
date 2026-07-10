@@ -7,6 +7,7 @@ const PUBLIC_PATHS = [
   "/r",
   "/api/whatsapp-webhook",
   "/api/webhook/shopify",
+  "/api/billing/paytabs/callback",
   "/api/auth/setup-admin",
   "/api/auth/signup",
 ];

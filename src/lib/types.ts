@@ -82,6 +82,7 @@ export interface WhatsappConversation {
   status: ConversationStatus;
   created_at: string;
   updated_at: string;
+  admin_read_at?: string | null;
 }
 
 export interface WhatsappMessage {

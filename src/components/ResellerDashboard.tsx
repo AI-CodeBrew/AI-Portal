@@ -728,7 +728,7 @@ export function ResellerDashboard() {
             href="/dashboard/ads"
             className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm hover:shadow-md"
           >
-            <p className="text-sm font-semibold text-slate-900">Ad Links</p>
+            <p className="text-sm font-semibold text-slate-900">Shopify Products</p>
             <p className="mt-1 text-xs text-slate-500">
               {stats.ads.linkCount} links · {stats.ads.totalClicks} clicks
             </p>

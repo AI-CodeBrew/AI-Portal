@@ -9,6 +9,7 @@ import {
   type AiTemplateCategory,
   type StoreAiSettings,
 } from "@/lib/ai/ai-settings-types";
+import type { WhatsAppMessageTemplate } from "@/lib/whatsapp/message-templates";
 
 type TabId = "general" | "templates";
 
@@ -24,6 +25,9 @@ export function AiSettingsPanel() {
 
   const [settings, setSettings] = useState<StoreAiSettings | null>(null);
   const [templates, setTemplates] = useState<AiPromptTemplate[]>([]);
+  const [approvedWaTemplates, setApprovedWaTemplates] = useState<
+    WhatsAppMessageTemplate[]
+  >([]);
   const [platformDefaults, setPlatformDefaults] =
     useState<StoreAiSettings | null>(null);
 
@@ -31,7 +35,9 @@ export function AiSettingsPanel() {
   const [openingMessage, setOpeningMessage] = useState("");
   const [replyLength, setReplyLength] = useState<AiReplyLength>("medium");
   const [orderTemplateId, setOrderTemplateId] = useState<string | null>(null);
-  const [generalTemplateId, setGeneralTemplateId] = useState<string | null>(null);
+  const [whatsappOrderTemplateId, setWhatsappOrderTemplateId] = useState<
+    string | null
+  >(null);
 
   const [showCreateTemplate, setShowCreateTemplate] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<AiPromptTemplate | null>(
@@ -55,12 +61,13 @@ export function AiSettingsPanel() {
       const s = data.settings as StoreAiSettings;
       setSettings(s);
       setTemplates(data.templates ?? []);
+      setApprovedWaTemplates(data.approvedWhatsAppTemplates ?? []);
       setPlatformDefaults(data.platformDefaults ?? null);
       setAgentName(s.agentName ?? "");
       setOpeningMessage(s.openingMessage ?? "");
       setReplyLength(s.replyLength ?? "medium");
       setOrderTemplateId(s.orderTemplateId);
-      setGeneralTemplateId(s.generalTemplateId);
+      setWhatsappOrderTemplateId(s.whatsappOrderTemplateId ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load");
     } finally {
@@ -78,7 +85,7 @@ export function AiSettingsPanel() {
     setOpeningMessage(settings.openingMessage ?? "");
     setReplyLength(settings.replyLength ?? "medium");
     setOrderTemplateId(settings.orderTemplateId);
-    setGeneralTemplateId(settings.generalTemplateId);
+    setWhatsappOrderTemplateId(settings.whatsappOrderTemplateId ?? null);
     setSuccess(null);
     setError(null);
   }
@@ -95,8 +102,8 @@ export function AiSettingsPanel() {
           agentName: agentName || null,
           openingMessage: openingMessage || null,
           replyLength,
-          orderTemplateId,
-          generalTemplateId,
+          orderTemplateId: orderTemplateId || null,
+          whatsappOrderTemplateId: whatsappOrderTemplateId || null,
         }),
       });
       const data = await res.json();
@@ -161,30 +168,25 @@ export function AiSettingsPanel() {
     }
   }
 
-  async function applyTemplateSelection(
-    field: "orderTemplateId" | "generalTemplateId",
-    templateId: string
-  ) {
+  async function applyTemplateSelection(templateId: string) {
     setError(null);
     setSuccess(null);
-    const payload =
-      field === "orderTemplateId"
-        ? { orderTemplateId: templateId }
-        : { generalTemplateId: templateId };
-
-    if (field === "orderTemplateId") setOrderTemplateId(templateId);
-    else setGeneralTemplateId(templateId);
+    setOrderTemplateId(templateId);
+    setWhatsappOrderTemplateId(null);
 
     try {
       const res = await fetch("/api/store/ai-settings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          orderTemplateId: templateId,
+          whatsappOrderTemplateId: null,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Save failed");
       setSettings(data.settings);
-      setSuccess("Template selected.");
+      setSuccess("Template selected for order creation.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Save failed");
     }
@@ -208,12 +210,31 @@ export function AiSettingsPanel() {
     }
   }
 
-  const predefinedTemplates = templates.filter((t) => t.isPredefined);
   const customTemplates = templates.filter((t) => !t.isPredefined);
-  const orderTemplates = templates.filter(
-    (t) => t.category === "order_creation"
-  );
-  const generalTemplates = templates.filter((t) => t.category === "general");
+
+  /** Combined select value: ai:uuid | wa:uuid | "" */
+  const orderSelectValue = whatsappOrderTemplateId
+    ? `wa:${whatsappOrderTemplateId}`
+    : customTemplates.some((t) => t.id === orderTemplateId)
+      ? `ai:${orderTemplateId}`
+      : "";
+
+  function onOrderSelectChange(value: string) {
+    if (!value) {
+      setOrderTemplateId(null);
+      setWhatsappOrderTemplateId(null);
+      return;
+    }
+    if (value.startsWith("wa:")) {
+      setWhatsappOrderTemplateId(value.slice(3));
+      setOrderTemplateId(null);
+      return;
+    }
+    if (value.startsWith("ai:")) {
+      setOrderTemplateId(value.slice(3));
+      setWhatsappOrderTemplateId(null);
+    }
+  }
 
   if (loading) {
     return (
@@ -359,42 +380,42 @@ export function AiSettingsPanel() {
                   Order creation template
                 </label>
                 <select
-                  value={orderTemplateId ?? ""}
-                  onChange={(e) =>
-                    setOrderTemplateId(e.target.value || null)
-                  }
+                  value={orderSelectValue}
+                  onChange={(e) => onOrderSelectChange(e.target.value)}
                   className="w-full rounded-lg border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100"
                 >
-                  {orderTemplates.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                      {t.isPredefined ? "" : " (custom)"}
-                    </option>
-                  ))}
+                  <option value="">Platform default</option>
+                  {customTemplates.length > 0 && (
+                    <optgroup label="Your AI templates">
+                      {customTemplates.map((t) => (
+                        <option key={t.id} value={`ai:${t.id}`}>
+                          {t.name} ({TEMPLATE_CATEGORY_LABELS[t.category]})
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {approvedWaTemplates.length > 0 && (
+                    <optgroup label="Meta approved (WhatsApp)">
+                      {approvedWaTemplates.map((t) => (
+                        <option key={t.id} value={`wa:${t.id}`}>
+                          {t.name} · {t.language}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
                 </select>
                 <p className="mt-1.5 text-xs text-slate-500">
-                  Controls how the AI handles checkout and draft orders.
+                  Choose a custom AI template you created, or a Meta-approved
+                  WhatsApp template for order confirmation messages. Create
+                  WhatsApp templates under WA Templates.
                 </p>
-              </div>
-
-              <div>
-                <label className="mb-1.5 block text-sm font-semibold text-slate-900">
-                  General tone template
-                </label>
-                <select
-                  value={generalTemplateId ?? ""}
-                  onChange={(e) =>
-                    setGeneralTemplateId(e.target.value || null)
-                  }
-                  className="w-full rounded-lg border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100"
-                >
-                  {generalTemplates.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                      {t.isPredefined ? "" : " (custom)"}
-                    </option>
-                  ))}
-                </select>
+                {customTemplates.length === 0 &&
+                  approvedWaTemplates.length === 0 && (
+                    <p className="mt-1 text-xs text-amber-700">
+                      No templates yet — create one in the Templates tab, or
+                      submit a WhatsApp template and wait for Meta approval.
+                    </p>
+                  )}
               </div>
             </div>
 
@@ -423,8 +444,8 @@ export function AiSettingsPanel() {
             <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
               <div>
                 <p className="text-sm text-slate-600">
-                  Choose a predefined template or create your own instructions
-                  for order creation, tone, and more.
+                  Create custom instructions for order creation, tone, and more.
+                  Leave unset to use the platform defaults.
                 </p>
               </div>
               <button
@@ -435,80 +456,6 @@ export function AiSettingsPanel() {
                 + Create custom template
               </button>
             </div>
-
-            <section className="mb-8">
-              <h3 className="text-sm font-bold text-slate-900">
-                Predefined templates
-              </h3>
-              <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                {predefinedTemplates.map((template) => {
-                  const selected =
-                    orderTemplateId === template.id ||
-                    generalTemplateId === template.id;
-                  return (
-                    <div
-                      key={template.id}
-                      className={`rounded-xl border p-4 ${
-                        selected
-                          ? "border-emerald-300 bg-emerald-50/50"
-                          : "border-slate-200"
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <p className="font-semibold text-slate-900">
-                            {template.name}
-                          </p>
-                          <p className="mt-0.5 text-xs font-medium text-slate-500">
-                            {TEMPLATE_CATEGORY_LABELS[template.category]}
-                          </p>
-                        </div>
-                        {selected && (
-                          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800">
-                            Active
-                          </span>
-                        )}
-                      </div>
-                      {template.description && (
-                        <p className="mt-2 text-sm text-slate-600">
-                          {template.description}
-                        </p>
-                      )}
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {template.category === "order_creation" && (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              applyTemplateSelection(
-                                "orderTemplateId",
-                                template.id
-                              )
-                            }
-                            className="text-xs font-semibold text-emerald-600 hover:underline"
-                          >
-                            Use for orders
-                          </button>
-                        )}
-                        {template.category === "general" && (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              applyTemplateSelection(
-                                "generalTemplateId",
-                                template.id
-                              )
-                            }
-                            className="text-xs font-semibold text-emerald-600 hover:underline"
-                          >
-                            Use for tone
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
 
             <section>
               <h3 className="text-sm font-bold text-slate-900">
@@ -557,20 +504,18 @@ export function AiSettingsPanel() {
                           </button>
                         </div>
                       </div>
-                      {template.category === "order_creation" && (
+                      {template.category === "order_creation" ||
+                      template.category === "general" ||
+                      template.category === "product_inquiry" ||
+                      template.category === "support" ? (
                         <button
                           type="button"
-                          onClick={() =>
-                            applyTemplateSelection(
-                              "orderTemplateId",
-                              template.id
-                            )
-                          }
+                          onClick={() => applyTemplateSelection(template.id)}
                           className="mt-3 text-xs font-semibold text-emerald-600 hover:underline"
                         >
-                          Use for orders →
+                          Use for order creation →
                         </button>
-                      )}
+                      ) : null}
                     </div>
                   ))}
                 </div>
@@ -617,7 +562,6 @@ export function AiSettingsPanel() {
                   className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm disabled:bg-slate-50"
                 >
                   <option value="order_creation">Order creation</option>
-                  <option value="general">General tone</option>
                   <option value="product_inquiry">Product inquiry</option>
                   <option value="support">Support & escalation</option>
                 </select>

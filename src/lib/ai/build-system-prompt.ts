@@ -41,6 +41,9 @@ export function buildSalesSystemPrompt(params: {
     REPLY_LENGTH_INSTRUCTIONS[replyLength] ??
     REPLY_LENGTH_OPTIONS.find((o) => o.value === "medium")!.description;
 
+  const tone = aiConfig?.tone ?? "friendly";
+  const toneInstruction = `Use a ${tone} tone in every reply.`;
+
   const currencyNote = storeCurrency
     ? `\n\nStore currency: ${storeCurrency}. Always quote prices in ${storeCurrency} using price_formatted from tools. Never use dollars unless currency is USD.`
     : "";
@@ -70,6 +73,7 @@ export function buildSalesSystemPrompt(params: {
 You are selling for: ${storeLabel}.
 Your name is ${agentName}. When introducing yourself, use this name.${currencyNote}${productHint}${adBlock}
 
+Tone: ${toneInstruction}
 Reply length: ${replyInstruction}${templateBlock}
 
 You receive the last ${CHAT_HISTORY_LIMIT} messages of this chat (oldest to newest).`;

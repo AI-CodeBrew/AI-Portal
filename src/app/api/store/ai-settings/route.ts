@@ -6,18 +6,30 @@ import {
   updateStoreAiSettings,
 } from "@/lib/ai/store-ai-settings";
 import { getPlatformAiDefaults } from "@/lib/ai/platform-defaults";
+import { listWhatsAppTemplates } from "@/lib/whatsapp/message-templates";
 import type { AiReplyLength } from "@/lib/ai/ai-settings-types";
 
 export async function GET() {
   try {
     const { storeId } = await requireResellerStore();
-    const [settings, templates, platformDefaults] = await Promise.all([
-      getStoreAiSettings(storeId),
-      listAiTemplates(storeId),
-      getPlatformAiDefaults(),
-    ]);
+    const [settings, templates, platformDefaults, waTemplates] =
+      await Promise.all([
+        getStoreAiSettings(storeId),
+        listAiTemplates(storeId),
+        getPlatformAiDefaults(),
+        listWhatsAppTemplates(storeId),
+      ]);
 
-    return NextResponse.json({ settings, templates, platformDefaults });
+    const approvedWhatsAppTemplates = waTemplates.filter(
+      (t) => t.status === "approved"
+    );
+
+    return NextResponse.json({
+      settings,
+      templates,
+      platformDefaults,
+      approvedWhatsAppTemplates,
+    });
   } catch {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -32,6 +44,7 @@ export async function PATCH(request: NextRequest) {
       replyLength?: AiReplyLength;
       orderTemplateId?: string | null;
       generalTemplateId?: string | null;
+      whatsappOrderTemplateId?: string | null;
     };
 
     const result = await updateStoreAiSettings(storeId, body);

@@ -12,7 +12,7 @@ export default async function AdminChatsPage() {
     <div>
       <AdminPageHeader
         title="All Chats"
-        description="Select a reseller and customer to view WhatsApp conversations. Read-only for admins."
+        description="Filter by reseller and status. Opening an unread chat marks it as read."
       />
 
       {error && (

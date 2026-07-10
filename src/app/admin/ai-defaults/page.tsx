@@ -8,7 +8,7 @@ export default function AdminAiDefaultsPage() {
     <div>
       <AdminPageHeader
         title="AI Defaults"
-        description="Platform defaults used when a reseller has not configured their own AI settings"
+        description="Default AI persona and branding for new resellers"
       />
       <AdminAiDefaultsPanel />
     </div>

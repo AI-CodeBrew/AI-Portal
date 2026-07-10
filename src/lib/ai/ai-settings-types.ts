@@ -1,5 +1,7 @@
 export type AiReplyLength = "short" | "medium" | "long";
 
+export type AiTone = "friendly" | "professional" | "casual" | "formal";
+
 export type AiTemplateCategory =
   | "order_creation"
   | "general"
@@ -24,11 +26,14 @@ export interface StoreAiSettings {
   replyLength: AiReplyLength;
   orderTemplateId: string | null;
   generalTemplateId: string | null;
+  /** Meta-approved WhatsApp template for order confirmation sends */
+  whatsappOrderTemplateId: string | null;
 }
 
 export interface ResolvedStoreAiConfig extends StoreAiSettings {
   orderTemplatePrompt: string | null;
   generalTemplatePrompt: string | null;
+  tone?: AiTone;
 }
 
 export const REPLY_LENGTH_OPTIONS: Array<{
@@ -51,6 +56,13 @@ export const REPLY_LENGTH_OPTIONS: Array<{
     label: "Long — up to 4–5 sentences",
     description: "More detail when customers need explanation",
   },
+];
+
+export const TONE_OPTIONS: Array<{ value: AiTone; label: string }> = [
+  { value: "friendly", label: "Friendly" },
+  { value: "professional", label: "Professional" },
+  { value: "casual", label: "Casual" },
+  { value: "formal", label: "Formal" },
 ];
 
 export const TEMPLATE_CATEGORY_LABELS: Record<AiTemplateCategory, string> = {

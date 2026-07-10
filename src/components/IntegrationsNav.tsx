@@ -2,11 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import {
-  PayTabsIcon,
-  ShopifyIcon,
-  WhatsAppIcon,
-} from "@/components/BrandIcons";
+import { ShopifyIcon, WhatsAppIcon } from "@/components/BrandIcons";
 
 const tabs = [
   { href: "/dashboard/integrations", label: "All apps", exact: true, icon: null },
@@ -21,12 +17,6 @@ const tabs = [
     label: "WhatsApp",
     exact: false,
     icon: <WhatsAppIcon className="h-4 w-4" />,
-  },
-  {
-    href: "/dashboard/integrations/paytabs",
-    label: "PayTabs",
-    exact: false,
-    icon: <PayTabsIcon className="h-4 w-4" />,
   },
 ];
 

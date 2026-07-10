@@ -391,10 +391,10 @@ export function LandingPage() {
                   )}
                   <h3 className="text-lg font-bold text-slate-900">{plan.name}</h3>
                   <p className="mt-1 text-3xl font-bold tracking-tight text-slate-900">
-                    {plan.monthlyLimit.toLocaleString()}
+                    {plan.monthlyLimit.toLocaleString()} AI requests
                     <span className="text-base font-medium text-slate-500">
                       {" "}
-                      replies/mo
+                      / month
                     </span>
                   </p>
                   <p className="mt-3 flex-1 text-sm text-slate-600">
