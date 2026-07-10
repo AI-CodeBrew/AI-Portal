@@ -39,11 +39,32 @@ export function WhatsAppIcon({
   );
 }
 
+export function PayTabsIcon({
+  className = "h-6 w-6",
+}: {
+  className?: string;
+}) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-label="PayTabs"
+    >
+      <rect x="2" y="5" width="20" height="14" rx="2.5" fill="#0B3B6E" />
+      <rect x="2" y="8" width="20" height="3" fill="#1E88E5" />
+      <rect x="5" y="14" width="6" height="2" rx="1" fill="#E3F2FD" />
+      <rect x="13" y="13.5" width="5" height="3" rx="1" fill="#90CAF9" />
+    </svg>
+  );
+}
+
 export function BrandIconBox({
   brand,
   size = "md",
 }: {
-  brand: "shopify" | "whatsapp";
+  brand: "shopify" | "whatsapp" | "paytabs";
   size?: "sm" | "md" | "lg";
 }) {
   const sizeClass = {
@@ -63,8 +84,10 @@ export function BrandIconBox({
     >
       {brand === "shopify" ? (
         <ShopifyIcon className={iconClass} />
-      ) : (
+      ) : brand === "whatsapp" ? (
         <WhatsAppIcon className={iconClass} />
+      ) : (
+        <PayTabsIcon className={iconClass} />
       )}
     </div>
   );

@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Geist, Geist_Mono, Fraunces } from "next/font/google";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -12,9 +12,15 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const landingDisplay = Fraunces({
+  variable: "--font-landing-display",
+  subsets: ["latin"],
+});
+
 export const metadata: Metadata = {
-  title: "Arabia AI — Commerce Portal",
-  description: "WhatsApp + Shopify automation powered by Arabia AI",
+  title: "Arabia AI — WhatsApp + Shopify Commerce Portal",
+  description:
+    "AI sales agent for WhatsApp, Shopify order confirmation, tracking, inbox handoff, and Meta ad links — powered by Arabia AI.",
 };
 
 export default function RootLayout({
@@ -25,7 +31,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="light">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} min-h-screen bg-slate-50 text-slate-900 antialiased`}
+        className={`${geistSans.variable} ${geistMono.variable} ${landingDisplay.variable} min-h-screen bg-slate-50 text-slate-900 antialiased`}
       >
         {children}
       </body>

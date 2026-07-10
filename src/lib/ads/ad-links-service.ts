@@ -223,14 +223,26 @@ export async function resolveAdLinkBySlug(
   slug: string
 ): Promise<AdWhatsAppLink | null> {
   const supabase = createAdminClient();
+  const normalized = slug.toLowerCase();
+
   const { data } = await supabase
     .from("ad_whatsapp_links")
     .select("*")
     .eq("store_id", storeId)
-    .eq("slug", slug.toLowerCase())
+    .eq("slug", normalized)
     .maybeSingle();
 
-  return (data as AdWhatsAppLink | null) ?? null;
+  if (data) return data as AdWhatsAppLink;
+
+  // Portal products use SKU as the ad ref — also match product_sku
+  const { data: bySku } = await supabase
+    .from("ad_whatsapp_links")
+    .select("*")
+    .eq("store_id", storeId)
+    .eq("product_sku", normalized)
+    .maybeSingle();
+
+  return (bySku as AdWhatsAppLink | null) ?? null;
 }
 
 export async function getAdLinkById(

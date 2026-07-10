@@ -4,6 +4,7 @@ import { NextResponse, type NextRequest } from "next/server";
 const PUBLIC_PATHS = [
   "/login",
   "/signup",
+  "/r",
   "/api/whatsapp-webhook",
   "/api/webhook/shopify",
   "/api/auth/setup-admin",
@@ -52,6 +53,10 @@ export async function middleware(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   if (!user) {
+    // Public marketing homepage
+    if (pathname === "/") {
+      return supabaseResponse;
+    }
     if (pathname.startsWith("/api/")) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

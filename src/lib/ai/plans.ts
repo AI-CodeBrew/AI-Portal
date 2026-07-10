@@ -53,6 +53,6 @@ export function quotaLimitMessage(plan: AiPlan, used: number): string {
     `Your monthly AI reply limit has been reached on the ${plan.name} plan ` +
     `(${used.toLocaleString()}/${plan.monthlyLimit.toLocaleString()} used this month). ` +
     `Please upgrade your plan to continue automated WhatsApp replies. ` +
-    `Contact your platform admin to upgrade to Pro or Max.`
+    `Connect PayTabs under Integrations to purchase Pro or Max.`
   );
 }

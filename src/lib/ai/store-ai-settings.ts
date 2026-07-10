@@ -8,6 +8,7 @@ import {
   type ResolvedStoreAiConfig,
   type StoreAiSettings,
 } from "./ai-settings-types";
+import { resolveEffectiveAiSettings } from "./platform-defaults";
 
 function mapTemplate(row: Record<string, unknown>): AiPromptTemplate {
   return {
@@ -23,7 +24,8 @@ function mapTemplate(row: Record<string, unknown>): AiPromptTemplate {
   };
 }
 
-export async function getStoreAiSettings(
+/** Raw store values only (nulls preserved) — for reseller settings UI. */
+export async function getStoreAiSettingsRaw(
   storeId: string
 ): Promise<StoreAiSettings> {
   const supabase = createAdminClient();
@@ -39,12 +41,20 @@ export async function getStoreAiSettings(
     agentName: (data?.ai_agent_name as string | null) ?? null,
     openingMessage: (data?.ai_opening_message as string | null) ?? null,
     replyLength: (data?.ai_reply_length as AiReplyLength) ?? "medium",
-    orderTemplateId:
-      (data?.ai_order_template_id as string | null) ??
-      DEFAULT_ORDER_TEMPLATE_ID,
-    generalTemplateId:
-      (data?.ai_general_template_id as string | null) ??
-      DEFAULT_GENERAL_TEMPLATE_ID,
+    orderTemplateId: (data?.ai_order_template_id as string | null) ?? null,
+    generalTemplateId: (data?.ai_general_template_id as string | null) ?? null,
+  };
+}
+
+/** Store settings with template ID fallbacks for the settings form. */
+export async function getStoreAiSettings(
+  storeId: string
+): Promise<StoreAiSettings> {
+  const raw = await getStoreAiSettingsRaw(storeId);
+  return {
+    ...raw,
+    orderTemplateId: raw.orderTemplateId ?? DEFAULT_ORDER_TEMPLATE_ID,
+    generalTemplateId: raw.generalTemplateId ?? DEFAULT_GENERAL_TEMPLATE_ID,
   };
 }
 
@@ -66,14 +76,19 @@ async function loadTemplatePrompt(
 export async function resolveStoreAiConfig(
   storeId: string
 ): Promise<ResolvedStoreAiConfig> {
-  const settings = await getStoreAiSettings(storeId);
+  const raw = await getStoreAiSettingsRaw(storeId);
+  const settings = await resolveEffectiveAiSettings(raw);
   const [orderTemplatePrompt, generalTemplatePrompt] = await Promise.all([
     loadTemplatePrompt(settings.orderTemplateId),
     loadTemplatePrompt(settings.generalTemplateId),
   ]);
 
   return {
-    ...settings,
+    agentName: settings.agentName,
+    openingMessage: settings.openingMessage,
+    replyLength: settings.replyLength,
+    orderTemplateId: settings.orderTemplateId,
+    generalTemplateId: settings.generalTemplateId,
     orderTemplatePrompt,
     generalTemplatePrompt,
   };

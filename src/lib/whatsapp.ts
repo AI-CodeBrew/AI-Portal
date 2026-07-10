@@ -101,7 +101,20 @@ export async function sendWhatsAppText({
   });
 
   if (!res.ok) {
-    throw new Error(`WhatsApp text send failed: ${await res.text()}`);
+    const raw = await res.text();
+    let detail = raw;
+    try {
+      const parsed = JSON.parse(raw) as {
+        error?: { message?: string; error_user_msg?: string; code?: number };
+      };
+      detail =
+        parsed.error?.error_user_msg ||
+        parsed.error?.message ||
+        raw;
+    } catch {
+      // keep raw
+    }
+    throw new Error(detail);
   }
 }
 
@@ -206,7 +219,9 @@ export function getStoreWhatsAppCredentials(store: {
       console.error(
         "WhatsApp token decrypt failed — ENCRYPTION_KEY may differ from when token was saved. Reconnect WhatsApp."
       );
-      accessToken = null;
+      // Do not fall back to env if store has a token that won't decrypt —
+      // that would send from the wrong number / wrong app.
+      return null;
     }
   } else if (process.env.WHATSAPP_ACCESS_TOKEN) {
     accessToken = process.env.WHATSAPP_ACCESS_TOKEN;

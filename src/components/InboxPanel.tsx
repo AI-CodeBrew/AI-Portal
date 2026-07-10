@@ -20,13 +20,18 @@ export function InboxPanel() {
   const [sending, setSending] = useState(false);
   const [switchingMode, setSwitchingMode] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     fetchConversations();
   }, [filter]);
 
   useEffect(() => {
-    if (selectedId) fetchMessages(selectedId);
+    if (selectedId) {
+      setSendError(null);
+      fetchMessages(selectedId);
+    }
   }, [selectedId]);
 
   async function fetchConversations() {
@@ -56,19 +61,31 @@ export function InboxPanel() {
   async function sendReply(newStatus?: "ai_handling" | "closed") {
     if (!selectedId || !reply.trim()) return;
     setSending(true);
-    await fetch("/api/inbox/reply", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        conversationId: selectedId,
-        message: reply,
-        newStatus,
-      }),
-    });
-    setReply("");
-    await fetchMessages(selectedId);
-    await fetchConversations();
-    setSending(false);
+    setSendError(null);
+    try {
+      const res = await fetch("/api/inbox/reply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          conversationId: selectedId,
+          message: reply.trim(),
+          newStatus,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          typeof data.error === "string" ? data.error : "Failed to send message"
+        );
+      }
+      setReply("");
+      await fetchMessages(selectedId);
+      await fetchConversations();
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : "Failed to send message");
+    } finally {
+      setSending(false);
+    }
   }
 
   async function switchMode(mode: "ai" | "manual") {
@@ -87,6 +104,42 @@ export function InboxPanel() {
       await fetchConversations();
     } finally {
       setSwitchingMode(false);
+    }
+  }
+
+  async function deleteConversation() {
+    if (!selectedId) return;
+    const conv = conversations.find((c) => c.id === selectedId);
+    if (!conv) return;
+    const phone = conv.customer_phone;
+    if (
+      !confirm(
+        `Delete chat with +${phone}? This removes the conversation and all messages from the portal. It does not delete messages on the customer's WhatsApp.`
+      )
+    ) {
+      return;
+    }
+
+    setDeleting(true);
+    setSendError(null);
+    try {
+      const res = await fetch(`/api/inbox/conversations/${selectedId}`, {
+        method: "DELETE",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          typeof data.error === "string" ? data.error : "Failed to delete chat"
+        );
+      }
+      setSelectedId(null);
+      setMessages([]);
+      setReply("");
+      await fetchConversations();
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : "Failed to delete chat");
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -193,7 +246,7 @@ export function InboxPanel() {
                       <button
                         type="button"
                         onClick={() => switchMode("ai")}
-                        disabled={switchingMode}
+                        disabled={switchingMode || deleting}
                         className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
                       >
                         {switchingMode ? "Switching..." : "Switch to AI"}
@@ -202,12 +255,20 @@ export function InboxPanel() {
                       <button
                         type="button"
                         onClick={() => switchMode("manual")}
-                        disabled={switchingMode}
+                        disabled={switchingMode || deleting}
                         className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-50"
                       >
                         {switchingMode ? "Switching..." : "Take over manually"}
                       </button>
                     )}
+                    <button
+                      type="button"
+                      onClick={deleteConversation}
+                      disabled={deleting || switchingMode}
+                      className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:opacity-50"
+                    >
+                      {deleting ? "Deleting..." : "Delete chat"}
+                    </button>
                   </div>
                 )}
               </div>
@@ -234,6 +295,11 @@ export function InboxPanel() {
 
             {selected && (
               <div className="border-t border-slate-200 bg-white p-4">
+                {sendError && (
+                  <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+                    {sendError}
+                  </div>
+                )}
                 {isManual && (
                   <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
                     Manual mode: reply below. The AI will not respond until you

@@ -1,8 +1,5 @@
-import { redirect } from "next/navigation";
-import { getAuthUser } from "@/lib/auth";
+import { LandingPage } from "@/components/landing/LandingPage";
 
-export default async function Home() {
-  const user = await getAuthUser();
-  if (!user) redirect("/login");
-  redirect(user.role === "admin" ? "/admin" : "/dashboard");
+export default function Home() {
+  return <LandingPage />;
 }

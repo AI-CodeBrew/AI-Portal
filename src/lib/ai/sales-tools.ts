@@ -10,6 +10,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import type { Store } from "@/lib/types";
 import type { ResolvedStoreAiConfig } from "./ai-settings-types";
 import type { AdProductContext } from "@/lib/ads/types";
+import { searchPortalProducts } from "@/lib/products/products-service";
 
 export const SALES_SYSTEM_PROMPT = `You are a helpful, professional sales agent for an e-commerce store on WhatsApp.
 
@@ -144,9 +145,14 @@ export async function executeSalesTool(
   const { store, conversationId, customerPhone, customerId } = ctx;
   const supabase = createAdminClient();
 
+  const shopifyConnected = Boolean(
+    store.shop_domain && store.shopify_access_token
+  );
+
   if (
     name !== "escalate_to_human" &&
-    (!store.shop_domain || !store.shopify_access_token)
+    name !== "search_products" &&
+    !shopifyConnected
   ) {
     return {
       result: {
@@ -156,11 +162,11 @@ export async function executeSalesTool(
     };
   }
 
-  const shopDomain = store.shop_domain!;
-  const shopifyToken = store.shopify_access_token!;
+  const shopDomain = store.shop_domain ?? "";
+  const shopifyToken = store.shopify_access_token ?? "";
 
   let currency = ctx.storeCurrency ?? null;
-  if (!currency) {
+  if (!currency && shopifyConnected) {
     try {
       currency = await getShopCurrency(shopDomain, shopifyToken);
     } catch (err) {
@@ -175,26 +181,61 @@ export async function executeSalesTool(
         if (!query) {
           return { result: { error: "Search query is required", products: [] } };
         }
-        const products = await searchProducts(shopDomain, shopifyToken, query);
-        const withCurrency = products.map((p) => ({
-          ...p,
-          currency,
-          variants: p.variants.map((v) => ({
-            ...v,
-            currency,
-            price_formatted: formatVariantPrice(v.price, currency ?? "USD"),
-          })),
+
+        const portalProducts = await searchPortalProducts(store.id, query);
+        const portalMapped = portalProducts.map((p) => ({
+          id: p.id,
+          title: p.title,
+          description: p.description,
+          sku: p.sku,
+          source: "portal" as const,
+          currency: p.currency,
+          imageUrl: p.imageUrl,
+          variants: [
+            {
+              id: p.id,
+              title: "Default",
+              price: p.price,
+              currency: p.currency,
+              price_formatted: formatVariantPrice(p.price, p.currency),
+              in_stock: true,
+            },
+          ],
         }));
+
+        let shopifyMapped: Array<Record<string, unknown>> = [];
+        if (shopifyConnected) {
+          const products = await searchProducts(
+            shopDomain,
+            shopifyToken,
+            query
+          );
+          shopifyMapped = products.map((p) => ({
+            ...p,
+            source: "shopify",
+            currency,
+            variants: p.variants.map((v) => ({
+              ...v,
+              currency,
+              price_formatted: formatVariantPrice(v.price, currency ?? "USD"),
+            })),
+          }));
+        }
+
+        const combined = [...portalMapped, ...shopifyMapped];
+        const displayCurrency =
+          currency ?? portalMapped[0]?.currency ?? "USD";
+
         return {
           result: {
             query,
-            currency,
-            count: withCurrency.length,
-            products: withCurrency,
+            currency: displayCurrency,
+            count: combined.length,
+            products: combined,
             message:
-              withCurrency.length === 0
-                ? `No products found matching "${query}". Try a shorter keyword.`
-                : `Found ${withCurrency.length} product(s). Prices are in ${currency}.`,
+              combined.length === 0
+                ? `No products found matching "${query}". Try a shorter keyword or the product SKU.`
+                : `Found ${combined.length} product(s). Prefer portal catalog matches when SKU/ref is known.`,
           },
         };
       }

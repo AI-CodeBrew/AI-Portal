@@ -1,6 +1,8 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getBulkStoreAiUsage, type StoreAiUsage } from "@/lib/ai/quota";
 import type { PlanId } from "@/lib/ai/plans";
+import { getBulkStoreOrderTotals } from "@/lib/orders/store-order-totals";
+import { countStoreProducts } from "@/lib/products/products-service";
 
 export type AdminResellerRow = {
   id: string;
@@ -19,10 +21,15 @@ export type AdminResellerRow = {
     ai_agent_name: string | null;
     created_at: string;
   } | null;
+  /** Best-known total (Shopify store count + WhatsApp-only when available) */
   orderCount: number;
+  /** Rows currently synced into the portal DB */
+  syncedOrderCount: number;
+  shopifyOrderCount: number | null;
   chatCount: number;
   pendingOrderCount: number;
   adLinkCount: number;
+  productCount: number;
   aiUsage: StoreAiUsage | null;
 };
 
@@ -117,13 +124,8 @@ export async function getAdminResellers(): Promise<{
 
       const storeId = store?.id ?? row.store_id;
 
-      const [{ count: orderCount }, { count: chatCount }, { count: pendingOrderCount }] =
-        storeId
+      const [{ count: chatCount }, { count: pendingOrderCount }] = storeId
         ? await Promise.all([
-            supabase
-              .from("orders")
-              .select("*", { count: "exact", head: true })
-              .eq("store_id", storeId),
             supabase
               .from("whatsapp_conversations")
               .select("*", { count: "exact", head: true })
@@ -134,15 +136,20 @@ export async function getAdminResellers(): Promise<{
               .eq("store_id", storeId)
               .eq("status", "pending"),
           ])
-        : [{ count: 0 }, { count: 0 }, { count: 0 }];
+        : [{ count: 0 }, { count: 0 }];
 
       let adLinkCount = 0;
+      let productCount = 0;
       if (storeId) {
-        const adRes = await supabase
-          .from("ad_whatsapp_links")
-          .select("*", { count: "exact", head: true })
-          .eq("store_id", storeId);
+        const [adRes, products] = await Promise.all([
+          supabase
+            .from("ad_whatsapp_links")
+            .select("*", { count: "exact", head: true })
+            .eq("store_id", storeId),
+          countStoreProducts(storeId),
+        ]);
         if (!adRes.error) adLinkCount = adRes.count ?? 0;
+        productCount = products;
       }
 
       return {
@@ -164,24 +171,44 @@ export async function getAdminResellers(): Promise<{
               created_at: store.created_at,
             }
           : null,
-        orderCount: orderCount ?? 0,
+        orderCount: 0,
+        syncedOrderCount: 0,
+        shopifyOrderCount: null as number | null,
         chatCount: chatCount ?? 0,
         pendingOrderCount: pendingOrderCount ?? 0,
         adLinkCount,
+        productCount,
         aiUsage: null as StoreAiUsage | null,
       };
     })
   );
 
-  const usageMap = await getBulkStoreAiUsage(
-    enriched.map((r) => r.store_id).filter(Boolean) as string[]
-  );
+  const storesForTotals = enriched
+    .filter((r) => r.store_id && r.store)
+    .map((r) => ({
+      id: r.store_id!,
+      shop_domain: r.store!.shop_domain,
+      shopify_access_token: r.store!.shopify_access_token,
+    }));
+
+  const [usageMap, orderTotalsMap] = await Promise.all([
+    getBulkStoreAiUsage(
+      enriched.map((r) => r.store_id).filter(Boolean) as string[]
+    ),
+    getBulkStoreOrderTotals(storesForTotals),
+  ]);
 
   return {
-    resellers: enriched.map((r) => ({
-      ...r,
-      aiUsage: r.store_id ? (usageMap.get(r.store_id) ?? null) : null,
-    })),
+    resellers: enriched.map((r) => {
+      const totals = r.store_id ? orderTotalsMap.get(r.store_id) : undefined;
+      return {
+        ...r,
+        orderCount: totals?.total ?? 0,
+        syncedOrderCount: totals?.synced ?? 0,
+        shopifyOrderCount: totals?.shopify ?? null,
+        aiUsage: r.store_id ? (usageMap.get(r.store_id) ?? null) : null,
+      };
+    }),
     error: null,
   };
 }

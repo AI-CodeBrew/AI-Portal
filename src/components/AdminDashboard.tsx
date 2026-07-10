@@ -3,19 +3,39 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { formatMoney } from "@/lib/currency";
-import type { AdminPlatformStats } from "@/lib/admin/stats";
+import type {
+  AdminPeriodMetric,
+  AdminPlatformStats,
+} from "@/lib/admin/stats";
 import { AI_PLANS, type PlanId } from "@/lib/ai/plans";
+
+function formatDelta(metric: AdminPeriodMetric): string {
+  if (metric.deltaPercent == null) {
+    return metric.current > 0 ? "New vs last 7 days" : "vs last 7 days";
+  }
+  const sign = metric.deltaPercent > 0 ? "+" : "";
+  return `${sign}${metric.deltaPercent}% vs last 7 days`;
+}
+
+function deltaColor(metric: AdminPeriodMetric): string {
+  if (metric.deltaPercent == null) return "text-slate-500";
+  if (metric.deltaPercent > 0) return "text-emerald-600";
+  if (metric.deltaPercent < 0) return "text-red-600";
+  return "text-slate-500";
+}
 
 function StatCard({
   label,
   value,
   sub,
+  metric,
   href,
   accent,
 }: {
   label: string;
   value: string | number;
   sub?: string;
+  metric?: AdminPeriodMetric;
   href?: string;
   accent: "violet" | "emerald" | "amber" | "blue" | "red";
 }) {
@@ -33,11 +53,58 @@ function StatCard({
     >
       <p className="text-sm font-medium text-slate-600">{label}</p>
       <p className="mt-1 text-3xl font-bold text-slate-900">{value}</p>
-      {sub && <p className="mt-1 text-xs text-slate-500">{sub}</p>}
+      {metric ? (
+        <p className={`mt-1 text-xs font-medium ${deltaColor(metric)}`}>
+          {formatDelta(metric)}
+        </p>
+      ) : (
+        sub && <p className="mt-1 text-xs text-slate-500">{sub}</p>
+      )}
     </div>
   );
 
   return href ? <Link href={href}>{inner}</Link> : inner;
+}
+
+function MiniBarChart({ points }: { points: AdminPlatformStats["chart"] }) {
+  const max = Math.max(
+    1,
+    ...points.map((p) => Math.max(p.conversations, p.orders))
+  );
+
+  return (
+    <div className="mt-4">
+      <div className="flex h-36 items-end gap-2">
+        {points.map((p) => (
+          <div key={p.date} className="flex flex-1 flex-col items-center gap-1">
+            <div className="flex h-28 w-full items-end justify-center gap-0.5">
+              <div
+                className="w-2 rounded-t bg-blue-400/90"
+                style={{
+                  height: `${Math.max(4, (p.conversations / max) * 100)}%`,
+                }}
+              />
+              <div
+                className="w-2 rounded-t bg-emerald-500"
+                style={{ height: `${Math.max(4, (p.orders / max) * 100)}%` }}
+              />
+            </div>
+            <span className="text-[10px] font-medium text-slate-500">
+              {p.label}
+            </span>
+          </div>
+        ))}
+      </div>
+      <div className="mt-3 flex gap-4 text-xs text-slate-500">
+        <span className="inline-flex items-center gap-1.5">
+          <span className="h-2 w-2 rounded-sm bg-blue-400" /> Conversations
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="h-2 w-2 rounded-sm bg-emerald-500" /> Orders
+        </span>
+      </div>
+    </div>
+  );
 }
 
 export function AdminDashboard() {
@@ -61,8 +128,50 @@ export function AdminDashboard() {
 
   if (!stats) return null;
 
+  const currency = stats.period.revenue.currency || "AED";
+  const hasTraffic = stats.chart.some(
+    (p) => p.conversations > 0 || p.orders > 0
+  );
+
   return (
     <div className="space-y-6">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+        <StatCard
+          label="Total Conversations"
+          value={stats.period.conversations.current.toLocaleString()}
+          metric={stats.period.conversations}
+          href="/admin/chats"
+          accent="blue"
+        />
+        <StatCard
+          label="Orders Created"
+          value={stats.period.ordersCreated.current.toLocaleString()}
+          metric={stats.period.ordersCreated}
+          href="/admin/orders"
+          accent="emerald"
+        />
+        <StatCard
+          label="Confirmed Orders"
+          value={stats.period.confirmedOrders.current.toLocaleString()}
+          metric={stats.period.confirmedOrders}
+          href="/admin/orders"
+          accent="emerald"
+        />
+        <StatCard
+          label="Conversion Rate"
+          value={`${stats.period.conversionRate.current.toFixed(1)}%`}
+          metric={stats.period.conversionRate}
+          accent="violet"
+        />
+        <StatCard
+          label={`Revenue (${currency})`}
+          value={formatMoney(stats.period.revenue.current, currency)}
+          metric={stats.period.revenue}
+          href="/admin/orders"
+          accent="amber"
+        />
+      </div>
+
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           label="Resellers"
@@ -73,8 +182,8 @@ export function AdminDashboard() {
         />
         <StatCard
           label="Total orders"
-          value={stats.orders.total}
-          sub={`${stats.orders.pending} pending`}
+          value={stats.orders.total.toLocaleString()}
+          sub={`${stats.orders.pending} pending · ${stats.orders.confirmed} confirmed`}
           href="/admin/orders"
           accent="emerald"
         />
@@ -94,7 +203,48 @@ export function AdminDashboard() {
         />
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-6 lg:grid-cols-3">
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm lg:col-span-2">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="font-bold text-slate-900">Conversations & Orders</h2>
+              <p className="text-xs text-slate-500">Last 7 days · platform-wide</p>
+            </div>
+          </div>
+          {hasTraffic ? (
+            <MiniBarChart points={stats.chart} />
+          ) : (
+            <p className="mt-8 text-center text-sm text-slate-500">
+              No traffic yet across resellers.
+            </p>
+          )}
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h2 className="font-bold text-slate-900">AI Performance</h2>
+          <p className="text-xs text-slate-500">All conversations</p>
+          <p className="mt-4 text-4xl font-bold text-slate-900">
+            {stats.aiPerformance.successRate}%
+          </p>
+          <p className="text-sm font-medium text-slate-600">AI Success</p>
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            <div className="rounded-xl bg-blue-50 px-3 py-3">
+              <p className="text-xs font-medium text-blue-700">Handled by AI</p>
+              <p className="mt-1 text-xl font-bold text-blue-900">
+                {stats.aiPerformance.handledByAi}
+              </p>
+            </div>
+            <div className="rounded-xl bg-violet-50 px-3 py-3">
+              <p className="text-xs font-medium text-violet-700">Human Takeover</p>
+              <p className="mt-1 text-xl font-bold text-violet-900">
+                {stats.aiPerformance.humanTakeover}
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           label="Shopify connected"
           value={stats.integrations.shopify}
@@ -106,13 +256,19 @@ export function AdminDashboard() {
           accent="emerald"
         />
         <StatCard
-          label="Ad links created"
-          value={stats.adLinks}
+          label="Meta connected"
+          value={stats.integrations.meta}
           accent="violet"
+        />
+        <StatCard
+          label="Catalog products"
+          value={stats.products}
+          sub={`${stats.adLinks} ad links`}
+          accent="blue"
         />
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid gap-6 lg:grid-cols-3">
         <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="flex items-center justify-between">
             <h2 className="font-bold text-slate-900">Recent resellers</h2>
@@ -177,10 +333,41 @@ export function AdminDashboard() {
                     </span>
                     {o.total != null && (
                       <p className="mt-1 text-xs font-medium text-slate-700">
-                        {formatMoney(o.total, o.currency ?? "USD")}
+                        {formatMoney(o.total, o.currency ?? currency)}
                       </p>
                     )}
                   </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex items-center justify-between">
+            <h2 className="font-bold text-slate-900">Recent Conversations</h2>
+            <Link
+              href="/admin/chats"
+              className="text-xs font-semibold text-violet-600 hover:underline"
+            >
+              View all
+            </Link>
+          </div>
+          {stats.recentChats.length === 0 ? (
+            <p className="mt-4 text-sm text-slate-500">No chats yet.</p>
+          ) : (
+            <ul className="mt-4 divide-y divide-slate-100">
+              {stats.recentChats.map((c) => (
+                <li key={c.id} className="flex items-center justify-between py-3">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">
+                      +{c.phone}
+                    </p>
+                    <p className="text-xs text-slate-500">{c.storeName ?? "—"}</p>
+                  </div>
+                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold capitalize text-slate-700">
+                    {c.status.replace(/_/g, " ")}
+                  </span>
                 </li>
               ))}
             </ul>

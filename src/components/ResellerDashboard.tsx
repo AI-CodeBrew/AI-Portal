@@ -3,18 +3,36 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { formatMoney } from "@/lib/currency";
-import type { ResellerDashboardStats } from "@/lib/dashboard/reseller-stats";
+import type {
+  PeriodMetric,
+  ResellerDashboardStats,
+} from "@/lib/dashboard/reseller-stats";
+
+function formatDelta(metric: PeriodMetric, suffix = "%"): string {
+  if (metric.deltaPercent == null) {
+    return metric.current > 0 ? `New vs last 7 days` : `vs last 7 days`;
+  }
+  const sign = metric.deltaPercent > 0 ? "+" : "";
+  return `${sign}${metric.deltaPercent}${suffix} vs last 7 days`;
+}
+
+function deltaColor(metric: PeriodMetric): string {
+  if (metric.deltaPercent == null) return "text-slate-500";
+  if (metric.deltaPercent > 0) return "text-emerald-600";
+  if (metric.deltaPercent < 0) return "text-red-600";
+  return "text-slate-500";
+}
 
 function StatCard({
   label,
   value,
-  sub,
+  metric,
   href,
   accent = "slate",
 }: {
   label: string;
   value: string | number;
-  sub?: string;
+  metric?: PeriodMetric;
   href?: string;
   accent?: "blue" | "emerald" | "amber" | "violet" | "slate";
 }) {
@@ -34,7 +52,11 @@ function StatCard({
     >
       <p className="text-sm font-medium text-slate-600">{label}</p>
       <p className="mt-1 text-3xl font-bold text-slate-900">{value}</p>
-      {sub && <p className="mt-1 text-xs text-slate-500">{sub}</p>}
+      {metric && (
+        <p className={`mt-1 text-xs font-medium ${deltaColor(metric)}`}>
+          {formatDelta(metric)}
+        </p>
+      )}
     </div>
   );
 
@@ -104,10 +126,102 @@ function StatusPill({ status }: { status: string }) {
   );
 }
 
+function MiniBarChart({
+  points,
+}: {
+  points: ResellerDashboardStats["chart"];
+}) {
+  const max = Math.max(
+    1,
+    ...points.map((p) => Math.max(p.conversations, p.orders))
+  );
+
+  return (
+    <div className="mt-4">
+      <div className="flex h-40 items-end gap-2">
+        {points.map((p) => (
+          <div key={p.date} className="flex flex-1 flex-col items-center gap-1">
+            <div className="flex h-32 w-full items-end justify-center gap-0.5">
+              <div
+                className="w-2.5 rounded-t bg-blue-400/90"
+                style={{
+                  height: `${Math.max(4, (p.conversations / max) * 100)}%`,
+                }}
+                title={`${p.conversations} conversations`}
+              />
+              <div
+                className="w-2.5 rounded-t bg-emerald-500"
+                style={{ height: `${Math.max(4, (p.orders / max) * 100)}%` }}
+                title={`${p.orders} orders`}
+              />
+            </div>
+            <span className="text-[10px] font-medium text-slate-500">
+              {p.label}
+            </span>
+          </div>
+        ))}
+      </div>
+      <div className="mt-3 flex gap-4 text-xs text-slate-500">
+        <span className="inline-flex items-center gap-1.5">
+          <span className="h-2 w-2 rounded-sm bg-blue-400" /> Conversations
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="h-2 w-2 rounded-sm bg-emerald-500" /> Orders
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function OrderStatusBars({
+  pending,
+  confirmed,
+  cancelled,
+}: {
+  pending: number;
+  confirmed: number;
+  cancelled: number;
+}) {
+  const total = pending + confirmed + cancelled;
+  const rows = [
+    { label: "Pending", value: pending, color: "bg-amber-400" },
+    { label: "Confirmed", value: confirmed, color: "bg-emerald-500" },
+    { label: "Cancelled", value: cancelled, color: "bg-slate-300" },
+  ];
+
+  return (
+    <div className="mt-4 space-y-3">
+      {rows.map((row) => {
+        const pct = total > 0 ? Math.round((row.value / total) * 100) : 0;
+        return (
+          <div key={row.label}>
+            <div className="mb-1 flex justify-between text-xs">
+              <span className="font-medium text-slate-700">{row.label}</span>
+              <span className="text-slate-500">
+                {row.value} · {pct}%
+              </span>
+            </div>
+            <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+              <div
+                className={`h-full rounded-full ${row.color}`}
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+          </div>
+        );
+      })}
+      {total === 0 && (
+        <p className="text-sm text-slate-500">No orders yet</p>
+      )}
+    </div>
+  );
+}
+
 export function ResellerDashboard() {
   const [stats, setStats] = useState<ResellerDashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     fetch("/api/dashboard/stats")
@@ -139,10 +253,26 @@ export function ResellerDashboard() {
   }
 
   const nextStep = stats.setup.steps.find((s) => !s.done);
+  const share = stats.shareLink;
+  const hasTraffic = stats.chart.some(
+    (p) => p.conversations > 0 || p.orders > 0
+  );
+  const currency = stats.period.revenue.currency || stats.store.currency || "AED";
+
+  async function copyTrackingLink() {
+    if (!share?.trackingUrl) return;
+    try {
+      await navigator.clipboard.writeText(share.trackingUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setCopied(false);
+    }
+  }
 
   return (
     <div className="space-y-6">
-      {/* Welcome + setup progress */}
+      {/* Welcome */}
       <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
         <div className="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
           <div>
@@ -150,7 +280,8 @@ export function ResellerDashboard() {
               Welcome back, {stats.store.name}
             </h2>
             <p className="mt-1 text-sm text-slate-600">
-              {stats.store.shop_domain ?? "Complete setup to start selling on WhatsApp"}
+              {stats.store.shop_domain ??
+                "Complete setup to start selling on WhatsApp"}
             </p>
             <div className="mt-4 flex flex-wrap gap-2">
               <span
@@ -173,6 +304,15 @@ export function ResellerDashboard() {
               </span>
               <span
                 className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                  stats.store.meta_connected
+                    ? "bg-emerald-100 text-emerald-800"
+                    : "bg-slate-100 text-slate-600"
+                }`}
+              >
+                Meta {stats.store.meta_connected ? "on" : "off"}
+              </span>
+              <span
+                className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
                   stats.ai.platformConfigured
                     ? "bg-blue-100 text-blue-800"
                     : "bg-amber-100 text-amber-800"
@@ -182,7 +322,12 @@ export function ResellerDashboard() {
               </span>
             </div>
           </div>
-          <ProgressRing percent={stats.setup.percentComplete} />
+          <div className="text-center">
+            <ProgressRing percent={stats.setup.percentComplete} />
+            <p className="mt-2 text-xs font-medium text-slate-500">
+              {stats.setup.completedCount}/{stats.setup.totalCount} completed
+            </p>
+          </div>
         </div>
 
         {stats.setup.percentComplete < 100 && nextStep && (
@@ -200,57 +345,309 @@ export function ResellerDashboard() {
         )}
       </div>
 
-      {/* Key metrics */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {/* 7-day KPIs */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <StatCard
-          label="Pending orders"
-          value={stats.orders.pending}
-          sub="Need confirmation"
-          href="/dashboard/orders"
-          accent="amber"
-        />
-        <StatCard
-          label="Confirmed orders"
-          value={stats.orders.confirmed}
-          sub={`${stats.orders.withTracking} with tracking`}
-          href="/dashboard/orders"
-          accent="emerald"
-        />
-        <StatCard
-          label="Active chats"
-          value={stats.inbox.ai_handling}
-          sub={`${stats.inbox.human_handoff} need you`}
+          label="Total Conversations"
+          value={stats.period.conversations.current.toLocaleString()}
+          metric={stats.period.conversations}
           href="/dashboard/inbox"
           accent="blue"
         />
         <StatCard
-          label="AI replies used"
-          value={`${stats.ai.used}/${stats.ai.limit}`}
-          sub={`${stats.ai.planName} plan`}
-          href="/dashboard/plan"
-          accent={stats.ai.limitReached ? "amber" : "violet"}
+          label="Orders Created"
+          value={stats.period.ordersCreated.current.toLocaleString()}
+          metric={stats.period.ordersCreated}
+          href="/dashboard/orders"
+          accent="slate"
+        />
+        <StatCard
+          label="Confirmed Orders"
+          value={stats.period.confirmedOrders.current.toLocaleString()}
+          metric={stats.period.confirmedOrders}
+          href="/dashboard/orders"
+          accent="emerald"
+        />
+        <StatCard
+          label="Conversion Rate"
+          value={`${stats.period.conversionRate.current.toFixed(1)}%`}
+          metric={stats.period.conversionRate}
+          accent="violet"
+        />
+        <StatCard
+          label={`Revenue (${currency})`}
+          value={formatMoney(stats.period.revenue.current, currency)}
+          metric={stats.period.revenue}
+          href="/dashboard/orders"
+          accent="amber"
         />
       </div>
 
       <div className="grid gap-6 lg:grid-cols-3">
-        {/* Setup checklist */}
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm lg:col-span-1">
-          <h3 className="font-bold text-slate-900">Setup progress</h3>
-          <ul className="mt-4 space-y-4">
+        {/* Chart */}
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm lg:col-span-2">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="font-bold text-slate-900">Conversations & Orders</h3>
+              <p className="text-xs text-slate-500">Last 7 days</p>
+            </div>
+            <Link
+              href="/dashboard/inbox"
+              className="text-xs font-semibold text-blue-600 hover:underline"
+            >
+              View inbox
+            </Link>
+          </div>
+          {hasTraffic ? (
+            <MiniBarChart points={stats.chart} />
+          ) : (
+            <div className="mt-8 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-10 text-center">
+              <p className="text-sm font-medium text-slate-700">No traffic yet</p>
+              <p className="mt-1 text-xs text-slate-500">
+                Share a product link to start collecting conversations and orders.
+              </p>
+              <Link
+                href="/dashboard/products"
+                className="mt-3 inline-block text-sm font-semibold text-emerald-700 hover:underline"
+              >
+                Add a product →
+              </Link>
+            </div>
+          )}
+        </div>
+
+        {/* Order status */}
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h3 className="font-bold text-slate-900">Order Status</h3>
+          <p className="text-xs text-slate-500">All time</p>
+          <OrderStatusBars
+            pending={stats.orderStatus.pending}
+            confirmed={stats.orderStatus.confirmed}
+            cancelled={stats.orderStatus.cancelled}
+          />
+          <p className="mt-4 text-xs text-slate-500">
+            Total orders: {stats.orders.total.toLocaleString()}
+            {stats.orders.shopifyTotal != null
+              ? ` · ${stats.orders.shopifyTotal.toLocaleString()} on Shopify`
+              : ""}
+          </p>
+        </div>
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-3">
+        {/* Top products */}
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex items-center justify-between">
+            <h3 className="font-bold text-slate-900">Top Products</h3>
+            <Link
+              href="/dashboard/products"
+              className="text-xs font-semibold text-blue-600 hover:underline"
+            >
+              Manage
+            </Link>
+          </div>
+          {stats.topProducts.length === 0 ? (
+            <p className="mt-4 text-sm text-slate-500">No sales yet</p>
+          ) : (
+            <ul className="mt-4 divide-y divide-slate-100">
+              {stats.topProducts.map((p, i) => (
+                <li key={p.title} className="flex items-center gap-3 py-3">
+                  <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-100 text-xs font-bold text-slate-600">
+                    {i + 1}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold text-slate-900">
+                      {p.title}
+                    </p>
+                    <p className="text-xs text-slate-500">
+                      {p.orders} orders · {p.quantity} units
+                    </p>
+                  </div>
+                  <p className="text-xs font-semibold text-slate-700">
+                    {formatMoney(p.revenue, currency)}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        {/* Recent conversations */}
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex items-center justify-between">
+            <h3 className="font-bold text-slate-900">Recent Conversations</h3>
+            <Link
+              href="/dashboard/inbox"
+              className="text-xs font-semibold text-blue-600 hover:underline"
+            >
+              View all
+            </Link>
+          </div>
+          {stats.inbox.recent.length === 0 ? (
+            <p className="mt-4 text-sm text-slate-500">No chats yet</p>
+          ) : (
+            <ul className="mt-4 divide-y divide-slate-100">
+              {stats.inbox.recent.map((chat) => (
+                <li key={chat.id} className="py-3 first:pt-0">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold text-slate-900">
+                        +{chat.customer_phone}
+                      </p>
+                      {chat.last_message && (
+                        <p className="mt-0.5 truncate text-xs text-slate-500">
+                          {chat.last_message}
+                        </p>
+                      )}
+                    </div>
+                    <StatusPill status={chat.status} />
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        {/* AI Performance */}
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h3 className="font-bold text-slate-900">AI Performance</h3>
+          <p className="text-xs text-slate-500">All conversations</p>
+          <div className="mt-4 flex items-end gap-3">
+            <p className="text-4xl font-bold text-slate-900">
+              {stats.aiPerformance.successRate}%
+            </p>
+            <p className="mb-1 text-sm font-medium text-slate-600">AI Success</p>
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            <div className="rounded-xl bg-blue-50 px-3 py-3">
+              <p className="text-xs font-medium text-blue-700">Handled by AI</p>
+              <p className="mt-1 text-xl font-bold text-blue-900">
+                {stats.aiPerformance.handledByAi}
+              </p>
+            </div>
+            <div className="rounded-xl bg-violet-50 px-3 py-3">
+              <p className="text-xs font-medium text-violet-700">Human Takeover</p>
+              <p className="mt-1 text-xl font-bold text-violet-900">
+                {stats.aiPerformance.humanTakeover}
+              </p>
+            </div>
+          </div>
+          <p className="mt-3 text-xs text-slate-500">
+            AI replies used: {stats.ai.used}/{stats.ai.limit} ({stats.ai.planName})
+          </p>
+        </div>
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-3">
+        {/* Share product link */}
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm lg:col-span-2">
+          <h3 className="font-bold text-slate-900">Share Product Link</h3>
+          <p className="text-xs text-slate-500">
+            Use this on your ad&apos;s Shop Now button
+          </p>
+          {share ? (
+            <div className="mt-4 space-y-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Product
+                </p>
+                <p className="mt-1 text-sm font-semibold text-slate-900">
+                  {share.productTitle}
+                </p>
+                {share.price && (
+                  <p className="text-xs text-slate-500">
+                    {share.price} {share.currency ?? ""} · {share.clickCount} clicks
+                  </p>
+                )}
+              </div>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Tracking Link
+                </p>
+                <p className="mt-1 break-all rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-800">
+                  {share.trackingUrl}
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={copyTrackingLink}
+                  className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700"
+                >
+                  {copied ? "Copied" : "Copy"}
+                </button>
+                <a
+                  href={share.trackingUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  Open
+                </a>
+                {share.whatsappUrl && (
+                  <a
+                    href={share.whatsappUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800 hover:bg-emerald-100"
+                  >
+                    Share
+                  </a>
+                )}
+                <a
+                  href={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(share.trackingUrl)}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  QR
+                </a>
+                <Link
+                  href="/dashboard/ads"
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  All links
+                </Link>
+              </div>
+            </div>
+          ) : (
+            <div className="mt-6 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center">
+              <p className="text-sm text-slate-600">
+                No product links yet. Add a product to generate a tracking link.
+              </p>
+              <Link
+                href="/dashboard/products"
+                className="mt-3 inline-block text-sm font-semibold text-emerald-700 hover:underline"
+              >
+                Add product →
+              </Link>
+            </div>
+          )}
+        </div>
+
+        {/* Onboarding */}
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <div className="flex items-center justify-between">
+            <h3 className="font-bold text-slate-900">Onboarding Progress</h3>
+            <span className="text-xs font-semibold text-slate-500">
+              {stats.setup.completedCount}/{stats.setup.totalCount} completed
+            </span>
+          </div>
+          <ul className="mt-4 space-y-3">
             {stats.setup.steps.map((step) => (
               <li key={step.id}>
                 <Link
                   href={step.href}
-                  className="flex items-start gap-3 rounded-lg p-2 -mx-2 hover:bg-slate-50"
+                  className="flex items-start gap-3 rounded-lg p-1.5 -mx-1.5 hover:bg-slate-50"
                 >
                   <span
-                    className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+                    className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${
                       step.done
                         ? "bg-emerald-500 text-white"
                         : "bg-slate-200 text-slate-500"
                     }`}
                   >
-                    {step.done ? "✓" : "·"}
+                    {step.done ? "✓" : ""}
                   </span>
                   <div>
                     <p
@@ -267,9 +664,11 @@ export function ResellerDashboard() {
             ))}
           </ul>
         </div>
+      </div>
 
-        {/* Recent orders */}
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm lg:col-span-1">
+      {/* Recent orders + quick actions */}
+      <div className="grid gap-6 lg:grid-cols-2">
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="flex items-center justify-between">
             <h3 className="font-bold text-slate-900">Recent orders</h3>
             <Link
@@ -299,7 +698,7 @@ export function ResellerDashboard() {
                       <StatusPill status={order.status} />
                       {order.total != null && (
                         <p className="mt-1 text-xs font-medium text-slate-700">
-                          {formatMoney(order.total, order.currency ?? "USD")}
+                          {formatMoney(order.total, order.currency ?? currency)}
                         </p>
                       )}
                     </div>
@@ -310,77 +709,40 @@ export function ResellerDashboard() {
           )}
         </div>
 
-        {/* Recent chats */}
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm lg:col-span-1">
-          <div className="flex items-center justify-between">
-            <h3 className="font-bold text-slate-900">Recent chats</h3>
-            <Link
-              href="/dashboard/inbox"
-              className="text-xs font-semibold text-blue-600 hover:underline"
-            >
-              Open inbox
-            </Link>
-          </div>
-          {stats.inbox.recent.length === 0 ? (
-            <p className="mt-4 text-sm text-slate-500">No conversations yet.</p>
-          ) : (
-            <ul className="mt-4 divide-y divide-slate-100">
-              {stats.inbox.recent.map((chat) => (
-                <li key={chat.id} className="py-3 first:pt-0">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-semibold text-slate-900">
-                        {chat.customer_phone}
-                      </p>
-                      {chat.last_message && (
-                        <p className="mt-0.5 truncate text-xs text-slate-500">
-                          {chat.last_message}
-                        </p>
-                      )}
-                    </div>
-                    <StatusPill status={chat.status} />
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Link
+            href="/dashboard/integrations"
+            className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm hover:shadow-md"
+          >
+            <p className="text-sm font-semibold text-slate-900">Integrations</p>
+            <p className="mt-1 text-xs text-slate-500">Shopify & WhatsApp</p>
+          </Link>
+          <Link
+            href="/dashboard/ai"
+            className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm hover:shadow-md"
+          >
+            <p className="text-sm font-semibold text-slate-900">AI Settings</p>
+            <p className="mt-1 text-xs text-slate-500">Agent name & templates</p>
+          </Link>
+          <Link
+            href="/dashboard/ads"
+            className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm hover:shadow-md"
+          >
+            <p className="text-sm font-semibold text-slate-900">Ad Links</p>
+            <p className="mt-1 text-xs text-slate-500">
+              {stats.ads.linkCount} links · {stats.ads.totalClicks} clicks
+            </p>
+          </Link>
+          <Link
+            href="/dashboard/plan"
+            className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm hover:shadow-md"
+          >
+            <p className="text-sm font-semibold text-slate-900">Plan & Usage</p>
+            <p className="mt-1 text-xs text-slate-500">
+              {stats.ai.percentUsed}% of monthly AI quota
+            </p>
+          </Link>
         </div>
-      </div>
-
-      {/* Quick actions + ads */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Link
-          href="/dashboard/integrations"
-          className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm hover:shadow-md"
-        >
-          <p className="text-sm font-semibold text-slate-900">Integrations</p>
-          <p className="mt-1 text-xs text-slate-500">Shopify & WhatsApp</p>
-        </Link>
-        <Link
-          href="/dashboard/ai"
-          className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm hover:shadow-md"
-        >
-          <p className="text-sm font-semibold text-slate-900">AI Settings</p>
-          <p className="mt-1 text-xs text-slate-500">Agent name & templates</p>
-        </Link>
-        <Link
-          href="/dashboard/ads"
-          className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm hover:shadow-md"
-        >
-          <p className="text-sm font-semibold text-slate-900">Ad Links</p>
-          <p className="mt-1 text-xs text-slate-500">
-            {stats.ads.linkCount} links · {stats.ads.totalClicks} clicks
-          </p>
-        </Link>
-        <Link
-          href="/dashboard/plan"
-          className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm hover:shadow-md"
-        >
-          <p className="text-sm font-semibold text-slate-900">Plan & Usage</p>
-          <p className="mt-1 text-xs text-slate-500">
-            {stats.ai.percentUsed}% of monthly AI quota
-          </p>
-        </Link>
       </div>
 
       {stats.ai.limitReached && (

@@ -1,6 +1,9 @@
+import Link from "next/link";
 import { PlanUsageCard } from "@/components/PlanUsageCard";
 import { AI_PLANS, PLAN_ORDER } from "@/lib/ai/plans";
+import { PLAN_PRICES_AED } from "@/lib/payments/paytabs";
 import { DashboardPageHeader } from "@/components/DashboardPageHeader";
+import { formatMoney } from "@/lib/currency";
 
 export default function ResellerPlanPage() {
   return (
@@ -17,6 +20,7 @@ export default function ResellerPlanPage() {
         <div className="mt-4 grid gap-4 sm:grid-cols-3">
           {PLAN_ORDER.map((id) => {
             const plan = AI_PLANS[id];
+            const price = PLAN_PRICES_AED[id];
             return (
               <div
                 key={id}
@@ -30,14 +34,29 @@ export default function ResellerPlanPage() {
                     / month
                   </span>
                 </p>
+                <p className="mt-1 text-sm font-semibold text-emerald-700">
+                  {price === 0 ? "Free" : `${formatMoney(price, "AED")}/mo`}
+                </p>
                 <p className="mt-2 text-sm text-slate-600">{plan.description}</p>
               </div>
             );
           })}
         </div>
-        <p className="mt-4 text-sm text-slate-600">
-          To upgrade, contact your platform administrator.
-        </p>
+        <div className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
+          <p className="text-sm font-semibold text-emerald-900">
+            Upgrade with PayTabs
+          </p>
+          <p className="mt-1 text-sm text-emerald-800/90">
+            Connect PayTabs, then request checkout for Pro or Max. Payment API
+            will be connected next — the flow and pending records are ready now.
+          </p>
+          <Link
+            href="/dashboard/integrations/paytabs"
+            className="mt-3 inline-block text-sm font-semibold text-emerald-700 hover:underline"
+          >
+            Open PayTabs integration →
+          </Link>
+        </div>
       </div>
     </div>
   );

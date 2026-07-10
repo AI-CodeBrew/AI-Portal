@@ -24,6 +24,8 @@ export function AiSettingsPanel() {
 
   const [settings, setSettings] = useState<StoreAiSettings | null>(null);
   const [templates, setTemplates] = useState<AiPromptTemplate[]>([]);
+  const [platformDefaults, setPlatformDefaults] =
+    useState<StoreAiSettings | null>(null);
 
   const [agentName, setAgentName] = useState("");
   const [openingMessage, setOpeningMessage] = useState("");
@@ -53,6 +55,7 @@ export function AiSettingsPanel() {
       const s = data.settings as StoreAiSettings;
       setSettings(s);
       setTemplates(data.templates ?? []);
+      setPlatformDefaults(data.platformDefaults ?? null);
       setAgentName(s.agentName ?? "");
       setOpeningMessage(s.openingMessage ?? "");
       setReplyLength(s.replyLength ?? "medium");
@@ -269,6 +272,20 @@ export function AiSettingsPanel() {
               </p>
             </div>
 
+            {(!settings?.agentName || !settings?.openingMessage) &&
+              platformDefaults && (
+                <div className="mb-5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-900">
+                  <p className="font-semibold">Using platform defaults</p>
+                  <p className="mt-0.5 text-xs text-blue-800/90">
+                    Empty fields fall back to admin defaults
+                    {platformDefaults.agentName
+                      ? ` (agent: ${platformDefaults.agentName})`
+                      : ""}
+                    . Save your own values to override.
+                  </p>
+                </div>
+              )}
+
             <div className="space-y-5">
               <div>
                 <label className="mb-1.5 block text-sm font-semibold text-slate-900">
@@ -278,7 +295,9 @@ export function AiSettingsPanel() {
                   type="text"
                   value={agentName}
                   onChange={(e) => setAgentName(e.target.value)}
-                  placeholder="e.g. Max"
+                  placeholder={
+                    platformDefaults?.agentName || "e.g. Max"
+                  }
                   className="w-full rounded-lg border border-slate-200 px-3.5 py-2.5 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100"
                 />
                 <p className="mt-1.5 text-xs text-slate-500">
@@ -294,7 +313,9 @@ export function AiSettingsPanel() {
                   value={openingMessage}
                   onChange={(e) => setOpeningMessage(e.target.value)}
                   rows={3}
-                  placeholder={DEFAULT_OPENING}
+                  placeholder={
+                    platformDefaults?.openingMessage || DEFAULT_OPENING
+                  }
                   className="w-full rounded-lg border border-slate-200 px-3.5 py-2.5 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100"
                 />
                 <p className="mt-1.5 text-xs text-slate-500">

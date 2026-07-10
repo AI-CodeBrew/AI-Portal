@@ -6,7 +6,7 @@ import { getRecentChatHistory } from "@/lib/ai/chat-history";
 import { quotaLimitMessage } from "@/lib/ai/plans";
 import { tryConsumeAiQuota } from "@/lib/ai/quota";
 import {
-  getStoreAiSettings,
+  resolveStoreAiConfig,
   personalizeOpeningMessage,
 } from "@/lib/ai/store-ai-settings";
 import {
@@ -36,26 +36,27 @@ async function sendReply(
   activeStore: Store,
   customerPhone: string,
   text: string
-): Promise<boolean> {
+): Promise<{ ok: true } | { ok: false; error: string }> {
   const waCreds = getStoreWhatsAppCredentials(activeStore);
   if (!waCreds) {
-    console.error(
-      "[whatsapp-webhook] Cannot send reply — missing phone ID or access token. Reconnect WhatsApp in Integrations."
-    );
-    return false;
+    const error =
+      "Cannot send reply — missing phone ID or access token. Reconnect WhatsApp in Integrations.";
+    console.error(`[whatsapp-webhook] ${error}`);
+    return { ok: false, error };
   }
 
   try {
     await sendWhatsAppText({
       phoneNumberId: waCreds.phoneNumberId,
       accessToken: waCreds.accessToken,
-      to: customerPhone,
+      to: normalizePhone(customerPhone),
       text,
     });
-    return true;
+    return { ok: true };
   } catch (err) {
-    console.error("[whatsapp-webhook] sendWhatsAppText failed:", err);
-    return false;
+    const error = err instanceof Error ? err.message : "WhatsApp send failed";
+    console.error("[whatsapp-webhook] sendWhatsAppText failed:", error);
+    return { ok: false, error };
   }
 }
 
@@ -249,7 +250,7 @@ export async function handleWhatsAppWebhookMessage(
 
           if (isNewConversation) {
             try {
-              const aiSettings = await getStoreAiSettings(activeStore.id);
+              const aiSettings = await resolveStoreAiConfig(activeStore.id);
               const opening = aiSettings.openingMessage?.trim();
               if (opening) {
                 const storeName =
@@ -262,19 +263,21 @@ export async function handleWhatsAppWebhookMessage(
                   agentName,
                   storeName,
                 });
-                const openingSent = await sendReply(
+                const openingResult = await sendReply(
                   activeStore,
                   customerPhone,
                   openingText
                 );
-                await supabase.from("whatsapp_messages").insert({
-                  conversation_id: conversation.id,
-                  direction: "out",
-                  content: openingText,
-                });
-                if (!openingSent) {
+                // Only show in portal if WhatsApp accepted the message
+                if (openingResult.ok) {
+                  await supabase.from("whatsapp_messages").insert({
+                    conversation_id: conversation.id,
+                    direction: "out",
+                    content: openingText,
+                  });
+                } else {
                   console.error(
-                    `[whatsapp-webhook] Opening message not sent to ${customerPhone}`
+                    `[whatsapp-webhook] Opening message not sent to ${customerPhone}: ${openingResult.error}`
                   );
                 }
               }
@@ -326,24 +329,35 @@ export async function handleWhatsAppWebhookMessage(
 
           const sent = await sendReply(activeStore, customerPhone, replyText);
 
-          await supabase.from("whatsapp_messages").insert({
-            conversation_id: conversation.id,
-            direction: "out",
-            content: replyText,
-          });
-
-          if (!sent) {
+          if (sent.ok) {
+            await supabase.from("whatsapp_messages").insert({
+              conversation_id: conversation.id,
+              direction: "out",
+              content: replyText,
+            });
+          } else {
             console.error(
-              `[whatsapp-webhook] Reply saved to inbox but not sent to ${customerPhone}`
+              `[whatsapp-webhook] AI reply NOT delivered to WhatsApp (${customerPhone}): ${sent.error}`
             );
+            // Save a portal-only note so reseller can see the failure
+            await supabase.from("whatsapp_messages").insert({
+              conversation_id: conversation.id,
+              direction: "out",
+              content: `[Not delivered to WhatsApp] ${replyText}\n\nError: ${sent.error}`,
+            });
           }
         } catch (err) {
           console.error("[whatsapp-webhook] Message processing error:", err);
-          await sendReply(
+          const fallback = await sendReply(
             activeStore,
             customerPhone,
             "Thanks for your message! Our team will respond shortly."
           );
+          if (!fallback.ok) {
+            console.error(
+              `[whatsapp-webhook] Fallback reply also failed: ${fallback.error}`
+            );
+          }
         }
       }
     }

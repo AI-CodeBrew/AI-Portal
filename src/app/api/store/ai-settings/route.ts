@@ -5,17 +5,19 @@ import {
   listAiTemplates,
   updateStoreAiSettings,
 } from "@/lib/ai/store-ai-settings";
+import { getPlatformAiDefaults } from "@/lib/ai/platform-defaults";
 import type { AiReplyLength } from "@/lib/ai/ai-settings-types";
 
 export async function GET() {
   try {
     const { storeId } = await requireResellerStore();
-    const [settings, templates] = await Promise.all([
+    const [settings, templates, platformDefaults] = await Promise.all([
       getStoreAiSettings(storeId),
       listAiTemplates(storeId),
+      getPlatformAiDefaults(),
     ]);
 
-    return NextResponse.json({ settings, templates });
+    return NextResponse.json({ settings, templates, platformDefaults });
   } catch {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

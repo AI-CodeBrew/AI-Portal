@@ -181,8 +181,11 @@ function ResellerDetailModal({
 
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             {[
-              { label: "Orders", value: reseller.orderCount },
-              { label: "Pending", value: reseller.pendingOrderCount },
+              {
+                label: "Orders",
+                value: reseller.orderCount.toLocaleString(),
+              },
+              { label: "Products", value: reseller.productCount },
               { label: "Chats", value: reseller.chatCount },
               { label: "Ad links", value: reseller.adLinkCount },
             ].map((stat) => (
@@ -195,6 +198,12 @@ function ResellerDetailModal({
               </div>
             ))}
           </div>
+          {reseller.shopifyOrderCount != null && (
+            <p className="text-xs text-slate-500">
+              {reseller.shopifyOrderCount.toLocaleString()} on Shopify ·{" "}
+              {reseller.syncedOrderCount.toLocaleString()} synced in portal
+            </p>
+          )}
 
           <p className="text-xs text-slate-500">
             Joined {new Date(reseller.created_at).toLocaleDateString(undefined, {
@@ -430,10 +439,16 @@ export function AdminResellersPanel({
                     </div>
                   </td>
                   <td className="px-4 py-3 text-sm text-slate-700">
-                    <p>{r.orderCount} orders</p>
+                    <p className="font-semibold text-slate-900">
+                      {r.orderCount.toLocaleString()} orders
+                    </p>
                     <p className="text-xs text-slate-500">
-                      {r.pendingOrderCount} pending · {r.chatCount} chats ·{" "}
-                      {r.adLinkCount} ads
+                      {r.productCount} products ·{" "}
+                      {r.shopifyOrderCount != null
+                        ? `${r.shopifyOrderCount.toLocaleString()} on Shopify`
+                        : `${r.syncedOrderCount.toLocaleString()} synced`}
+                      {" · "}
+                      {r.chatCount} chats
                     </p>
                   </td>
                   <td className="px-4 py-3 text-sm text-slate-600">

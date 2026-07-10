@@ -14,6 +14,7 @@ export async function GET(request: NextRequest) {
     );
     const status = searchParams.get("status");
     const offset = (page - 1) * limit;
+    const includeCounts = searchParams.get("counts") !== "0";
 
     const supabase = createAdminClient();
 
@@ -21,58 +22,78 @@ export async function GET(request: NextRequest) {
       .from("orders")
       .select("*, customers(phone, name)", { count: "exact" })
       .eq("store_id", storeId)
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false })
+      .range(offset, offset + limit - 1);
 
     if (status && status !== "all") {
       query = query.eq("status", status);
     }
 
-    const { data: orders, error, count } = await query.range(
-      offset,
-      offset + limit - 1
-    );
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
+    if (!includeCounts) {
+      const { data: orders, error, count } = await query;
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+      const total = count ?? 0;
+      return NextResponse.json({
+        orders: orders ?? [],
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit) || 1,
+      });
     }
 
-    const { count: pendingCount } = await supabase
-      .from("orders")
-      .select("*", { count: "exact", head: true })
-      .eq("store_id", storeId)
-      .eq("status", "pending");
+    const [
+      pageRes,
+      pendingRes,
+      confirmedRes,
+      cancelledRes,
+      allRes,
+    ] = await Promise.all([
+      query,
+      supabase
+        .from("orders")
+        .select("*", { count: "exact", head: true })
+        .eq("store_id", storeId)
+        .eq("status", "pending"),
+      supabase
+        .from("orders")
+        .select("*", { count: "exact", head: true })
+        .eq("store_id", storeId)
+        .eq("status", "confirmed"),
+      supabase
+        .from("orders")
+        .select("*", { count: "exact", head: true })
+        .eq("store_id", storeId)
+        .eq("status", "cancelled"),
+      supabase
+        .from("orders")
+        .select("*", { count: "exact", head: true })
+        .eq("store_id", storeId),
+    ]);
 
-    const { count: confirmedCount } = await supabase
-      .from("orders")
-      .select("*", { count: "exact", head: true })
-      .eq("store_id", storeId)
-      .eq("status", "confirmed");
+    if (pageRes.error) {
+      return NextResponse.json(
+        { error: pageRes.error.message },
+        { status: 500 }
+      );
+    }
 
-    const { count: cancelledCount } = await supabase
-      .from("orders")
-      .select("*", { count: "exact", head: true })
-      .eq("store_id", storeId)
-      .eq("status", "cancelled");
-
-    const { count: allCount } = await supabase
-      .from("orders")
-      .select("*", { count: "exact", head: true })
-      .eq("store_id", storeId);
-
-    const total = count ?? 0;
+    const total = pageRes.count ?? 0;
 
     return NextResponse.json({
-      orders: orders ?? [],
+      orders: pageRes.data ?? [],
       page,
       limit,
       total,
       totalPages: Math.ceil(total / limit) || 1,
-      pendingCount: pendingCount ?? 0,
+      pendingCount: pendingRes.count ?? 0,
       statusCounts: {
-        all: allCount ?? 0,
-        pending: pendingCount ?? 0,
-        confirmed: confirmedCount ?? 0,
-        cancelled: cancelledCount ?? 0,
+        all: allRes.count ?? 0,
+        pending: pendingRes.count ?? 0,
+        confirmed: confirmedRes.count ?? 0,
+        cancelled: cancelledRes.count ?? 0,
       },
     });
   } catch {
