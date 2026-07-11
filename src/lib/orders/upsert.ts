@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { parseShopifyOrder, type ShopifyOrder } from "@/lib/shopify";
-import { maybeAutoConfirmShopifyOrder } from "@/lib/orders/confirm";
+import { maybeStartShopifyConfirmationOutreach } from "@/lib/orders/shopify-confirm-outreach";
+import { normalizePhone } from "@/lib/whatsapp";
 
 export async function upsertShopifyOrder(
   supabase: SupabaseClient,
@@ -11,12 +12,13 @@ export async function upsertShopifyOrder(
 
   let customerId: string | null = null;
   if (parsed.phone) {
+    const phone = normalizePhone(parsed.phone);
     const { data: customer } = await supabase
       .from("customers")
       .upsert(
         {
           store_id: storeId,
-          phone: parsed.phone,
+          phone,
           name: parsed.name,
           shopify_customer_id: parsed.shopifyCustomerId,
         },
@@ -68,10 +70,15 @@ export async function upsertShopifyOrder(
       .single();
 
     if (inserted?.id) {
-      // Fire-and-forget auto-confirm (dispatch notify + optional follow-up)
-      void maybeAutoConfirmShopifyOrder(storeId, inserted.id).catch((err) => {
-        console.error("[upsertShopifyOrder] auto-confirm error:", err);
-      });
+      // Auto-confirm OR WhatsApp AI confirm/cancel ask
+      void maybeStartShopifyConfirmationOutreach(storeId, inserted.id).catch(
+        (err) => {
+          console.error(
+            "[upsertShopifyOrder] confirmation outreach error:",
+            err
+          );
+        }
+      );
     }
   }
 }

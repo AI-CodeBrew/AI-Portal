@@ -111,6 +111,7 @@ export async function runSalesAgentWithGroq(
         productHint,
         aiConfig: ctx.aiConfig,
         adProductContext: ctx.adProductContext,
+        pendingOrdersHint: ctx.pendingOrdersHint,
       }),
     },
     ...history.slice(-CHAT_HISTORY_LIMIT).map((m) => ({

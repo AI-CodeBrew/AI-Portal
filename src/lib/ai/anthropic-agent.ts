@@ -29,7 +29,8 @@ const ANTHROPIC_TOOLS: Anthropic.Tool[] = [
   },
   {
     name: "create_draft_order",
-    description: "Create a draft order when the customer is ready to buy",
+    description:
+      "Create and confirm an order when ready. Requires name + address. Optional discount_percent.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -45,8 +46,40 @@ const ANTHROPIC_TOOLS: Anthropic.Tool[] = [
           },
         },
         customer_name: { type: "string" },
+        phone: { type: "string" },
+        address1: { type: "string" },
+        address2: { type: "string" },
+        city: { type: "string" },
+        province: { type: "string" },
+        country: { type: "string" },
+        zip: { type: "string" },
+        discount_percent: { type: "number" },
       },
-      required: ["line_items"],
+      required: ["line_items", "customer_name", "address1", "city"],
+    },
+  },
+  {
+    name: "confirm_order",
+    description:
+      "Confirm a pending portal/Shopify order after the customer agrees",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        order_number: { type: "string" },
+      },
+      required: ["order_number"],
+    },
+  },
+  {
+    name: "cancel_order",
+    description: "Cancel a pending order when the customer declines",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        order_number: { type: "string" },
+        reason: { type: "string" },
+      },
+      required: ["order_number"],
     },
   },
   {
@@ -92,6 +125,7 @@ export async function runSalesAgentWithAnthropic(
         storeCurrency: ctx.storeCurrency,
         aiConfig: ctx.aiConfig,
         adProductContext: ctx.adProductContext,
+        pendingOrdersHint: ctx.pendingOrdersHint,
       }),
       cache_control: { type: "ephemeral" },
     },
@@ -118,45 +152,45 @@ export async function runSalesAgentWithAnthropic(
     });
 
     if (response.stop_reason === "end_turn") {
-      const textBlock = response.content.find((b) => b.type === "text");
-      return textBlock?.type === "text"
-        ? textBlock.text
-        : "Thanks for your message! How can I help you today?";
+      const text = response.content
+        .filter((b): b is Anthropic.TextBlock => b.type === "text")
+        .map((b) => b.text)
+        .join("\n")
+        .trim();
+      return text || "Thanks for your message!";
     }
 
-    if (response.stop_reason === "tool_use") {
-      const toolUses = response.content.filter(
-        (b): b is Anthropic.ToolUseBlock => b.type === "tool_use"
+    const toolUses = response.content.filter(
+      (b): b is Anthropic.ToolUseBlock => b.type === "tool_use"
+    );
+
+    if (toolUses.length === 0) {
+      const text = response.content
+        .filter((b): b is Anthropic.TextBlock => b.type === "text")
+        .map((b) => b.text)
+        .join("\n")
+        .trim();
+      return text || "Thanks for your message!";
+    }
+
+    messages.push({ role: "assistant", content: response.content });
+
+    const toolResults: Anthropic.ToolResultBlockParam[] = [];
+    for (const tool of toolUses) {
+      const executed = await executeSalesTool(
+        tool.name,
+        tool.input as Record<string, unknown>,
+        ctx
       );
-
-      messages.push({ role: "assistant", content: response.content });
-
-      const toolResults: Anthropic.ToolResultBlockParam[] = [];
-
-      for (const toolUse of toolUses) {
-        const { result, escalated } = await executeSalesTool(
-          toolUse.name,
-          toolUse.input as Record<string, unknown>,
-          ctx
-        );
-
-        if (escalated) {
-          return "I've connected you with our team. A human agent will be with you shortly. Thank you for your patience!";
-        }
-
-        toolResults.push({
-          type: "tool_result",
-          tool_use_id: toolUse.id,
-          content: JSON.stringify(result),
-        });
-      }
-
-      messages.push({ role: "user", content: toolResults });
-      continue;
+      toolResults.push({
+        type: "tool_result",
+        tool_use_id: tool.id,
+        content: JSON.stringify(executed.result),
+      });
     }
 
-    break;
+    messages.push({ role: "user", content: toolResults });
   }
 
-  return "I'm having trouble processing your request. Let me get a team member to help you.";
+  return "Thanks for your patience — a team member will follow up shortly.";
 }

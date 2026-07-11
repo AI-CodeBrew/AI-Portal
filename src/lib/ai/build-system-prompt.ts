@@ -22,6 +22,7 @@ export function buildSalesSystemPrompt(params: {
   productHint?: string;
   aiConfig?: ResolvedStoreAiConfig | null;
   adProductContext?: AdProductContext | null;
+  pendingOrdersHint?: string | null;
 }): string {
   const {
     storeLabel,
@@ -29,6 +30,7 @@ export function buildSalesSystemPrompt(params: {
     productHint = "",
     aiConfig,
     adProductContext,
+    pendingOrdersHint,
   } = params;
 
   const agentName =
@@ -79,16 +81,20 @@ ${whatsappSales}
 --- Shopify confirmation mode ---
 ${shopifyConfirm}
 
-Mode selection: Use WhatsApp sales mode for WhatsApp leads and new purchases. Use Shopify confirmation mode when the customer is asking about an existing Shopify order (status, address, dispatch, tracking, changes).`;
+Mode selection: Use WhatsApp sales mode for WhatsApp leads and new purchases. Use Shopify confirmation mode when the customer has a pending Shopify order, replies CONFIRM/CANCEL, or asks about an existing Shopify order (status, address, dispatch, tracking, changes).`;
 
   const adBlock = adProductContext
     ? `\n\n--- Ad product context ---\n${formatAdContextForPrompt(adProductContext)}`
     : "";
 
+  const pendingBlock = pendingOrdersHint?.trim()
+    ? `\n\n--- Pending orders context ---\n${pendingOrdersHint.trim()}`
+    : "";
+
   return `${SALES_SYSTEM_PROMPT}
 
 You are selling for: ${storeLabel}.
-Your name is ${agentName}. When introducing yourself, use this name.${currencyNote}${productHint}${adBlock}
+Your name is ${agentName}. When introducing yourself, use this name.${currencyNote}${productHint}${adBlock}${pendingBlock}
 
 Tone: ${toneInstruction}
 Reply length: ${replyInstruction}${templateBlock}${agentModesBlock}

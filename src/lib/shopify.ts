@@ -914,8 +914,40 @@ export async function createDraftOrder(
     name?: string;
     lineItems: Array<{ variant_id: string; quantity: number }>;
     note?: string;
+    discountPercent?: number;
+    shippingAddress?: {
+      address1?: string;
+      address2?: string;
+      city?: string;
+      province?: string;
+      country?: string;
+      zip?: string;
+    };
   }
 ) {
+  const shipping_address = {
+    phone: params.phone,
+    name: params.name,
+    address1: params.shippingAddress?.address1,
+    address2: params.shippingAddress?.address2,
+    city: params.shippingAddress?.city,
+    province: params.shippingAddress?.province,
+    country: params.shippingAddress?.country,
+    zip: params.shippingAddress?.zip,
+  };
+
+  const discount =
+    params.discountPercent != null &&
+    params.discountPercent > 0 &&
+    params.discountPercent <= 90
+      ? {
+          title: `${params.discountPercent}% off`,
+          description: "WhatsApp AI offer",
+          value: String(params.discountPercent),
+          value_type: "percentage" as const,
+        }
+      : undefined;
+
   const res = await shopifyAdminFetch(
     shopDomain,
     encryptedToken,
@@ -930,9 +962,8 @@ export async function createDraftOrder(
           })),
           note: params.note ?? "Created via WhatsApp AI agent",
           tags: "whatsapp_ai",
-          shipping_address: params.name
-            ? { phone: params.phone, name: params.name }
-            : { phone: params.phone },
+          shipping_address,
+          ...(discount ? { applied_discount: discount } : {}),
         },
       }),
     }

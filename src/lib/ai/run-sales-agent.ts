@@ -2,7 +2,10 @@ import { runSalesAgentWithGroq } from "./groq-agent";
 import { runSalesAgentWithAnthropic } from "./anthropic-agent";
 import { getShopCurrency } from "@/lib/shopify";
 import { resolveStoreAiConfig } from "./store-ai-settings";
-import type { AgentContext } from "./sales-tools";
+import {
+  getPendingOrdersHintForPhone,
+  type AgentContext,
+} from "./sales-tools";
 
 export type { AgentContext } from "./sales-tools";
 
@@ -31,6 +34,18 @@ async function enrichAgentContext(ctx: AgentContext): Promise<AgentContext> {
       next = { ...next, aiConfig };
     } catch (err) {
       console.error("[run-sales-agent] AI config load failed:", err);
+    }
+  }
+
+  if (next.pendingOrdersHint == null) {
+    try {
+      const pendingOrdersHint = await getPendingOrdersHintForPhone(
+        next.store.id,
+        next.customerPhone
+      );
+      next = { ...next, pendingOrdersHint };
+    } catch (err) {
+      console.error("[run-sales-agent] pending orders hint failed:", err);
     }
   }
 

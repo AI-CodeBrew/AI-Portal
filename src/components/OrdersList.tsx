@@ -1184,7 +1184,10 @@ export function OrdersList() {
                   </p>
                 ) : (
                   <p className="mt-0.5 text-xs text-slate-600">
-                    Manual mode — use the Confirm button on each pending order.
+                    AI confirmation mode — new Shopify orders get a WhatsApp
+                    message asking the customer to CONFIRM or CANCEL. On
+                    confirm, the order is punched; on cancel, AI follows your
+                    Shopify confirmation instructions (discounts/bundles).
                   </p>
                 )}
               </div>

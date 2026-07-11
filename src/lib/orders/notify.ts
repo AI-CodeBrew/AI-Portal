@@ -98,5 +98,7 @@ export function formatOrderConfirmationMessage(
 *Items:* ${itemsSummary}
 *Total:* ${totalLabel}
 
-Thank you for your order. We'll process it shortly.`;
+We're preparing your order for dispatch. Typical delivery is 2–5 business days (cash on delivery where available). We'll share tracking once it's on the way.
+
+Thank you for your order!`;
 }
