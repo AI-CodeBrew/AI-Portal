@@ -268,9 +268,9 @@ export function ProductsPanel() {
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-sm text-slate-600">
-          Create products, upload images, and generate WhatsApp ad links. The
-          SKU is used as <code className="text-xs">(ref: sku)</code> so the AI
-          recognizes the product in chat.
+          Create products and upload images. Each product gets a unique global
+          SKU so the AI can identify it in chats (
+          <code className="text-xs">(ref: SKU)</code>).
         </p>
         <button
           type="button"
@@ -295,7 +295,7 @@ export function ProductsPanel() {
         <div className="rounded-xl border border-dashed border-slate-300 bg-white p-12 text-center">
           <p className="font-medium text-slate-800">No products yet</p>
           <p className="mt-2 text-sm text-slate-600">
-            Add your first product to generate an ad link for WhatsApp.
+            Add your first product — a unique SKU is created automatically.
           </p>
           <button
             type="button"
@@ -342,8 +342,8 @@ export function ProductsPanel() {
                   {Number(p.price).toLocaleString()} {p.currency}
                 </p>
                 {p.ad_link?.whatsapp_url && (
-                  <p className="mt-2 truncate text-xs text-emerald-700">
-                    {p.ad_link.whatsapp_url}
+                  <p className="mt-2 truncate text-xs text-slate-400">
+                    Legacy link available
                   </p>
                 )}
                 <div className="mt-3 flex flex-wrap gap-2">
@@ -354,15 +354,13 @@ export function ProductsPanel() {
                   >
                     Edit
                   </button>
-                  {p.ad_link?.whatsapp_url && (
-                    <button
-                      type="button"
-                      onClick={() => copyLink(p.ad_link!.whatsapp_url!)}
-                      className="rounded-lg bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
-                    >
-                      Copy ad link
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => copyLink(p.sku)}
+                    className="rounded-lg bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+                  >
+                    Copy SKU
+                  </button>
                   <button
                     type="button"
                     onClick={() => removeProduct(p.id)}
@@ -581,7 +579,7 @@ export function ProductsPanel() {
                     <span className="font-medium text-slate-700">
                       SKU{" "}
                       <span className="font-normal text-slate-500">
-                        (used in ad link as ref — AI finds the product by this)
+                        (auto-unique across all resellers — leave blank to auto-generate)
                       </span>
                     </span>
                     <input

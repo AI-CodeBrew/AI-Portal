@@ -6,7 +6,7 @@ export default function ProductsPage() {
     <div>
       <DashboardPageHeader
         title="Products"
-        description="Add catalog products, upload images, and generate WhatsApp ad links the AI can recognize by SKU."
+        description="Add catalog products with auto-generated unique SKUs the AI uses to identify each product."
       />
       <ProductsPanel />
     </div>

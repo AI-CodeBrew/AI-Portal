@@ -66,6 +66,12 @@ export async function getPlatformAiDefaults(): Promise<PlatformAiDefaults> {
       orderTemplateId: DEFAULT_ORDER_TEMPLATE_ID,
       generalTemplateId: DEFAULT_GENERAL_TEMPLATE_ID,
       whatsappOrderTemplateId: null,
+      whatsappSalesInstructions: null,
+      shopifyConfirmInstructions: null,
+      whatsappSalesTemplateId: null,
+      shopifyConfirmTemplateId: null,
+      autoConfirmOrders: false,
+      autoFollowUpTemplateId: null,
       ...FALLBACK_BRANDING,
       updatedAt: null,
     };
@@ -83,6 +89,12 @@ export async function getPlatformAiDefaults(): Promise<PlatformAiDefaults> {
       (data.ai_general_template_id as string | null) ??
       DEFAULT_GENERAL_TEMPLATE_ID,
     whatsappOrderTemplateId: null,
+    whatsappSalesInstructions: null,
+    shopifyConfirmInstructions: null,
+    whatsappSalesTemplateId: null,
+    shopifyConfirmTemplateId: null,
+    autoConfirmOrders: false,
+    autoFollowUpTemplateId: null,
     platformName:
       (data.platform_name as string | null)?.trim() ||
       FALLBACK_BRANDING.platformName,
@@ -150,6 +162,11 @@ export async function resolveEffectiveAiSettings(storeSettings: {
   replyLength: AiReplyLength | null;
   orderTemplateId: string | null;
   generalTemplateId: string | null;
+  whatsappOrderTemplateId?: string | null;
+  whatsappSalesInstructions?: string | null;
+  shopifyConfirmInstructions?: string | null;
+  autoConfirmOrders?: boolean;
+  autoFollowUpTemplateId?: string | null;
 }): Promise<
   StoreAiSettings & { usingPlatformDefaults: boolean; tone: AiTone }
 > {
@@ -178,7 +195,15 @@ export async function resolveEffectiveAiSettings(storeSettings: {
     tone: platform.tone,
     orderTemplateId,
     generalTemplateId,
-    whatsappOrderTemplateId: null,
+    whatsappOrderTemplateId: storeSettings.whatsappOrderTemplateId ?? null,
+    whatsappSalesInstructions:
+      storeSettings.whatsappSalesInstructions?.trim() || null,
+    shopifyConfirmInstructions:
+      storeSettings.shopifyConfirmInstructions?.trim() || null,
+    whatsappSalesTemplateId: null,
+    shopifyConfirmTemplateId: null,
+    autoConfirmOrders: Boolean(storeSettings.autoConfirmOrders),
+    autoFollowUpTemplateId: storeSettings.autoFollowUpTemplateId ?? null,
     usingPlatformDefaults,
   };
 }

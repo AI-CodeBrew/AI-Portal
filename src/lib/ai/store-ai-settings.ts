@@ -2,6 +2,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import {
   DEFAULT_GENERAL_TEMPLATE_ID,
   DEFAULT_ORDER_TEMPLATE_ID,
+  DEFAULT_SHOPIFY_CONFIRM_INSTRUCTIONS,
+  DEFAULT_WHATSAPP_SALES_INSTRUCTIONS,
   type AiPromptTemplate,
   type AiReplyLength,
   type AiTemplateCategory,
@@ -32,7 +34,7 @@ export async function getStoreAiSettingsRaw(
   const { data } = await supabase
     .from("stores")
     .select(
-      "ai_agent_name, ai_opening_message, ai_reply_length, ai_order_template_id, ai_general_template_id, whatsapp_order_template_id"
+      "ai_agent_name, ai_opening_message, ai_reply_length, ai_order_template_id, ai_general_template_id, whatsapp_order_template_id, whatsapp_sales_instructions, shopify_confirm_instructions, auto_confirm_orders, auto_follow_up_template_id"
     )
     .eq("id", storeId)
     .single();
@@ -45,6 +47,16 @@ export async function getStoreAiSettingsRaw(
     generalTemplateId: (data?.ai_general_template_id as string | null) ?? null,
     whatsappOrderTemplateId:
       (data?.whatsapp_order_template_id as string | null) ?? null,
+    whatsappSalesInstructions:
+      (data?.whatsapp_sales_instructions as string | null) ?? null,
+    shopifyConfirmInstructions:
+      (data?.shopify_confirm_instructions as string | null) ?? null,
+    // Preset picks copy into free-text; no FK columns in migration 020
+    whatsappSalesTemplateId: null,
+    shopifyConfirmTemplateId: null,
+    autoConfirmOrders: Boolean(data?.auto_confirm_orders),
+    autoFollowUpTemplateId:
+      (data?.auto_follow_up_template_id as string | null) ?? null,
   };
 }
 
@@ -85,6 +97,13 @@ export async function resolveStoreAiConfig(
     loadTemplatePrompt(settings.generalTemplateId),
   ]);
 
+  const whatsappSalesPrompt =
+    settings.whatsappSalesInstructions?.trim() ||
+    DEFAULT_WHATSAPP_SALES_INSTRUCTIONS;
+  const shopifyConfirmPrompt =
+    settings.shopifyConfirmInstructions?.trim() ||
+    DEFAULT_SHOPIFY_CONFIRM_INSTRUCTIONS;
+
   return {
     agentName: settings.agentName,
     openingMessage: settings.openingMessage,
@@ -93,8 +112,16 @@ export async function resolveStoreAiConfig(
     orderTemplateId: settings.orderTemplateId,
     generalTemplateId: settings.generalTemplateId,
     whatsappOrderTemplateId: raw.whatsappOrderTemplateId,
+    whatsappSalesInstructions: settings.whatsappSalesInstructions,
+    shopifyConfirmInstructions: settings.shopifyConfirmInstructions,
+    whatsappSalesTemplateId: null,
+    shopifyConfirmTemplateId: null,
+    autoConfirmOrders: settings.autoConfirmOrders,
+    autoFollowUpTemplateId: settings.autoFollowUpTemplateId,
     orderTemplatePrompt,
     generalTemplatePrompt,
+    whatsappSalesPrompt,
+    shopifyConfirmPrompt,
   };
 }
 
@@ -103,7 +130,7 @@ export async function updateStoreAiSettings(
   input: Partial<StoreAiSettings>
 ): Promise<StoreAiSettings | { error: string }> {
   const supabase = createAdminClient();
-  const payload: Record<string, string | null> = {};
+  const payload: Record<string, string | boolean | null> = {};
 
   if (input.agentName !== undefined) {
     payload.ai_agent_name = input.agentName?.trim() || null;
@@ -148,6 +175,33 @@ export async function updateStoreAiSettings(
     }
     payload.whatsapp_order_template_id = input.whatsappOrderTemplateId;
   }
+  if (input.whatsappSalesInstructions !== undefined) {
+    payload.whatsapp_sales_instructions =
+      input.whatsappSalesInstructions?.trim() || null;
+  }
+  if (input.shopifyConfirmInstructions !== undefined) {
+    payload.shopify_confirm_instructions =
+      input.shopifyConfirmInstructions?.trim() || null;
+  }
+  if (input.autoConfirmOrders !== undefined) {
+    payload.auto_confirm_orders = Boolean(input.autoConfirmOrders);
+  }
+  if (input.autoFollowUpTemplateId !== undefined) {
+    if (input.autoFollowUpTemplateId) {
+      const { data: waTpl } = await supabase
+        .from("whatsapp_message_templates")
+        .select("id, status")
+        .eq("id", input.autoFollowUpTemplateId)
+        .eq("store_id", storeId)
+        .maybeSingle();
+      if (!waTpl || waTpl.status !== "approved") {
+        return {
+          error: "Select a Meta-approved WhatsApp template for auto follow-up",
+        };
+      }
+    }
+    payload.auto_follow_up_template_id = input.autoFollowUpTemplateId;
+  }
 
   const { error } = await supabase
     .from("stores")
@@ -155,9 +209,12 @@ export async function updateStoreAiSettings(
     .eq("id", storeId);
 
   if (error) {
-    const hint = error.message.includes("ai_agent_name")
-      ? " — Run migration 009_ai_settings.sql in Supabase"
-      : "";
+    const hint =
+      error.message.includes("ai_agent_name") ||
+      error.message.includes("whatsapp_sales_instructions") ||
+      error.message.includes("auto_confirm_orders")
+        ? " — Run migrations 009_ai_settings.sql / 020_auto_confirm_and_dual_ai.sql in Supabase"
+        : "";
     return { error: error.message + hint };
   }
 

@@ -3,12 +3,13 @@
 import { useEffect, useState } from "react";
 import type { WhatsappConversation, WhatsappMessage } from "@/lib/types";
 
-type InboxFilter = "all" | "ai" | "handoff";
+type InboxFilter = "all" | "ai" | "handoff" | "exhausted";
 
 const FILTER_LABELS: Record<InboxFilter, string> = {
   all: "All",
   ai: "AI handling",
-  handoff: "Manual",
+  handoff: "Human",
+  exhausted: "AI exhausted",
 };
 
 export function InboxPanel() {
@@ -144,7 +145,7 @@ export function InboxPanel() {
   }
 
   function statusLabel(status: WhatsappConversation["status"]) {
-    if (status === "human_handoff") return "Manual";
+    if (status === "human_handoff") return "Human";
     if (status === "ai_handling") return "AI";
     return status;
   }
@@ -240,7 +241,7 @@ export function InboxPanel() {
                           : "bg-emerald-100 text-emerald-900"
                       }`}
                     >
-                      {isManual ? "Manual" : "AI"}
+                      {isManual ? "Human" : "AI"}
                     </span>
                     {isManual ? (
                       <button
@@ -258,7 +259,7 @@ export function InboxPanel() {
                         disabled={switchingMode || deleting}
                         className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-50"
                       >
-                        {switchingMode ? "Switching..." : "Take over manually"}
+                        {switchingMode ? "Switching..." : "Take over (Human)"}
                       </button>
                     )}
                     <button
@@ -302,7 +303,7 @@ export function InboxPanel() {
                 )}
                 {isManual && (
                   <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-                    Manual mode: reply below. The AI will not respond until you
+                    Human mode: reply below. The AI will not respond until you
                     switch back to AI.
                   </p>
                 )}
@@ -311,7 +312,7 @@ export function InboxPanel() {
                   onChange={(e) => setReply(e.target.value)}
                   placeholder={
                     isManual
-                      ? "Type your manual reply..."
+                      ? "Type your reply..."
                       : "Type a reply (optional — AI is handling this chat)"
                   }
                   rows={2}

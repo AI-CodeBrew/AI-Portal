@@ -1,8 +1,8 @@
-const AD_REF_PATTERN = /\(?ref:\s*([a-z0-9][a-z0-9_-]{1,47})\)?/i;
+const AD_REF_PATTERN = /\(?ref:\s*([a-zA-Z0-9][a-zA-Z0-9_-]{1,47})\)?/;
 
 export function parseAdRefFromMessage(text: string): string | null {
   const match = text.match(AD_REF_PATTERN);
-  return match?.[1]?.toLowerCase() ?? null;
+  return match?.[1] ?? null;
 }
 
 export function buildAdPrefillMessage(productTitle: string, slug: string): string {

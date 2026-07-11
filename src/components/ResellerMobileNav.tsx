@@ -12,6 +12,7 @@ const links = [
   { href: "/dashboard/ai", label: "AI" },
   { href: "/dashboard/whatsapp-templates", label: "Templates" },
   { href: "/dashboard/integrations", label: "Setup" },
+  { href: "/dashboard/support", label: "Support" },
 ];
 
 export function ResellerMobileNav() {

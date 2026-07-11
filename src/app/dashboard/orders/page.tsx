@@ -5,10 +5,7 @@ import { DashboardPageHeader } from "@/components/DashboardPageHeader";
 export default function ResellerOrdersPage() {
   return (
     <div>
-      <DashboardPageHeader
-        title="Orders"
-        description="Filter by status, confirm pending orders, and keep Shopify in sync."
-      />
+      <DashboardPageHeader title="Orders" />
       <Suspense fallback={<p className="text-slate-600">Loading orders...</p>}>
         <OrdersList />
       </Suspense>

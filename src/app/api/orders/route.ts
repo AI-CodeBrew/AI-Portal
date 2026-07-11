@@ -1,6 +1,28 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireResellerStore } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
+import type { OrderSource, OrderStatus } from "@/lib/types";
+
+const DEFAULT_LIMIT = 50;
+const MAX_LIMIT = 100;
+
+function applyDateFilters<T extends { gte: (c: string, v: string) => T; lte: (c: string, v: string) => T }>(
+  query: T,
+  dateFrom: string | null,
+  dateTo: string | null
+): T {
+  let q = query;
+  if (dateFrom) {
+    q = q.gte("created_at", dateFrom);
+  }
+  if (dateTo) {
+    // Inclusive end-of-day if date-only (YYYY-MM-DD)
+    const end =
+      dateTo.length <= 10 ? `${dateTo}T23:59:59.999Z` : dateTo;
+    q = q.lte("created_at", end);
+  }
+  return q;
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -9,10 +31,13 @@ export async function GET(request: NextRequest) {
 
     const page = Math.max(1, parseInt(searchParams.get("page") ?? "1", 10));
     const limit = Math.min(
-      50,
-      Math.max(1, parseInt(searchParams.get("limit") ?? "25", 10))
+      MAX_LIMIT,
+      Math.max(1, parseInt(searchParams.get("limit") ?? String(DEFAULT_LIMIT), 10))
     );
     const status = searchParams.get("status");
+    const source = searchParams.get("source");
+    const dateFrom = searchParams.get("dateFrom");
+    const dateTo = searchParams.get("dateTo");
     const offset = (page - 1) * limit;
     const includeCounts = searchParams.get("counts") !== "0";
 
@@ -26,8 +51,24 @@ export async function GET(request: NextRequest) {
       .range(offset, offset + limit - 1);
 
     if (status && status !== "all") {
-      query = query.eq("status", status);
+      query = query.eq("status", status as OrderStatus);
     }
+    if (source && source !== "all") {
+      query = query.eq("source", source as OrderSource);
+    }
+    query = applyDateFilters(query, dateFrom, dateTo);
+
+    const countBase = () => {
+      let q = supabase
+        .from("orders")
+        .select("*", { count: "exact", head: true })
+        .eq("store_id", storeId);
+      if (source && source !== "all") {
+        q = q.eq("source", source as OrderSource);
+      }
+      q = applyDateFilters(q, dateFrom, dateTo);
+      return q;
+    };
 
     if (!includeCounts) {
       const { data: orders, error, count } = await query;
@@ -52,25 +93,10 @@ export async function GET(request: NextRequest) {
       allRes,
     ] = await Promise.all([
       query,
-      supabase
-        .from("orders")
-        .select("*", { count: "exact", head: true })
-        .eq("store_id", storeId)
-        .eq("status", "pending"),
-      supabase
-        .from("orders")
-        .select("*", { count: "exact", head: true })
-        .eq("store_id", storeId)
-        .eq("status", "confirmed"),
-      supabase
-        .from("orders")
-        .select("*", { count: "exact", head: true })
-        .eq("store_id", storeId)
-        .eq("status", "cancelled"),
-      supabase
-        .from("orders")
-        .select("*", { count: "exact", head: true })
-        .eq("store_id", storeId),
+      countBase().eq("status", "pending"),
+      countBase().eq("status", "confirmed"),
+      countBase().eq("status", "cancelled"),
+      countBase(),
     ]);
 
     if (pageRes.error) {

@@ -114,6 +114,7 @@ export function AdminOrdersPanel({
 
   const rangeStart = total === 0 ? 0 : (page - 1) * ADMIN_ORDERS_PAGE_SIZE + 1;
   const rangeEnd = Math.min(page * ADMIN_ORDERS_PAGE_SIZE, total);
+  const colSpan = selectedStoreId === "all" ? 7 : 6;
 
   return (
     <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
@@ -125,7 +126,7 @@ export function AdminOrdersPanel({
               : `Orders — ${selectedReseller ? resellerLabel(selectedReseller) : "Reseller"}`}
           </p>
           <p className="text-xs text-slate-600">
-            View only — resellers confirm their own orders
+            {ADMIN_ORDERS_PAGE_SIZE} orders per page
           </p>
         </div>
 
@@ -185,7 +186,7 @@ export function AdminOrdersPanel({
             {loading ? (
               <tr>
                 <td
-                  colSpan={selectedStoreId === "all" ? 7 : 6}
+                  colSpan={colSpan}
                   className="px-4 py-12 text-center text-slate-600"
                 >
                   Loading orders...
@@ -194,7 +195,7 @@ export function AdminOrdersPanel({
             ) : orders.length === 0 ? (
               <tr>
                 <td
-                  colSpan={selectedStoreId === "all" ? 7 : 6}
+                  colSpan={colSpan}
                   className="px-4 py-12 text-center text-slate-600"
                 >
                   No orders found

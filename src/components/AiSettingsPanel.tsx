@@ -1,7 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  DEFAULT_SHOPIFY_CONFIRM_INSTRUCTIONS,
+  DEFAULT_WHATSAPP_SALES_INSTRUCTIONS,
   REPLY_LENGTH_OPTIONS,
   TEMPLATE_CATEGORY_LABELS,
   type AiPromptTemplate,
@@ -11,10 +13,19 @@ import {
 } from "@/lib/ai/ai-settings-types";
 import type { WhatsAppMessageTemplate } from "@/lib/whatsapp/message-templates";
 
-type TabId = "general" | "templates";
+type TabId = "general" | "modes" | "templates";
 
 const DEFAULT_OPENING =
   "Hi! Welcome to {store_name} 👋 I'm {agent_name}. How can I help you today?";
+
+const TEMPLATE_CATEGORY_OPTIONS: AiTemplateCategory[] = [
+  "order_creation",
+  "general",
+  "product_inquiry",
+  "support",
+  "whatsapp_sales",
+  "shopify_confirmation",
+];
 
 export function AiSettingsPanel() {
   const [tab, setTab] = useState<TabId>("general");
@@ -38,6 +49,11 @@ export function AiSettingsPanel() {
   const [whatsappOrderTemplateId, setWhatsappOrderTemplateId] = useState<
     string | null
   >(null);
+
+  const [whatsappSalesInstructions, setWhatsappSalesInstructions] =
+    useState("");
+  const [shopifyConfirmInstructions, setShopifyConfirmInstructions] =
+    useState("");
 
   const [showCreateTemplate, setShowCreateTemplate] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<AiPromptTemplate | null>(
@@ -68,6 +84,8 @@ export function AiSettingsPanel() {
       setReplyLength(s.replyLength ?? "medium");
       setOrderTemplateId(s.orderTemplateId);
       setWhatsappOrderTemplateId(s.whatsappOrderTemplateId ?? null);
+      setWhatsappSalesInstructions(s.whatsappSalesInstructions ?? "");
+      setShopifyConfirmInstructions(s.shopifyConfirmInstructions ?? "");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load");
     } finally {
@@ -79,6 +97,15 @@ export function AiSettingsPanel() {
     load();
   }, [load]);
 
+  const whatsappSalesPresets = useMemo(
+    () => templates.filter((t) => t.category === "whatsapp_sales"),
+    [templates]
+  );
+  const shopifyConfirmPresets = useMemo(
+    () => templates.filter((t) => t.category === "shopify_confirmation"),
+    [templates]
+  );
+
   function resetGeneral() {
     if (!settings) return;
     setAgentName(settings.agentName ?? "");
@@ -86,6 +113,14 @@ export function AiSettingsPanel() {
     setReplyLength(settings.replyLength ?? "medium");
     setOrderTemplateId(settings.orderTemplateId);
     setWhatsappOrderTemplateId(settings.whatsappOrderTemplateId ?? null);
+    setSuccess(null);
+    setError(null);
+  }
+
+  function resetModes() {
+    if (!settings) return;
+    setWhatsappSalesInstructions(settings.whatsappSalesInstructions ?? "");
+    setShopifyConfirmInstructions(settings.shopifyConfirmInstructions ?? "");
     setSuccess(null);
     setError(null);
   }
@@ -115,6 +150,46 @@ export function AiSettingsPanel() {
     } finally {
       setSaving(false);
     }
+  }
+
+  async function saveModes() {
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const res = await fetch("/api/store/ai-settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          whatsappSalesInstructions: whatsappSalesInstructions || null,
+          shopifyConfirmInstructions: shopifyConfirmInstructions || null,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Save failed");
+      setSettings(data.settings);
+      setWhatsappSalesInstructions(
+        data.settings.whatsappSalesInstructions ?? ""
+      );
+      setShopifyConfirmInstructions(
+        data.settings.shopifyConfirmInstructions ?? ""
+      );
+      setSuccess("Agent mode instructions saved.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function applyPresetToField(
+    templateId: string,
+    presets: AiPromptTemplate[],
+    setter: (value: string) => void
+  ) {
+    if (!templateId) return;
+    const tpl = presets.find((t) => t.id === templateId);
+    if (tpl) setter(tpl.prompt_content);
   }
 
   function openCreateTemplate() {
@@ -251,6 +326,7 @@ export function AiSettingsPanel() {
           {(
             [
               ["general", "General"],
+              ["modes", "Agent modes"],
               ["templates", "Templates"],
             ] as const
           ).map(([id, label]) => (
@@ -439,13 +515,157 @@ export function AiSettingsPanel() {
           </div>
         )}
 
+        {tab === "modes" && (
+          <div>
+            <div className="mb-6 text-sm text-slate-600">
+              <p className="font-semibold text-slate-900">Dual agent modes</p>
+              <p className="mt-1">
+                The AI picks WhatsApp sales mode for new leads and purchases,
+                and Shopify confirmation mode when the customer asks about an
+                existing Shopify order. Empty fields use the platform defaults.
+              </p>
+            </div>
+
+            <div className="space-y-8">
+              <div className="rounded-xl border border-slate-200 p-5">
+                <h3 className="text-sm font-bold text-slate-900">
+                  WhatsApp sales instructions
+                </h3>
+                <p className="mt-1 text-xs text-slate-500">
+                  Used for WhatsApp leads and new purchases.
+                </p>
+
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Use saved default
+                  </label>
+                  <select
+                    defaultValue=""
+                    onChange={(e) => {
+                      applyPresetToField(
+                        e.target.value,
+                        whatsappSalesPresets,
+                        setWhatsappSalesInstructions
+                      );
+                      e.target.value = "";
+                    }}
+                    className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-800"
+                  >
+                    <option value="">Choose preset…</option>
+                    {whatsappSalesPresets.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}
+                        {t.isPredefined ? " (platform)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setWhatsappSalesInstructions(
+                        DEFAULT_WHATSAPP_SALES_INSTRUCTIONS
+                      )
+                    }
+                    className="text-xs font-medium text-emerald-600 hover:underline"
+                  >
+                    Reset to default
+                  </button>
+                </div>
+
+                <textarea
+                  value={whatsappSalesInstructions}
+                  onChange={(e) => setWhatsappSalesInstructions(e.target.value)}
+                  rows={8}
+                  placeholder={DEFAULT_WHATSAPP_SALES_INSTRUCTIONS}
+                  className="mt-3 w-full rounded-lg border border-slate-200 px-3.5 py-2.5 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100"
+                />
+              </div>
+
+              <div className="rounded-xl border border-slate-200 p-5">
+                <h3 className="text-sm font-bold text-slate-900">
+                  Shopify confirmation instructions
+                </h3>
+                <p className="mt-1 text-xs text-slate-500">
+                  Used when customers ask about an existing Shopify order.
+                </p>
+
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Use saved default
+                  </label>
+                  <select
+                    defaultValue=""
+                    onChange={(e) => {
+                      applyPresetToField(
+                        e.target.value,
+                        shopifyConfirmPresets,
+                        setShopifyConfirmInstructions
+                      );
+                      e.target.value = "";
+                    }}
+                    className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-800"
+                  >
+                    <option value="">Choose preset…</option>
+                    {shopifyConfirmPresets.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}
+                        {t.isPredefined ? " (platform)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setShopifyConfirmInstructions(
+                        DEFAULT_SHOPIFY_CONFIRM_INSTRUCTIONS
+                      )
+                    }
+                    className="text-xs font-medium text-emerald-600 hover:underline"
+                  >
+                    Reset to default
+                  </button>
+                </div>
+
+                <textarea
+                  value={shopifyConfirmInstructions}
+                  onChange={(e) =>
+                    setShopifyConfirmInstructions(e.target.value)
+                  }
+                  rows={8}
+                  placeholder={DEFAULT_SHOPIFY_CONFIRM_INSTRUCTIONS}
+                  className="mt-3 w-full rounded-lg border border-slate-200 px-3.5 py-2.5 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100"
+                />
+              </div>
+            </div>
+
+            <div className="mt-8 flex justify-end gap-2 border-t border-slate-200 pt-6">
+              <button
+                type="button"
+                onClick={resetModes}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Reset
+              </button>
+              <button
+                type="button"
+                onClick={saveModes}
+                disabled={saving}
+                className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-600 disabled:opacity-50"
+              >
+                {saving ? "Saving..." : "Save changes"}
+              </button>
+            </div>
+          </div>
+        )}
+
         {tab === "templates" && (
           <div>
             <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
               <div>
                 <p className="text-sm text-slate-600">
-                  Create custom instructions for order creation, tone, and more.
-                  Leave unset to use the platform defaults.
+                  Create custom instructions for order creation, tone, WhatsApp
+                  sales, Shopify confirmation, and more. Leave unset to use the
+                  platform defaults.
                 </p>
               </div>
               <button
@@ -504,10 +724,10 @@ export function AiSettingsPanel() {
                           </button>
                         </div>
                       </div>
-                      {template.category === "order_creation" ||
-                      template.category === "general" ||
-                      template.category === "product_inquiry" ||
-                      template.category === "support" ? (
+                      {(template.category === "order_creation" ||
+                        template.category === "general" ||
+                        template.category === "product_inquiry" ||
+                        template.category === "support") && (
                         <button
                           type="button"
                           onClick={() => applyTemplateSelection(template.id)}
@@ -515,7 +735,41 @@ export function AiSettingsPanel() {
                         >
                           Use for order creation →
                         </button>
-                      ) : null}
+                      )}
+                      {template.category === "whatsapp_sales" && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setWhatsappSalesInstructions(
+                              template.prompt_content
+                            );
+                            setTab("modes");
+                            setSuccess(
+                              "Copied into WhatsApp sales instructions — save on Agent modes."
+                            );
+                          }}
+                          className="mt-3 text-xs font-semibold text-emerald-600 hover:underline"
+                        >
+                          Use for WhatsApp sales →
+                        </button>
+                      )}
+                      {template.category === "shopify_confirmation" && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShopifyConfirmInstructions(
+                              template.prompt_content
+                            );
+                            setTab("modes");
+                            setSuccess(
+                              "Copied into Shopify confirmation instructions — save on Agent modes."
+                            );
+                          }}
+                          className="mt-3 text-xs font-semibold text-emerald-600 hover:underline"
+                        >
+                          Use for Shopify confirmation →
+                        </button>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -561,9 +815,11 @@ export function AiSettingsPanel() {
                   disabled={Boolean(editingTemplate)}
                   className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm disabled:bg-slate-50"
                 >
-                  <option value="order_creation">Order creation</option>
-                  <option value="product_inquiry">Product inquiry</option>
-                  <option value="support">Support & escalation</option>
+                  {TEMPLATE_CATEGORY_OPTIONS.map((cat) => (
+                    <option key={cat} value={cat}>
+                      {TEMPLATE_CATEGORY_LABELS[cat]}
+                    </option>
+                  ))}
                 </select>
               </div>
 

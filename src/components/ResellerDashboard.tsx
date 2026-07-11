@@ -253,16 +253,15 @@ export function ResellerDashboard() {
   }
 
   const nextStep = stats.setup.steps.find((s) => !s.done);
-  const share = stats.shareLink;
+  const recentSkus = stats.recentSkus ?? [];
   const hasTraffic = stats.chart.some(
     (p) => p.conversations > 0 || p.orders > 0
   );
   const currency = stats.period.revenue.currency || stats.store.currency || "AED";
 
-  async function copyTrackingLink() {
-    if (!share?.trackingUrl) return;
+  async function copySku(sku: string) {
     try {
-      await navigator.clipboard.writeText(share.trackingUrl);
+      await navigator.clipboard.writeText(sku);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
@@ -404,7 +403,7 @@ export function ResellerDashboard() {
             <div className="mt-8 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-10 text-center">
               <p className="text-sm font-medium text-slate-700">No traffic yet</p>
               <p className="mt-1 text-xs text-slate-500">
-                Share a product link to start collecting conversations and orders.
+                Share a product SKU in ads or WhatsApp so the AI can identify it.
               </p>
               <Link
                 href="/dashboard/products"
@@ -539,88 +538,80 @@ export function ResellerDashboard() {
       </div>
 
       <div className="grid gap-6 lg:grid-cols-3">
-        {/* Share product link */}
+        {/* Product SKUs */}
         <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm lg:col-span-2">
-          <h3 className="font-bold text-slate-900">Share Product Link</h3>
-          <p className="text-xs text-slate-500">
-            Use this on your ad&apos;s Shop Now button
-          </p>
-          {share ? (
-            <div className="mt-4 space-y-4">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Product
-                </p>
-                <p className="mt-1 text-sm font-semibold text-slate-900">
-                  {share.productTitle}
-                </p>
-                {share.price && (
-                  <p className="text-xs text-slate-500">
-                    {share.price} {share.currency ?? ""} · {share.clickCount} clicks
-                  </p>
-                )}
-              </div>
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Tracking Link
-                </p>
-                <p className="mt-1 break-all rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-800">
-                  {share.trackingUrl}
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={copyTrackingLink}
-                  className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700"
-                >
-                  {copied ? "Copied" : "Copy"}
-                </button>
-                <a
-                  href={share.trackingUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                >
-                  Open
-                </a>
-                {share.whatsappUrl && (
-                  <a
-                    href={share.whatsappUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800 hover:bg-emerald-100"
-                  >
-                    Share
-                  </a>
-                )}
-                <a
-                  href={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(share.trackingUrl)}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                >
-                  QR
-                </a>
-                <Link
-                  href="/dashboard/ads"
-                  className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                >
-                  All links
-                </Link>
-              </div>
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <h3 className="font-bold text-slate-900">Product SKUs</h3>
+              <p className="text-xs text-slate-500">
+                Unique SKUs the AI uses to identify products (
+                <code className="text-[10px]">ref: SKU</code>)
+              </p>
             </div>
+            <div className="flex gap-2">
+              <Link
+                href="/dashboard/ads"
+                className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Shopify products
+              </Link>
+              <Link
+                href="/dashboard/products"
+                className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700"
+              >
+                Catalog
+              </Link>
+            </div>
+          </div>
+
+          {recentSkus.length > 0 ? (
+            <ul className="mt-4 divide-y divide-slate-100">
+              {recentSkus.map((item) => (
+                <li
+                  key={`${item.source}-${item.sku}`}
+                  className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-slate-900">
+                      {item.title}
+                    </p>
+                    <p className="mt-0.5 font-mono text-xs text-emerald-700">
+                      {item.sku}
+                    </p>
+                    <p className="mt-0.5 text-[10px] uppercase tracking-wide text-slate-400">
+                      {item.source === "shopify" ? "Shopify" : "Catalog"}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => copySku(item.sku)}
+                    className="shrink-0 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-100"
+                  >
+                    {copied ? "Copied" : "Copy SKU"}
+                  </button>
+                </li>
+              ))}
+            </ul>
           ) : (
             <div className="mt-6 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center">
               <p className="text-sm text-slate-600">
-                No product links yet. Add a product to generate a tracking link.
+                No product SKUs yet. Add a catalog product or open a Shopify
+                product and click Get product SKU.
               </p>
-              <Link
-                href="/dashboard/products"
-                className="mt-3 inline-block text-sm font-semibold text-emerald-700 hover:underline"
-              >
-                Add product →
-              </Link>
+              <div className="mt-3 flex flex-wrap justify-center gap-3">
+                <Link
+                  href="/dashboard/products"
+                  className="text-sm font-semibold text-emerald-700 hover:underline"
+                >
+                  Add catalog product →
+                </Link>
+                <Link
+                  href="/dashboard/ads"
+                  className="text-sm font-semibold text-blue-700 hover:underline"
+                >
+                  Browse Shopify →
+                </Link>
+              </div>
             </div>
           )}
         </div>
@@ -712,35 +703,200 @@ export function ResellerDashboard() {
         <div className="grid gap-4 sm:grid-cols-2">
           <Link
             href="/dashboard/integrations"
-            className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm hover:shadow-md"
+            className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-emerald-300 hover:shadow-md"
           >
-            <p className="text-sm font-semibold text-slate-900">Integrations</p>
-            <p className="mt-1 text-xs text-slate-500">Shopify & WhatsApp</p>
+            <div className="absolute -right-6 -top-6 h-24 w-24 rounded-full bg-emerald-50 transition group-hover:scale-110" />
+            <div className="relative flex items-start gap-4">
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700">
+                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z" />
+                </svg>
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-bold text-slate-900">Integrations</p>
+                <p className="mt-0.5 text-xs text-slate-500">
+                  Connect Shopify & WhatsApp
+                </p>
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  <span
+                    className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                      stats.store.shopify_connected
+                        ? "bg-emerald-100 text-emerald-800"
+                        : "bg-slate-100 text-slate-600"
+                    }`}
+                  >
+                    <span
+                      className={`h-1.5 w-1.5 rounded-full ${
+                        stats.store.shopify_connected
+                          ? "bg-emerald-500"
+                          : "bg-slate-400"
+                      }`}
+                    />
+                    Shopify {stats.store.shopify_connected ? "on" : "off"}
+                  </span>
+                  <span
+                    className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                      stats.store.whatsapp_connected
+                        ? "bg-emerald-100 text-emerald-800"
+                        : "bg-slate-100 text-slate-600"
+                    }`}
+                  >
+                    <span
+                      className={`h-1.5 w-1.5 rounded-full ${
+                        stats.store.whatsapp_connected
+                          ? "bg-emerald-500"
+                          : "bg-slate-400"
+                      }`}
+                    />
+                    WhatsApp {stats.store.whatsapp_connected ? "on" : "off"}
+                  </span>
+                </div>
+              </div>
+            </div>
           </Link>
+
           <Link
             href="/dashboard/ai"
-            className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm hover:shadow-md"
+            className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-violet-300 hover:shadow-md"
           >
-            <p className="text-sm font-semibold text-slate-900">AI Settings</p>
-            <p className="mt-1 text-xs text-slate-500">Agent name & templates</p>
+            <div className="absolute -right-6 -top-6 h-24 w-24 rounded-full bg-violet-50 transition group-hover:scale-110" />
+            <div className="relative flex items-start gap-4">
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-violet-100 text-violet-700">
+                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                </svg>
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-bold text-slate-900">AI Settings</p>
+                <p className="mt-0.5 text-xs text-slate-500">
+                  Sales & confirmation agent modes
+                </p>
+                <div className="mt-3 space-y-1.5">
+                  <div className="flex items-center justify-between text-[11px]">
+                    <span className="font-medium text-slate-600">AI success</span>
+                    <span className="font-semibold text-violet-700">
+                      {stats.aiPerformance.successRate}%
+                    </span>
+                  </div>
+                  <div className="h-1.5 overflow-hidden rounded-full bg-violet-100">
+                    <div
+                      className="h-full rounded-full bg-violet-500 transition-all"
+                      style={{
+                        width: `${Math.min(100, stats.aiPerformance.successRate)}%`,
+                      }}
+                    />
+                  </div>
+                  <p className="text-[10px] text-slate-500">
+                    {stats.aiPerformance.handledByAi} AI ·{" "}
+                    {stats.aiPerformance.humanTakeover} human
+                  </p>
+                </div>
+              </div>
+            </div>
           </Link>
+
           <Link
             href="/dashboard/ads"
-            className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm hover:shadow-md"
+            className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-blue-300 hover:shadow-md"
           >
-            <p className="text-sm font-semibold text-slate-900">Shopify Products</p>
-            <p className="mt-1 text-xs text-slate-500">
-              {stats.ads.linkCount} links · {stats.ads.totalClicks} clicks
-            </p>
+            <div className="absolute -right-6 -top-6 h-24 w-24 rounded-full bg-blue-50 transition group-hover:scale-110" />
+            <div className="relative flex items-start gap-4">
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-100 text-blue-700">
+                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
+                </svg>
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-bold text-slate-900">
+                  Shopify Products
+                </p>
+                <p className="mt-0.5 text-xs text-slate-500">
+                  Catalog SKUs & product details
+                </p>
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <div className="rounded-lg bg-blue-50/80 px-2.5 py-2">
+                    <p className="text-[10px] font-medium uppercase tracking-wide text-blue-600/80">
+                      SKUs / links
+                    </p>
+                    <p className="mt-0.5 text-lg font-bold text-blue-900">
+                      {stats.ads.linkCount}
+                    </p>
+                  </div>
+                  <div className="rounded-lg bg-slate-50 px-2.5 py-2">
+                    <p className="text-[10px] font-medium uppercase tracking-wide text-slate-500">
+                      Clicks
+                    </p>
+                    <p className="mt-0.5 text-lg font-bold text-slate-900">
+                      {stats.ads.totalClicks}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
           </Link>
+
           <Link
             href="/dashboard/plan"
-            className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm hover:shadow-md"
+            className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-amber-300 hover:shadow-md"
           >
-            <p className="text-sm font-semibold text-slate-900">Plan & Usage</p>
-            <p className="mt-1 text-xs text-slate-500">
-              {stats.ai.percentUsed}% of monthly AI quota
-            </p>
+            <div className="absolute -right-6 -top-6 h-24 w-24 rounded-full bg-amber-50 transition group-hover:scale-110" />
+            <div className="relative flex items-start gap-4">
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-800">
+                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                </svg>
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-bold text-slate-900">
+                      Plan & Usage
+                    </p>
+                    <p className="mt-0.5 text-xs text-slate-500">
+                      {stats.ai.planName} plan · AI replies
+                    </p>
+                  </div>
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                      stats.ai.limitReached
+                        ? "bg-red-100 text-red-800"
+                        : stats.ai.percentUsed >= 80
+                          ? "bg-amber-100 text-amber-900"
+                          : "bg-emerald-100 text-emerald-800"
+                    }`}
+                  >
+                    {stats.ai.percentUsed}%
+                  </span>
+                </div>
+                <div className="mt-3">
+                  <div className="mb-1 flex justify-between text-[11px]">
+                    <span className="font-medium text-slate-600">
+                      {stats.ai.used.toLocaleString()} used
+                    </span>
+                    <span className="text-slate-500">
+                      {stats.ai.limit.toLocaleString()} limit
+                    </span>
+                  </div>
+                  <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+                    <div
+                      className={`h-full rounded-full transition-all ${
+                        stats.ai.limitReached
+                          ? "bg-red-500"
+                          : stats.ai.percentUsed >= 80
+                            ? "bg-amber-500"
+                            : "bg-emerald-500"
+                      }`}
+                      style={{
+                        width: `${Math.min(100, stats.ai.percentUsed)}%`,
+                      }}
+                    />
+                  </div>
+                  <p className="mt-1.5 text-[10px] text-slate-500">
+                    Top up credits anytime — even on Basic
+                  </p>
+                </div>
+              </div>
+            </div>
           </Link>
         </div>
       </div>

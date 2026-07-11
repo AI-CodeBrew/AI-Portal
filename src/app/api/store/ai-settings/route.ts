@@ -45,6 +45,10 @@ export async function PATCH(request: NextRequest) {
       orderTemplateId?: string | null;
       generalTemplateId?: string | null;
       whatsappOrderTemplateId?: string | null;
+      whatsappSalesInstructions?: string | null;
+      shopifyConfirmInstructions?: string | null;
+      autoConfirmOrders?: boolean;
+      autoFollowUpTemplateId?: string | null;
     };
 
     const result = await updateStoreAiSettings(storeId, body);

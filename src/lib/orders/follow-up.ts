@@ -12,40 +12,48 @@ export async function sendOrderFollowUp(
   user: AuthUser,
   templateId: string
 ): Promise<
-  | { ok: true; templateName: string; to: string }
-  | { error: string; status: number }
+  | { ok: true; templateName: string; to: string; orderId: string }
+  | { error: string; status: number; orderId: string }
 > {
-  if (!user.storeId) {
-    return { error: "No store linked", status: 400 };
+  const supabase = createAdminClient();
+  const isAdmin = user.role === "admin";
+
+  if (!isAdmin && !user.storeId) {
+    return { error: "No store linked", status: 400, orderId };
   }
 
-  const supabase = createAdminClient();
-
-  const { data: order } = await supabase
+  let orderQuery = supabase
     .from("orders")
     .select("*, customers(phone, name)")
-    .eq("id", orderId)
-    .eq("store_id", user.storeId)
-    .maybeSingle();
+    .eq("id", orderId);
+
+  if (!isAdmin && user.storeId) {
+    orderQuery = orderQuery.eq("store_id", user.storeId);
+  }
+
+  const { data: order } = await orderQuery.maybeSingle();
 
   if (!order) {
-    return { error: "Order not found", status: 404 };
+    return { error: "Order not found", status: 404, orderId };
   }
+
+  const storeId = order.store_id as string;
 
   const { data: template } = await supabase
     .from("whatsapp_message_templates")
     .select("id, name, language, status, body_text")
     .eq("id", templateId)
-    .eq("store_id", user.storeId)
+    .eq("store_id", storeId)
     .maybeSingle();
 
   if (!template) {
-    return { error: "Template not found", status: 404 };
+    return { error: "Template not found", status: 404, orderId };
   }
   if (template.status !== "approved") {
     return {
       error: "Only Meta-approved templates can be used for follow-up",
       status: 400,
+      orderId,
     };
   }
 
@@ -54,11 +62,11 @@ export async function sendOrderFollowUp(
     .select(
       "id, whatsapp_phone_number_id, whatsapp_access_token, store_name, shop_domain"
     )
-    .eq("id", user.storeId)
+    .eq("id", storeId)
     .single();
 
   if (!store) {
-    return { error: "Store not found", status: 404 };
+    return { error: "Store not found", status: 404, orderId };
   }
 
   const waCreds = getStoreWhatsAppCredentials({
@@ -66,7 +74,7 @@ export async function sendOrderFollowUp(
     whatsapp_access_token: store.whatsapp_access_token,
   });
   if (!waCreds) {
-    return { error: "WhatsApp is not connected", status: 400 };
+    return { error: "WhatsApp is not connected", status: 400, orderId };
   }
 
   const customer = order.customers as
@@ -86,6 +94,7 @@ export async function sendOrderFollowUp(
     return {
       error: "No customer phone on this order — cannot send WhatsApp follow-up",
       status: 400,
+      orderId,
     };
   }
 
@@ -111,7 +120,7 @@ export async function sendOrderFollowUp(
   } catch (err) {
     const message =
       err instanceof Error ? err.message : "WhatsApp template send failed";
-    return { error: message, status: 502 };
+    return { error: message, status: 502, orderId };
   }
 
   // Log outbound in conversation if one exists
@@ -119,7 +128,7 @@ export async function sendOrderFollowUp(
   const { data: conv } = await supabase
     .from("whatsapp_conversations")
     .select("id")
-    .eq("store_id", user.storeId)
+    .eq("store_id", storeId)
     .eq("customer_phone", to)
     .order("updated_at", { ascending: false })
     .limit(1)
@@ -142,6 +151,7 @@ export async function sendOrderFollowUp(
     ok: true,
     templateName: template.name as string,
     to,
+    orderId,
   };
 }
 

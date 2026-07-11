@@ -12,7 +12,7 @@ export default async function AdminOrdersPage() {
     <div>
       <AdminPageHeader
         title="All Orders"
-        description="Browse orders by reseller with pagination. View only — resellers confirm orders from their dashboard."
+        description="Browse orders by reseller, multi-select, and send WhatsApp follow-ups. Resellers confirm their own orders."
       />
 
       {error && (

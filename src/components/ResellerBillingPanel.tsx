@@ -3,6 +3,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { PlanUsageCard } from "@/components/PlanUsageCard";
 import { AI_PLANS, PLAN_ORDER, type PlanId } from "@/lib/ai/plans";
+import {
+  AI_TOPUP_PACKS,
+  TOPUP_PACK_ORDER,
+  type TopupPackId,
+} from "@/lib/ai/topup";
 import { PLAN_PRICES_AED } from "@/lib/payments/paytabs";
 import { formatMoney } from "@/lib/currency";
 
@@ -21,6 +26,7 @@ export function ResellerBillingPanel() {
   const [payments, setPayments] = useState<PaymentRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [checkoutLoading, setCheckoutLoading] = useState<PlanId | null>(null);
+  const [topupLoading, setTopupLoading] = useState<TopupPackId | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [lastCheckout, setLastCheckout] = useState<{
@@ -88,14 +94,73 @@ export function ResellerBillingPanel() {
     }
   }
 
+  async function buyTopup(packId: TopupPackId) {
+    setTopupLoading(packId);
+    setError(null);
+    setSuccess(null);
+    try {
+      const res = await fetch("/api/store/billing/topup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ packId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Top-up failed");
+      setSuccess(data.message ?? "AI credits added.");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Top-up failed");
+    } finally {
+      setTopupLoading(null);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <PlanUsageCard />
 
+      <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-6 shadow-sm">
+        <h2 className="text-base font-bold text-slate-900">
+          Top up AI message credits
+        </h2>
+        <p className="mt-1 text-sm text-slate-600">
+          Stay on Basic (or any plan) and buy extra AI replies anytime. Credits
+          add to your monthly limit.
+        </p>
+        <div className="mt-4 grid gap-3 sm:grid-cols-3">
+          {TOPUP_PACK_ORDER.map((id) => {
+            const pack = AI_TOPUP_PACKS[id];
+            return (
+              <div
+                key={id}
+                className="flex flex-col rounded-lg border border-slate-200 bg-white p-4"
+              >
+                <p className="font-bold text-slate-900">{pack.label}</p>
+                <p className="mt-1 text-lg font-bold text-emerald-700">
+                  {formatMoney(pack.priceAed, currency)}
+                </p>
+                <p className="mt-1 flex-1 text-xs text-slate-600">
+                  {pack.description}
+                </p>
+                <button
+                  type="button"
+                  disabled={topupLoading === id}
+                  onClick={() => buyTopup(id)}
+                  className="mt-3 w-full rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                >
+                  {topupLoading === id ? "Adding..." : "Top up"}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
       <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="text-base font-bold text-slate-900">Choose a plan</h2>
         <p className="mt-1 text-sm text-slate-600">
-          Select Pro or Max to open PayTabs checkout and pay. Basic is free.
+          Select Pro or Max to open PayTabs checkout and pay. Basic is free —
+          use top-ups above for more AI messages without upgrading.
         </p>
 
         {error && (

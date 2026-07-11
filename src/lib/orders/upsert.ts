@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { parseShopifyOrder, type ShopifyOrder } from "@/lib/shopify";
+import { maybeAutoConfirmShopifyOrder } from "@/lib/orders/confirm";
 
 export async function upsertShopifyOrder(
   supabase: SupabaseClient,
@@ -44,20 +45,33 @@ export async function upsertShopifyOrder(
         order_number: parsed.orderNumber,
         customer_id: customerId,
         currency: parsed.currency,
+        shipping_address: parsed.shippingAddress,
       })
       .eq("id", existing.id);
   } else {
-    await supabase.from("orders").insert({
-      store_id: storeId,
-      customer_id: customerId,
-      shopify_order_id: String(order.id),
-      order_number: parsed.orderNumber,
-      items: parsed.items,
-      total: parsed.total,
-      currency: parsed.currency,
-      status: "pending",
-      source: "shopify",
-      created_at: shopifyCreatedAt,
-    });
+    const { data: inserted } = await supabase
+      .from("orders")
+      .insert({
+        store_id: storeId,
+        customer_id: customerId,
+        shopify_order_id: String(order.id),
+        order_number: parsed.orderNumber,
+        items: parsed.items,
+        total: parsed.total,
+        currency: parsed.currency,
+        status: "pending",
+        source: "shopify",
+        shipping_address: parsed.shippingAddress,
+        created_at: shopifyCreatedAt,
+      })
+      .select("id")
+      .single();
+
+    if (inserted?.id) {
+      // Fire-and-forget auto-confirm (dispatch notify + optional follow-up)
+      void maybeAutoConfirmShopifyOrder(storeId, inserted.id).catch((err) => {
+        console.error("[upsertShopifyOrder] auto-confirm error:", err);
+      });
+    }
   }
 }

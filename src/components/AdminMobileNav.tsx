@@ -8,6 +8,7 @@ const links = [
   { href: "/admin/resellers", label: "Resellers" },
   { href: "/admin/orders", label: "Orders" },
   { href: "/admin/chats", label: "Chats" },
+  { href: "/admin/support", label: "Support" },
 ];
 
 export function AdminMobileNav() {

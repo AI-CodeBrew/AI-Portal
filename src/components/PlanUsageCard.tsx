@@ -85,8 +85,80 @@ export function PlanUsageCard({ compact }: { compact?: boolean }) {
         <UsageBar percent={usage.percentUsed} />
         <p className="mt-2 text-xs text-slate-600">
           {usage.remaining.toLocaleString()} remaining this month
+          {usage.topupCredits > 0
+            ? ` · includes ${usage.topupCredits.toLocaleString()} top-up credits`
+            : ""}
         </p>
       </div>
+
+      {!compact && (
+        <div className="mt-5 rounded-lg border border-slate-200 bg-slate-50 p-4">
+          <p className="text-sm font-semibold text-slate-900">
+            AI replies per chat (spam protection)
+          </p>
+          <p className="mt-1 text-xs text-slate-600">
+            After this many AI replies in one conversation, the chat switches to
+            Human and appears under “AI exhausted”.
+          </p>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <input
+              type="number"
+              min={1}
+              max={500}
+              placeholder="Unlimited"
+              defaultValue={usage.conversationReplyLimit ?? ""}
+              id="ai-reply-limit"
+              className="w-28 rounded-lg border border-slate-200 px-3 py-2 text-sm"
+            />
+            <button
+              type="button"
+              onClick={async () => {
+                const el = document.getElementById(
+                  "ai-reply-limit"
+                ) as HTMLInputElement | null;
+                const raw = el?.value?.trim() ?? "";
+                const value = raw === "" ? null : Number(raw);
+                const res = await fetch("/api/store/ai-usage", {
+                  method: "PATCH",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ conversationReplyLimit: value }),
+                });
+                const data = await res.json();
+                if (res.ok && data.usage) setUsage(data.usage);
+              }}
+              className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800"
+            >
+              Save limit
+            </button>
+            <button
+              type="button"
+              onClick={async () => {
+                const res = await fetch("/api/store/ai-usage", {
+                  method: "PATCH",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ conversationReplyLimit: null }),
+                });
+                const data = await res.json();
+                if (res.ok && data.usage) {
+                  setUsage(data.usage);
+                  const el = document.getElementById(
+                    "ai-reply-limit"
+                  ) as HTMLInputElement | null;
+                  if (el) el.value = "";
+                }
+              }}
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-white"
+            >
+              Unlimited
+            </button>
+          </div>
+          {usage.conversationReplyLimit != null && (
+            <p className="mt-2 text-xs font-medium text-slate-700">
+              Current limit: {usage.conversationReplyLimit} AI replies / chat
+            </p>
+          )}
+        </div>
+      )}
 
       {!compact && (
         <div className="mt-5 grid gap-2 sm:grid-cols-3">
@@ -119,8 +191,8 @@ export function PlanUsageCard({ compact }: { compact?: boolean }) {
 
       {usage.limitReached && (
         <p className="mt-4 text-sm font-medium text-red-800">
-          WhatsApp customers will see a limit message instead of AI replies
-          until you upgrade. Open Plan & Usage to select Pro or Max and pay.
+          WhatsApp customers will see a limit message instead of AI replies.
+          Top up AI credits (even on Basic) or upgrade your plan.
         </p>
       )}
     </div>

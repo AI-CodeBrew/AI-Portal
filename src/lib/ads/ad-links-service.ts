@@ -426,6 +426,29 @@ export async function resolveAdProductContext(
         await recordAdLinkClick(link.id);
         return adLinkToProductContext(link);
       }
+
+      // Fallback: globally unique portal / Shopify product SKU
+      const { resolveProductByGlobalSku } = await import(
+        "@/lib/products/global-sku"
+      );
+      const bySku = await resolveProductByGlobalSku(slug);
+      if (bySku && bySku.storeId === storeId) {
+        return {
+          slug: bySku.sku,
+          productTitle: bySku.title || bySku.sku,
+          productDescription: null,
+          variantTitle: null,
+          price: null,
+          currency: null,
+          sku: bySku.sku,
+          imageUrl: null,
+          shopifyProductId: bySku.shopifyProductId ?? null,
+          shopifyVariantId: null,
+          portalProductId: bySku.portalProductId ?? null,
+          portalVariantId: null,
+          source: bySku.source,
+        };
+      }
     }
   }
 

@@ -203,8 +203,30 @@ export interface ShopifyOrder {
     first_name?: string;
     last_name?: string;
   };
-  shipping_address?: { phone?: string; name?: string; first_name?: string; last_name?: string };
-  billing_address?: { phone?: string; name?: string; first_name?: string; last_name?: string };
+  shipping_address?: {
+    phone?: string;
+    name?: string;
+    first_name?: string;
+    last_name?: string;
+    address1?: string;
+    address2?: string;
+    city?: string;
+    province?: string;
+    country?: string;
+    zip?: string;
+  };
+  billing_address?: {
+    phone?: string;
+    name?: string;
+    first_name?: string;
+    last_name?: string;
+    address1?: string;
+    address2?: string;
+    city?: string;
+    province?: string;
+    country?: string;
+    zip?: string;
+  };
   line_items: Array<{
     title: string;
     quantity: number;
@@ -226,6 +248,16 @@ export function parseShopifyOrder(order: ShopifyOrder): {
   total: number;
   orderNumber: string;
   currency: string | null;
+  shippingAddress: {
+    name?: string | null;
+    phone?: string | null;
+    address1?: string | null;
+    address2?: string | null;
+    city?: string | null;
+    province?: string | null;
+    country?: string | null;
+    zip?: string | null;
+  } | null;
 } {
   const phone =
     order.phone ||
@@ -258,6 +290,24 @@ export function parseShopifyOrder(order: ShopifyOrder): {
     product_id: String(li.product_id),
   }));
 
+  const addr = order.shipping_address;
+  const shippingName =
+    addr?.name ||
+    [addr?.first_name, addr?.last_name].filter(Boolean).join(" ") ||
+    null;
+  const shippingAddress = addr
+    ? {
+        name: shippingName || name,
+        phone: addr.phone || phone,
+        address1: addr.address1 ?? null,
+        address2: addr.address2 ?? null,
+        city: addr.city ?? null,
+        province: addr.province ?? null,
+        country: addr.country ?? null,
+        zip: addr.zip ?? null,
+      }
+    : null;
+
   return {
     phone,
     name,
@@ -268,6 +318,7 @@ export function parseShopifyOrder(order: ShopifyOrder): {
     total: parseFloat(order.total_price),
     orderNumber: order.name || `#${order.order_number}`,
     currency: getShopifyOrderCurrency(order) || null,
+    shippingAddress,
   };
 }
 

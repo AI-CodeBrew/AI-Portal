@@ -64,6 +64,23 @@ export function buildSalesSystemPrompt(params: {
     ? `\n\n--- Store templates ---\n${templateSections.join("\n\n")}`
     : "";
 
+  const whatsappSales =
+    aiConfig?.whatsappSalesPrompt?.trim() ||
+    "Follow standard WhatsApp sales flow.";
+  const shopifyConfirm =
+    aiConfig?.shopifyConfirmPrompt?.trim() ||
+    "Help confirm existing Shopify orders.";
+
+  const agentModesBlock = `
+
+--- WhatsApp sales mode ---
+${whatsappSales}
+
+--- Shopify confirmation mode ---
+${shopifyConfirm}
+
+Mode selection: Use WhatsApp sales mode for WhatsApp leads and new purchases. Use Shopify confirmation mode when the customer is asking about an existing Shopify order (status, address, dispatch, tracking, changes).`;
+
   const adBlock = adProductContext
     ? `\n\n--- Ad product context ---\n${formatAdContextForPrompt(adProductContext)}`
     : "";
@@ -74,7 +91,7 @@ You are selling for: ${storeLabel}.
 Your name is ${agentName}. When introducing yourself, use this name.${currencyNote}${productHint}${adBlock}
 
 Tone: ${toneInstruction}
-Reply length: ${replyInstruction}${templateBlock}
+Reply length: ${replyInstruction}${templateBlock}${agentModesBlock}
 
 You receive the last ${CHAT_HISTORY_LIMIT} messages of this chat (oldest to newest).`;
 }

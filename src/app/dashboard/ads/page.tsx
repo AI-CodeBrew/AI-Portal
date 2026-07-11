@@ -6,7 +6,7 @@ export default function AdsPage() {
     <div>
       <DashboardPageHeader
         title="Shopify Products"
-        description="Browse your Shopify catalog, view product details, and generate WhatsApp ad links to copy for Meta ads."
+        description="Browse your Shopify catalog, view details, and get a unique portal SKU so the AI can identify each product."
       />
       <ShopifyProductsPanel />
     </div>

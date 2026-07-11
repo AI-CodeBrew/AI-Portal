@@ -4,12 +4,6 @@ import { DEFAULT_ORDER_TEMPLATE_ID } from "@/lib/ai/ai-settings-types";
 import { isSalesAgentConfigured } from "@/lib/ai/run-sales-agent";
 import { getStoreOrderTotals } from "@/lib/orders/store-order-totals";
 import { countStoreProducts } from "@/lib/products/products-service";
-import { getAppUrl } from "@/lib/app-url";
-import { buildWhatsAppAdUrl } from "@/lib/ads/whatsapp-ad-links";
-import {
-  getStoreWhatsAppCredentials,
-  getWhatsAppDisplayPhone,
-} from "@/lib/whatsapp";
 
 export interface DashboardSetupStep {
   id: string;
@@ -51,14 +45,11 @@ export interface DashboardTopProduct {
   revenue: number;
 }
 
-export interface DashboardShareLink {
-  productTitle: string;
-  slug: string;
-  trackingUrl: string;
-  whatsappUrl: string | null;
-  clickCount: number;
-  currency: string | null;
-  price: string | null;
+export interface DashboardProductSku {
+  sku: string;
+  title: string;
+  source: "portal" | "shopify";
+  createdAt: string | null;
 }
 
 export interface PeriodMetric {
@@ -96,7 +87,8 @@ export interface ResellerDashboardStats {
     cancelled: number;
   };
   topProducts: DashboardTopProduct[];
-  shareLink: DashboardShareLink | null;
+  recentSkus: DashboardProductSku[];
+  shareLink: null;
   orders: {
     pending: number;
     confirmed: number;
@@ -431,7 +423,7 @@ export async function getResellerDashboardStats(
     {
       id: "product",
       label: "Product Added",
-      description: "Add a catalog product or Shopify ad link",
+      description: "Add a catalog product or get a Shopify product SKU",
       done: hasProduct,
       href: "/dashboard/products",
     },
@@ -594,42 +586,43 @@ export async function getResellerDashboardStats(
       ? Math.round(((handledByAi + closed) / aiDenom) * 1000) / 10
       : 0;
 
-  let shareLink: DashboardShareLink | null = null;
-  const topLink = adRows[0];
-  if (topLink) {
-    const appUrl = getAppUrl();
-    let whatsappUrl: string | null = null;
-    try {
-      const waCreds = getStoreWhatsAppCredentials({
-        whatsapp_phone_number_id: store?.whatsapp_phone_number_id ?? null,
-        whatsapp_access_token: store?.whatsapp_access_token ?? null,
-      });
-      if (waCreds?.phoneNumberId && waCreds.accessToken) {
-        const displayPhone = await getWhatsAppDisplayPhone(
-          waCreds.phoneNumberId,
-          waCreds.accessToken
-        );
-        if (displayPhone && topLink.prefill_message) {
-          whatsappUrl = buildWhatsAppAdUrl(
-            displayPhone,
-            topLink.prefill_message as string
-          );
-        }
-      }
-    } catch {
-      whatsappUrl = null;
-    }
+  let shareLink: null = null;
 
-    shareLink = {
-      productTitle: (topLink.product_title as string) || "Product",
-      slug: topLink.slug as string,
-      trackingUrl: `${appUrl}/r/${topLink.slug}`,
-      whatsappUrl,
-      clickCount: (topLink.click_count as number) ?? 0,
-      currency: (topLink.currency as string | null) ?? null,
-      price: (topLink.price as string | null) ?? null,
-    };
-  }
+  const [{ data: portalSkus }, { data: shopifySkus }] = await Promise.all([
+    supabase
+      .from("store_products")
+      .select("sku, name, created_at")
+      .eq("store_id", storeId)
+      .order("created_at", { ascending: false })
+      .limit(6),
+    supabase
+      .from("shopify_product_skus")
+      .select("sku, product_title, created_at")
+      .eq("store_id", storeId)
+      .order("created_at", { ascending: false })
+      .limit(6),
+  ]);
+
+  const recentSkus: DashboardProductSku[] = [
+    ...(portalSkus ?? []).map((p) => ({
+      sku: p.sku as string,
+      title: (p.name as string) || "Product",
+      source: "portal" as const,
+      createdAt: (p.created_at as string | null) ?? null,
+    })),
+    ...(shopifySkus ?? []).map((p) => ({
+      sku: p.sku as string,
+      title: (p.product_title as string) || "Shopify product",
+      source: "shopify" as const,
+      createdAt: (p.created_at as string | null) ?? null,
+    })),
+  ]
+    .sort((a, b) => {
+      const ta = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const tb = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return tb - ta;
+    })
+    .slice(0, 6);
 
   return {
     store: {
@@ -666,6 +659,7 @@ export async function getResellerDashboardStats(
       cancelled: cancelledRes.count ?? 0,
     },
     topProducts,
+    recentSkus,
     shareLink,
     orders: {
       pending: pendingRes.count ?? 0,

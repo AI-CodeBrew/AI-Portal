@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import type { Order, OrderStatus } from "@/lib/types";
+import type { Order, OrderShippingAddress, OrderStatus } from "@/lib/types";
 import { useStoreStatus } from "@/hooks/useStoreStatus";
 import { formatMoney } from "@/lib/currency";
 import {
@@ -12,10 +12,17 @@ import {
   setCachedPage,
   clearOrdersListCache,
   AUTO_REFRESH_MS,
+  ORDERS_PAGE_SIZE,
+  dateRangeFromPreset,
   type StatusFilter,
+  type SourceFilter,
+  type DatePreset,
 } from "@/lib/orders-list-cache";
 import { OrderTrackingModal } from "@/components/OrderTrackingModal";
 import { OrderFollowUpModal } from "@/components/OrderFollowUpModal";
+import type { WhatsAppMessageTemplate } from "@/lib/whatsapp/message-templates";
+
+const PAGE_SIZE = ORDERS_PAGE_SIZE;
 
 const STATUS_FILTERS: {
   value: StatusFilter;
@@ -54,7 +61,18 @@ const STATUS_FILTERS: {
   },
 ];
 
-const PAGE_SIZE = 25;
+const SOURCE_TABS: { value: SourceFilter; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "shopify", label: "Shopify" },
+  { value: "whatsapp_ai", label: "WhatsApp" },
+];
+
+const DATE_PRESETS: { value: DatePreset; label: string }[] = [
+  { value: "all", label: "All time" },
+  { value: "7", label: "7 days" },
+  { value: "30", label: "30 days" },
+  { value: "90", label: "90 days" },
+];
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleString(undefined, {
@@ -69,6 +87,24 @@ function formatShortDate(iso: string) {
     day: "numeric",
     year: "numeric",
   });
+}
+
+export function formatShippingAddress(
+  addr?: OrderShippingAddress | null
+): string {
+  if (!addr) return "—";
+  const parts = [
+    addr.address1,
+    addr.address2,
+    addr.city,
+    addr.province,
+    addr.zip,
+    addr.country,
+  ].filter((p) => typeof p === "string" && p.trim());
+  if (parts.length === 0) {
+    return addr.name?.trim() || "—";
+  }
+  return parts.join(", ");
 }
 
 function StatusPill({ status }: { status: OrderStatus }) {
@@ -90,7 +126,20 @@ export function OrdersList() {
   const existing = getOrdersListCache();
   const initialPage = existing?.lastPage ?? 1;
   const initialStatus: StatusFilter = existing?.lastStatus ?? "all";
-  const initialCached = getCachedPage(initialStatus, initialPage);
+  const initialSource: SourceFilter = existing?.lastSource ?? "all";
+  const initialDatePreset: DatePreset = existing?.lastDatePreset ?? "all";
+  const initialRange = dateRangeFromPreset(
+    initialDatePreset,
+    existing?.lastDateFrom,
+    existing?.lastDateTo
+  );
+  const initialCached = getCachedPage(
+    initialSource,
+    initialStatus,
+    initialRange.dateFrom,
+    initialRange.dateTo,
+    initialPage
+  );
 
   const [orders, setOrders] = useState<Order[]>(initialCached?.orders ?? []);
   const [loading, setLoading] = useState(!initialCached);
@@ -110,6 +159,15 @@ export function OrdersList() {
   );
   const [statusFilter, setStatusFilter] =
     useState<StatusFilter>(initialStatus);
+  const [sourceFilter, setSourceFilter] =
+    useState<SourceFilter>(initialSource);
+  const [datePreset, setDatePreset] = useState<DatePreset>(initialDatePreset);
+  const [customFrom, setCustomFrom] = useState(
+    existing?.lastDateFrom?.slice(0, 10) ?? ""
+  );
+  const [customTo, setCustomTo] = useState(
+    existing?.lastDateTo?.slice(0, 10) ?? ""
+  );
   const [statusCounts, setStatusCounts] = useState(
     existing?.statusCounts ?? {
       all: 0,
@@ -120,6 +178,41 @@ export function OrdersList() {
   );
   const [trackingOrder, setTrackingOrder] = useState<Order | null>(null);
   const [followUpOrder, setFollowUpOrder] = useState<Order | null>(null);
+  const [importing, setImporting] = useState(false);
+  const importInputRef = useRef<HTMLInputElement>(null);
+
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [showBulkFollowUp, setShowBulkFollowUp] = useState(false);
+  const [bulkTemplates, setBulkTemplates] = useState<WhatsAppMessageTemplate[]>(
+    []
+  );
+  const [bulkTemplateId, setBulkTemplateId] = useState("");
+  const [bulkTemplatesLoading, setBulkTemplatesLoading] = useState(false);
+  const [bulkSending, setBulkSending] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState<string | null>(null);
+  const [bulkFollowUpError, setBulkFollowUpError] = useState<string | null>(
+    null
+  );
+  const [bulkFollowUpResults, setBulkFollowUpResults] = useState<{
+    sent: number;
+    failed: number;
+    results: Array<{
+      orderId: string;
+      ok: boolean;
+      error?: string;
+      to?: string;
+    }>;
+  } | null>(null);
+
+  const [autoConfirmOrders, setAutoConfirmOrders] = useState(false);
+  const [autoFollowUpTemplateId, setAutoFollowUpTemplateId] = useState<
+    string | null
+  >(null);
+  const [approvedWaTemplates, setApprovedWaTemplates] = useState<
+    WhatsAppMessageTemplate[]
+  >([]);
+  const [orderSettingsLoading, setOrderSettingsLoading] = useState(true);
+  const [orderSettingsSaving, setOrderSettingsSaving] = useState(false);
 
   const nextPageInfoRef = useRef<string | null>(existing?.nextPageInfo ?? null);
   const syncedPagesRef = useRef(existing?.syncedPages ?? 0);
@@ -138,15 +231,50 @@ export function OrdersList() {
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    async function loadOrderSettings() {
+      setOrderSettingsLoading(true);
+      try {
+        const res = await fetch("/api/store/order-settings");
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? "Failed to load settings");
+        if (cancelled) return;
+        setAutoConfirmOrders(Boolean(data.autoConfirmOrders));
+        setAutoFollowUpTemplateId(data.autoFollowUpTemplateId ?? null);
+        setApprovedWaTemplates(data.approvedTemplates ?? []);
+      } catch {
+        // Non-blocking — orders still work without settings
+      } finally {
+        if (!cancelled) setOrderSettingsLoading(false);
+      }
+    }
+    void loadOrderSettings();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Clear selection when page or filters change (not on silent auto-refresh)
+  useEffect(() => {
+    setSelectedIds(new Set());
+    setShowBulkFollowUp(false);
+    setBulkFollowUpResults(null);
+  }, [page, statusFilter, sourceFilter, datePreset, customFrom, customTo]);
+
   const applyPage = useCallback(
     (
       nextOrders: Order[],
       p: number,
+      source: SourceFilter,
       status: StatusFilter,
+      dateFrom: string | null,
+      dateTo: string | null,
       filtered: number,
       pages: number,
       shopify: number,
-      counts: typeof statusCounts
+      counts: typeof statusCounts,
+      preset: DatePreset
     ) => {
       if (!mountedRef.current) return;
       setOrders(nextOrders);
@@ -158,7 +286,10 @@ export function OrdersList() {
       statusCountsRef.current = counts;
 
       setCachedPage(
+        source,
         status,
+        dateFrom,
+        dateTo,
         p,
         {
           orders: nextOrders,
@@ -171,11 +302,46 @@ export function OrdersList() {
           nextPageInfo: nextPageInfoRef.current,
           syncedPages: syncedPagesRef.current,
           lastStatus: status,
+          lastSource: source,
+          lastDatePreset: preset,
+          lastDateFrom: dateFrom,
+          lastDateTo: dateTo,
           lastPage: p,
         }
       );
     },
     []
+  );
+
+  const buildQuery = useCallback(
+    (
+      p: number,
+      source: SourceFilter,
+      status: StatusFilter,
+      rangeOverride?: { dateFrom: string | null; dateTo: string | null; preset?: DatePreset }
+    ) => {
+      const range =
+        rangeOverride ??
+        dateRangeFromPreset(
+          customFrom || customTo ? "custom" : datePreset,
+          customFrom || null,
+          customTo || null
+        );
+      const params = new URLSearchParams({
+        page: String(p),
+        limit: String(PAGE_SIZE),
+        status,
+      });
+      if (source !== "all") params.set("source", source);
+      if (range.dateFrom) params.set("dateFrom", range.dateFrom);
+      if (range.dateTo) params.set("dateTo", range.dateTo);
+      return {
+        params,
+        range,
+        preset: rangeOverride?.preset ?? (customFrom || customTo ? "custom" as DatePreset : datePreset),
+      };
+    },
+    [customFrom, customTo, datePreset]
   );
 
   /** Background: refresh Shopify total count (does not block UI). */
@@ -188,24 +354,34 @@ export function OrdersList() {
       if (typeof countData.shopifyTotal === "number" && mountedRef.current) {
         shopifyTotalRef.current = countData.shopifyTotal;
         setShopifyTotal(countData.shopifyTotal);
-        // Update total pages for "all" without refetching rows
-        if (statusFilter === "all" && countData.shopifyTotal > 0) {
+        if (
+          statusFilter === "all" &&
+          sourceFilter === "all" &&
+          datePreset === "all" &&
+          !customFrom &&
+          !customTo &&
+          countData.shopifyTotal > 0
+        ) {
           setTotalPages(Math.ceil(countData.shopifyTotal / PAGE_SIZE));
         }
       }
     } catch {
       // ignore
     }
-  }, [store?.shopify_connected, statusFilter]);
+  }, [
+    store?.shopify_connected,
+    statusFilter,
+    sourceFilter,
+    datePreset,
+    customFrom,
+    customTo,
+  ]);
 
-  /** Background: sync one Shopify page into DB if not yet synced. */
   const syncOneShopifyPage = useCallback(async () => {
     if (!store?.shopify_connected) return;
     if (syncedPagesRef.current >= 1 && nextPageInfoRef.current === null) {
-      // Already fully synced at least once for page 1
       return;
     }
-    // Only auto-sync the first page in background; deeper pages sync on Next
     if (syncedPagesRef.current >= 1) return;
 
     setSyncing(true);
@@ -224,21 +400,15 @@ export function OrdersList() {
         shopifyTotalRef.current = data.shopifyTotal;
         if (mountedRef.current) {
           setShopifyTotal(data.shopifyTotal);
-          if (statusFilter === "all") {
-            setTotalPages(
-              Math.ceil(data.shopifyTotal / PAGE_SIZE) || 1
-            );
-          }
         }
       }
     } catch {
-      // ignore background sync errors
+      // ignore
     } finally {
       if (mountedRef.current) setSyncing(false);
     }
-  }, [store?.shopify_connected, statusFilter]);
+  }, [store?.shopify_connected]);
 
-  /** Sync the next Shopify cursor page when user goes deeper than synced. */
   const ensureSyncedThroughPage = useCallback(
     async (p: number): Promise<void> => {
       if (!store?.shopify_connected) return;
@@ -276,31 +446,54 @@ export function OrdersList() {
   const loadPage = useCallback(
     async (
       p: number,
+      source: SourceFilter,
       status: StatusFilter,
       options?: {
         force?: boolean;
         showLoading?: boolean;
-        /** Sync Shopify in background after DB load (default true for "all") */
         backgroundSync?: boolean;
+        rangeOverride?: {
+          dateFrom: string | null;
+          dateTo: string | null;
+          preset?: DatePreset;
+        };
       }
     ) => {
       const force = options?.force ?? false;
       const showLoading = options?.showLoading ?? true;
-      const backgroundSync = options?.backgroundSync ?? status === "all";
+      const backgroundSync =
+        options?.backgroundSync ??
+        (status === "all" && source !== "whatsapp_ai");
+
+      const { params, range, preset } = buildQuery(
+        p,
+        source,
+        status,
+        options?.rangeOverride
+      );
 
       if (!force) {
-        const hit = getCachedPage(status, p);
+        const hit = getCachedPage(
+          source,
+          status,
+          range.dateFrom,
+          range.dateTo,
+          p
+        );
         if (hit) {
           applyPage(
             hit.orders,
             p,
+            source,
             status,
+            range.dateFrom,
+            range.dateTo,
             hit.filteredTotal,
             hit.totalPages,
             shopifyTotalRef.current,
-            statusCountsRef.current
+            statusCountsRef.current,
+            preset
           );
-          // Still refresh total in background
           void refreshShopifyTotal();
           return;
         }
@@ -312,10 +505,7 @@ export function OrdersList() {
       if (mountedRef.current) setError(null);
 
       try {
-        // Fast path: load 25 rows from DB immediately — do NOT wait for Shopify
-        const res = await fetch(
-          `/api/orders?page=${p}&limit=${PAGE_SIZE}&status=${status}`
-        );
+        const res = await fetch(`/api/orders?${params}`);
         if (!res.ok) throw new Error("Failed to load orders");
         const data = await res.json();
 
@@ -324,13 +514,31 @@ export function OrdersList() {
         const counts = data.statusCounts ?? statusCountsRef.current;
         const shopify = shopifyTotalRef.current;
         let pages = data.totalPages ?? 1;
-        if (status === "all" && shopify > 0) {
+        if (
+          status === "all" &&
+          source === "all" &&
+          !range.dateFrom &&
+          !range.dateTo &&
+          shopify > 0
+        ) {
           pages = Math.ceil(shopify / PAGE_SIZE);
         } else if (status === "all" && counts.all > 0) {
           pages = Math.ceil(counts.all / PAGE_SIZE);
         }
 
-        applyPage(nextOrders, p, status, filtered, pages, shopify, counts);
+        applyPage(
+          nextOrders,
+          p,
+          source,
+          status,
+          range.dateFrom,
+          range.dateTo,
+          filtered,
+          pages,
+          shopify,
+          counts,
+          preset
+        );
       } catch (err) {
         if (mountedRef.current) {
           setError(err instanceof Error ? err.message : "Failed to load");
@@ -340,23 +548,27 @@ export function OrdersList() {
         if (mountedRef.current && showLoading) setLoading(false);
       }
 
-      // Background: total count + optional first-page Shopify sync
       void refreshShopifyTotal();
-      if (backgroundSync && p === 1) {
+      if (backgroundSync && p === 1 && store?.shopify_connected) {
         void syncOneShopifyPage().then(() => {
-          // Re-read page quietly after sync so new Shopify orders appear
-          void loadPage(p, status, {
+          void loadPage(p, source, status, {
             force: true,
             showLoading: false,
             backgroundSync: false,
+            rangeOverride: options?.rangeOverride,
           });
         });
       }
     },
-    [applyPage, refreshShopifyTotal, syncOneShopifyPage]
+    [
+      applyPage,
+      buildQuery,
+      refreshShopifyTotal,
+      store?.shopify_connected,
+      syncOneShopifyPage,
+    ]
   );
 
-  // Initial load / Shopify connect
   useEffect(() => {
     if (searchParams.get("connected") === "shopify") {
       setSuccessMsg("Shopify connected! Loading orders...");
@@ -371,43 +583,50 @@ export function OrdersList() {
   useEffect(() => {
     if (!store) return;
 
-    if (!store.shopify_connected) {
-      setLoading(false);
-      return;
-    }
-
-    const hit = getCachedPage(statusFilter, page);
+    const { range } = buildQuery(page, sourceFilter, statusFilter);
+    const hit = getCachedPage(
+      sourceFilter,
+      statusFilter,
+      range.dateFrom,
+      range.dateTo,
+      page
+    );
     if (hit) {
       applyPage(
         hit.orders,
         page,
+        sourceFilter,
         statusFilter,
+        range.dateFrom,
+        range.dateTo,
         hit.filteredTotal,
         hit.totalPages,
         shopifyTotalRef.current || (getOrdersListCache()?.shopifyTotal ?? 0),
-        statusCountsRef.current
+        statusCountsRef.current,
+        datePreset
       );
       setLoading(false);
       return;
     }
 
-    loadPage(page, statusFilter, { showLoading: true, backgroundSync: true });
-    // Only re-run when store connection flips — page/filter changes use handlers
+    loadPage(page, sourceFilter, statusFilter, {
+      showLoading: true,
+      backgroundSync: true,
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [store?.shopify_connected]);
+  }, [store?.id]);
 
-  // Soft background refresh of current page only (no Shopify re-sync)
   useEffect(() => {
-    if (!store?.shopify_connected) return;
+    if (!store) return;
     const interval = setInterval(() => {
-      loadPage(page, statusFilter, {
+      loadPage(page, sourceFilter, statusFilter, {
         force: true,
         showLoading: false,
         backgroundSync: false,
       });
     }, AUTO_REFRESH_MS);
     return () => clearInterval(interval);
-  }, [store?.shopify_connected, page, statusFilter, loadPage]);
+  }, [store, page, statusFilter, sourceFilter, loadPage]);
 
   async function confirmOrder(id: string) {
     setConfirming(id);
@@ -430,7 +649,7 @@ export function OrdersList() {
         successText += ` WhatsApp not sent: ${data.whatsapp_error}`;
       }
       setSuccessMsg(successText);
-      await loadPage(page, statusFilter, {
+      await loadPage(page, sourceFilter, statusFilter, {
         force: true,
         showLoading: false,
         backgroundSync: false,
@@ -439,6 +658,119 @@ export function OrdersList() {
       setError(err instanceof Error ? err.message : "Confirm failed");
     } finally {
       setConfirming(null);
+    }
+  }
+
+  function toggleId(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAllOnPage() {
+    const allSelected =
+      orders.length > 0 && orders.every((o) => selectedIds.has(o.id));
+    if (allSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(orders.map((o) => o.id)));
+    }
+  }
+
+  async function openBulkFollowUp() {
+    setBulkFollowUpError(null);
+    setBulkFollowUpResults(null);
+    setBulkProgress(null);
+    if (selectedIds.size === 0) return;
+
+    setShowBulkFollowUp(true);
+    setBulkTemplatesLoading(true);
+    try {
+      const res = await fetch("/api/orders/bulk-follow-up");
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to load templates");
+      const list = (data.templates ?? []) as WhatsAppMessageTemplate[];
+      setBulkTemplates(list);
+      setBulkTemplateId(list[0]?.id ?? "");
+    } catch (err) {
+      setBulkFollowUpError(
+        err instanceof Error ? err.message : "Failed to load templates"
+      );
+      setBulkTemplates([]);
+    } finally {
+      setBulkTemplatesLoading(false);
+    }
+  }
+
+  async function sendBulkFollowUp() {
+    if (!bulkTemplateId || selectedIds.size === 0) return;
+    setBulkSending(true);
+    setBulkFollowUpError(null);
+    setBulkFollowUpResults(null);
+    setBulkProgress(`Sending to ${selectedIds.size} order(s)...`);
+
+    try {
+      const res = await fetch("/api/orders/bulk-follow-up", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          orderIds: Array.from(selectedIds),
+          templateId: bulkTemplateId,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Follow-up failed");
+      setBulkFollowUpResults({
+        sent: data.sent ?? 0,
+        failed: data.failed ?? 0,
+        results: data.results ?? [],
+      });
+      setBulkProgress(
+        `Done: ${data.sent ?? 0} sent, ${data.failed ?? 0} failed.`
+      );
+      setSuccessMsg(
+        `Follow-up sent to ${data.sent ?? 0} order${
+          (data.sent ?? 0) === 1 ? "" : "s"
+        }${data.failed ? ` (${data.failed} failed)` : ""}.`
+      );
+    } catch (err) {
+      setBulkFollowUpError(
+        err instanceof Error ? err.message : "Follow-up failed"
+      );
+      setBulkProgress(null);
+    } finally {
+      setBulkSending(false);
+    }
+  }
+
+  async function saveOrderSettings(next: {
+    autoConfirmOrders?: boolean;
+    autoFollowUpTemplateId?: string | null;
+  }) {
+    setOrderSettingsSaving(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/store/order-settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(next),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to save settings");
+      if (next.autoConfirmOrders !== undefined) {
+        setAutoConfirmOrders(next.autoConfirmOrders);
+      }
+      if (next.autoFollowUpTemplateId !== undefined) {
+        setAutoFollowUpTemplateId(next.autoFollowUpTemplateId);
+      }
+      setSuccessMsg("Order settings saved.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save settings");
+    } finally {
+      setOrderSettingsSaving(false);
     }
   }
 
@@ -467,7 +799,7 @@ export function OrdersList() {
   }
 
   async function handleRefresh() {
-    await loadPage(page, statusFilter, {
+    await loadPage(page, sourceFilter, statusFilter, {
       force: true,
       showLoading: true,
       backgroundSync: true,
@@ -480,26 +812,54 @@ export function OrdersList() {
     setStatusFilter(next);
     setPage(1);
     setSuccessMsg(null);
-
-    const hit = getCachedPage(next, 1);
-    if (hit) {
-      applyPage(
-        hit.orders,
-        1,
-        next,
-        hit.filteredTotal,
-        hit.totalPages,
-        shopifyTotalRef.current,
-        statusCountsRef.current
-      );
-      setLoading(false);
-      void refreshShopifyTotal();
-      return;
-    }
-
-    loadPage(1, next, {
+    loadPage(1, sourceFilter, next, {
       showLoading: true,
       backgroundSync: next === "all",
+    });
+  }
+
+  function changeSource(next: SourceFilter) {
+    if (next === sourceFilter) return;
+    setSourceFilter(next);
+    setPage(1);
+    setSuccessMsg(null);
+    loadPage(1, next, statusFilter, {
+      showLoading: true,
+      backgroundSync: next !== "whatsapp_ai",
+    });
+  }
+
+  function changeDatePreset(next: DatePreset) {
+    setDatePreset(next);
+    if (next !== "custom") {
+      setCustomFrom("");
+      setCustomTo("");
+    }
+    setPage(1);
+    setSuccessMsg(null);
+    const range = dateRangeFromPreset(next, null, null);
+    void loadPage(1, sourceFilter, statusFilter, {
+      force: true,
+      showLoading: true,
+      backgroundSync: false,
+      rangeOverride: { ...range, preset: next },
+    });
+  }
+
+  function applyCustomDates() {
+    setDatePreset("custom");
+    setPage(1);
+    setSuccessMsg(null);
+    const range = dateRangeFromPreset(
+      "custom",
+      customFrom || null,
+      customTo || null
+    );
+    void loadPage(1, sourceFilter, statusFilter, {
+      force: true,
+      showLoading: true,
+      backgroundSync: false,
+      rangeOverride: { ...range, preset: "custom" },
     });
   }
 
@@ -508,78 +868,102 @@ export function OrdersList() {
     setPage(p);
     setSuccessMsg(null);
 
-    const hit = getCachedPage(statusFilter, p);
-    if (hit) {
-      applyPage(
-        hit.orders,
-        p,
-        statusFilter,
-        hit.filteredTotal,
-        hit.totalPages,
-        shopifyTotalRef.current,
-        statusCountsRef.current
-      );
-      // If browsing deeper "all" pages, sync that Shopify page in background
-      if (statusFilter === "all" && store?.shopify_connected) {
-        void ensureSyncedThroughPage(p).then(() => {
-          loadPage(p, statusFilter, {
-            force: true,
-            showLoading: false,
-            backgroundSync: false,
-          });
-        });
-      }
-      return;
-    }
-
-    // Show DB page immediately; sync Shopify for this page in background if needed
-    if (statusFilter === "all" && store?.shopify_connected) {
+    if (
+      statusFilter === "all" &&
+      sourceFilter !== "whatsapp_ai" &&
+      store?.shopify_connected
+    ) {
       void ensureSyncedThroughPage(p);
     }
-    await loadPage(p, statusFilter, {
+    await loadPage(p, sourceFilter, statusFilter, {
       showLoading: true,
       backgroundSync: false,
     });
   }
 
-  if (!store?.shopify_connected) {
+  async function handleExport() {
+    const { params } = buildQuery(1, sourceFilter, statusFilter);
+    params.delete("page");
+    params.delete("limit");
+    try {
+      const res = await fetch(`/api/orders/export?${params}`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? "Export failed");
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `orders-${new Date().toISOString().slice(0, 10)}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setSuccessMsg("Orders exported.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Export failed");
+    }
+  }
+
+  async function handleImportFile(file: File) {
+    setImporting(true);
+    setError(null);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch("/api/orders/import", {
+        method: "POST",
+        body: form,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Import failed");
+      clearOrdersListCache();
+      setSuccessMsg(
+        `Imported ${data.created} order${data.created === 1 ? "" : "s"}${
+          data.failed ? ` (${data.failed} failed)` : ""
+        }.`
+      );
+      await loadPage(1, sourceFilter, statusFilter, {
+        force: true,
+        showLoading: true,
+        backgroundSync: false,
+      });
+      setPage(1);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Import failed");
+    } finally {
+      setImporting(false);
+      if (importInputRef.current) importInputRef.current.value = "";
+    }
+  }
+
+  if (!store) {
     return (
-      <div className="rounded-xl border border-dashed border-slate-300 bg-white p-12 text-center">
-        <p className="font-medium text-slate-800">Connect Shopify to see orders</p>
-        <p className="mt-2 text-sm text-slate-600">
-          Orders sync from your Shopify store once connected.
-        </p>
-        <Link
-          href="/dashboard/integrations/shopify"
-          className="mt-4 inline-block text-sm font-semibold text-emerald-700 hover:underline"
-        >
-          Go to Integrations →
-        </Link>
+      <div className="rounded-xl border border-slate-200 bg-white p-8 text-sm text-slate-600">
+        Loading store...
       </div>
     );
   }
 
+  const allPageSelected =
+    orders.length > 0 && orders.every((o) => selectedIds.has(o.id));
+
   return (
     <div className="space-y-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <p className="text-sm text-slate-600">
-            Orders sync from your Shopify store. Confirm them here to update
-            status and notify customers.
-          </p>
-          <p className="mt-1 text-xs text-slate-500">
-            {shopifyTotal > 0 ? (
+          <p className="text-xs text-slate-500">
+            {shopifyTotal > 0 && sourceFilter !== "whatsapp_ai" ? (
               <>
                 <span className="font-semibold text-slate-700">
                   {shopifyTotal.toLocaleString()}
                 </span>{" "}
-                total on Shopify
+                on Shopify
                 {orders.length > 0 && (
                   <>
                     {" · "}
                     showing {(page - 1) * PAGE_SIZE + 1}–
-                    {(page - 1) * PAGE_SIZE + orders.length} of this page
-                    (25 per page)
+                    {(page - 1) * PAGE_SIZE + orders.length} ({PAGE_SIZE} per
+                    page)
                   </>
                 )}
               </>
@@ -588,22 +972,127 @@ export function OrdersList() {
                 <span className="font-semibold text-slate-700">
                   {statusCounts.all.toLocaleString()}
                 </span>{" "}
-                in portal
+                matching filters
               </>
             )}
             {statusFilter !== "all" && filteredTotal > 0
               ? ` · ${filteredTotal.toLocaleString()} ${statusFilter}`
               : ""}
           </p>
+          {!store.shopify_connected && (
+            <p className="mt-1 text-xs text-amber-700">
+              Shopify not connected — showing WhatsApp / portal orders only.{" "}
+              <Link
+                href="/dashboard/integrations/shopify"
+                className="font-semibold underline"
+              >
+                Connect Shopify
+              </Link>
+            </p>
+          )}
         </div>
+        <div className="flex flex-wrap gap-2">
+          <input
+            ref={importInputRef}
+            type="file"
+            accept=".csv,text/csv"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) void handleImportFile(file);
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => importInputRef.current?.click()}
+            disabled={importing}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          >
+            {importing ? "Importing..." : "Import"}
+          </button>
+          <button
+            type="button"
+            onClick={handleExport}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            Export
+          </button>
+          <button
+            type="button"
+            onClick={handleRefresh}
+            disabled={syncing || loading}
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          >
+            <span className={syncing ? "animate-spin" : ""}>↻</span>
+            {syncing ? "Updating..." : "Refresh"}
+          </button>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        {SOURCE_TABS.map((tab) => {
+          const active = sourceFilter === tab.value;
+          return (
+            <button
+              key={tab.value}
+              type="button"
+              onClick={() => changeSource(tab.value)}
+              className={`rounded-lg border px-3 py-1.5 text-sm font-semibold transition ${
+                active
+                  ? "border-emerald-600 bg-emerald-600 text-white"
+                  : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+              }`}
+            >
+              {tab.label}
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="flex flex-wrap items-end gap-2">
+        {DATE_PRESETS.map((preset) => {
+          const active =
+            datePreset === preset.value && !customFrom && !customTo;
+          return (
+            <button
+              key={preset.value}
+              type="button"
+              onClick={() => changeDatePreset(preset.value)}
+              className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition ${
+                active
+                  ? "border-slate-900 bg-slate-900 text-white"
+                  : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+              }`}
+            >
+              {preset.label}
+            </button>
+          );
+        })}
+        <label className="flex flex-col gap-0.5 text-[10px] font-semibold uppercase text-slate-500">
+          From
+          <input
+            type="date"
+            value={customFrom}
+            onChange={(e) => setCustomFrom(e.target.value)}
+            className="rounded-lg border border-slate-200 px-2 py-1.5 text-xs font-normal text-slate-800"
+          />
+        </label>
+        <label className="flex flex-col gap-0.5 text-[10px] font-semibold uppercase text-slate-500">
+          To
+          <input
+            type="date"
+            value={customTo}
+            onChange={(e) => setCustomTo(e.target.value)}
+            className="rounded-lg border border-slate-200 px-2 py-1.5 text-xs font-normal text-slate-800"
+          />
+        </label>
         <button
           type="button"
-          onClick={handleRefresh}
-          disabled={syncing || loading}
-          className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          onClick={applyCustomDates}
+          disabled={!customFrom && !customTo}
+          className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
         >
-          <span className={syncing ? "animate-spin" : ""}>↻</span>
-          {syncing ? "Updating..." : "Refresh"}
+          Apply dates
         </button>
       </div>
 
@@ -612,7 +1101,7 @@ export function OrdersList() {
           const active = statusFilter === filter.value;
           const count =
             filter.value === "all"
-              ? shopifyTotal || statusCounts.all
+              ? statusCounts.all
               : statusCounts[filter.value];
           return (
             <button
@@ -657,6 +1146,186 @@ export function OrdersList() {
         </div>
       )}
 
+      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex-1">
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                role="switch"
+                aria-checked={autoConfirmOrders}
+                disabled={orderSettingsLoading || orderSettingsSaving}
+                onClick={() =>
+                  void saveOrderSettings({
+                    autoConfirmOrders: !autoConfirmOrders,
+                  })
+                }
+                className={`relative h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-50 ${
+                  autoConfirmOrders ? "bg-emerald-500" : "bg-slate-300"
+                }`}
+              >
+                <span
+                  className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
+                    autoConfirmOrders ? "translate-x-5" : "translate-x-0"
+                  }`}
+                />
+              </button>
+              <div>
+                <p className="text-sm font-semibold text-slate-900">
+                  Auto-confirm Shopify orders
+                </p>
+                {orderSettingsLoading ? (
+                  <p className="text-xs text-slate-500">Loading settings…</p>
+                ) : autoConfirmOrders ? (
+                  <p className="mt-0.5 text-xs text-slate-600">
+                    New Shopify orders are confirmed automatically. The customer
+                    gets a confirmation/dispatch WhatsApp message, plus an
+                    optional follow-up template below.
+                  </p>
+                ) : (
+                  <p className="mt-0.5 text-xs text-slate-600">
+                    Manual mode — use the Confirm button on each pending order.
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+        {autoConfirmOrders && (
+          <div className="mt-4 border-t border-slate-100 pt-4">
+            <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Optional follow-up template
+            </label>
+            <select
+              value={autoFollowUpTemplateId ?? ""}
+              disabled={orderSettingsSaving}
+              onChange={(e) =>
+                void saveOrderSettings({
+                  autoFollowUpTemplateId: e.target.value || null,
+                })
+              }
+              className="w-full max-w-md rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 disabled:opacity-50"
+            >
+              <option value="">None — confirmation message only</option>
+              {approvedWaTemplates.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name} · {t.language}
+                </option>
+              ))}
+            </select>
+            {approvedWaTemplates.length === 0 && (
+              <p className="mt-1.5 text-xs text-amber-700">
+                No approved WhatsApp templates yet. Submit one under WA
+                Templates and wait for Meta approval.
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+
+      {selectedIds.size > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-violet-200 bg-violet-50 px-4 py-3">
+          <p className="text-sm font-semibold text-violet-950">
+            {selectedIds.size} order{selectedIds.size === 1 ? "" : "s"} selected
+          </p>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedIds(new Set());
+                setShowBulkFollowUp(false);
+              }}
+              className="rounded-lg border border-violet-200 bg-white px-3 py-1.5 text-sm font-medium text-violet-900"
+            >
+              Clear
+            </button>
+            <button
+              type="button"
+              onClick={openBulkFollowUp}
+              className="rounded-lg bg-violet-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-violet-700"
+            >
+              Follow-up ({selectedIds.size})
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showBulkFollowUp && (
+        <div className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <div className="flex-1 space-y-2">
+              <p className="text-sm font-semibold text-violet-950">
+                Bulk follow-up · {selectedIds.size} selected
+              </p>
+              {bulkTemplatesLoading ? (
+                <p className="text-sm text-violet-800">Loading templates...</p>
+              ) : bulkTemplates.length === 0 ? (
+                <p className="text-sm text-violet-800">
+                  No approved WhatsApp templates. Create and get Meta approval
+                  under WA Templates.
+                </p>
+              ) : (
+                <select
+                  value={bulkTemplateId}
+                  onChange={(e) => setBulkTemplateId(e.target.value)}
+                  className="w-full max-w-md rounded-lg border border-violet-200 bg-white px-3 py-2 text-sm"
+                >
+                  {bulkTemplates.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name} · {t.language}
+                    </option>
+                  ))}
+                </select>
+              )}
+              {bulkProgress && (
+                <p className="text-sm font-medium text-violet-900">
+                  {bulkProgress}
+                </p>
+              )}
+              {bulkFollowUpError && (
+                <p className="text-sm text-red-700">{bulkFollowUpError}</p>
+              )}
+              {bulkFollowUpResults && bulkFollowUpResults.failed > 0 && (
+                <ul className="max-h-32 overflow-y-auto text-xs text-red-800">
+                  {bulkFollowUpResults.results
+                    .filter((r) => !r.ok)
+                    .map((r) => (
+                      <li key={r.orderId}>
+                        {r.orderId.slice(0, 8)}… — {r.error}
+                      </li>
+                    ))}
+                </ul>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowBulkFollowUp(false);
+                  setBulkFollowUpResults(null);
+                  setBulkProgress(null);
+                }}
+                className="rounded-lg border border-violet-200 bg-white px-3 py-2 text-sm font-semibold text-violet-900"
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                disabled={
+                  bulkSending ||
+                  !bulkTemplateId ||
+                  bulkTemplates.length === 0
+                }
+                onClick={sendBulkFollowUp}
+                className="rounded-lg bg-violet-700 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
+              >
+                {bulkSending ? "Sending..." : "Send now"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {loading ? (
         <div className="rounded-xl border border-slate-200 bg-white p-8 text-sm text-slate-600">
           Loading orders...
@@ -687,11 +1356,23 @@ export function OrdersList() {
             <table className="min-w-full divide-y divide-slate-200">
               <thead className="bg-slate-50">
                 <tr>
+                  <th className="px-3 py-3 text-left">
+                    <input
+                      type="checkbox"
+                      checked={allPageSelected}
+                      onChange={toggleAllOnPage}
+                      aria-label="Select all on page"
+                      className="rounded border-slate-300"
+                    />
+                  </th>
                   <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-slate-600">
                     Order
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-slate-600">
                     Customer
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-slate-600">
+                    Address
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-slate-600">
                     Total
@@ -710,6 +1391,15 @@ export function OrdersList() {
               <tbody className="divide-y divide-slate-100">
                 {orders.map((order) => (
                   <tr key={order.id} className="hover:bg-slate-50">
+                    <td className="px-3 py-3">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(order.id)}
+                        onChange={() => toggleId(order.id)}
+                        aria-label={`Select order ${order.order_number ?? order.id}`}
+                        className="rounded border-slate-300"
+                      />
+                    </td>
                     <td className="px-4 py-3">
                       <p className="text-sm font-semibold text-slate-900">
                         {order.order_number ?? order.id.slice(0, 8)}
@@ -723,6 +1413,11 @@ export function OrdersList() {
                           {order.customers.phone}
                         </p>
                       )}
+                    </td>
+                    <td className="max-w-[200px] px-4 py-3 text-xs text-slate-600">
+                      <span className="line-clamp-2">
+                        {formatShippingAddress(order.shipping_address)}
+                      </span>
                     </td>
                     <td className="px-4 py-3 text-sm font-medium text-slate-800">
                       {formatMoney(Number(order.total ?? 0), order.currency)}
@@ -740,7 +1435,16 @@ export function OrdersList() {
                             type="button"
                             disabled={confirming === order.id}
                             onClick={() => confirmOrder(order.id)}
-                            className="rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-400 disabled:opacity-50"
+                            className={
+                              autoConfirmOrders
+                                ? "rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-100 disabled:opacity-50"
+                                : "rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-400 disabled:opacity-50"
+                            }
+                            title={
+                              autoConfirmOrders
+                                ? "Still pending — confirm manually"
+                                : undefined
+                            }
                           >
                             {confirming === order.id
                               ? "Confirming..."
@@ -776,14 +1480,26 @@ export function OrdersList() {
                 className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
               >
                 <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <p className="font-semibold text-slate-900">
-                      {order.order_number ?? order.id.slice(0, 8)}
-                    </p>
-                    <p className="text-xs text-slate-500">
-                      {order.customers?.name ?? "Customer"} ·{" "}
-                      {formatShortDate(order.created_at)}
-                    </p>
+                  <div className="flex items-start gap-3">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(order.id)}
+                      onChange={() => toggleId(order.id)}
+                      aria-label={`Select order ${order.order_number ?? order.id}`}
+                      className="mt-1 rounded border-slate-300"
+                    />
+                    <div>
+                      <p className="font-semibold text-slate-900">
+                        {order.order_number ?? order.id.slice(0, 8)}
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        {order.customers?.name ?? "Customer"} ·{" "}
+                        {formatShortDate(order.created_at)}
+                      </p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {formatShippingAddress(order.shipping_address)}
+                      </p>
+                    </div>
                   </div>
                   <StatusPill status={order.status} />
                 </div>

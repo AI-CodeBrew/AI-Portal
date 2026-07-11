@@ -51,6 +51,17 @@ export interface OrderItem {
   product_id?: string;
 }
 
+export interface OrderShippingAddress {
+  name?: string | null;
+  phone?: string | null;
+  address1?: string | null;
+  address2?: string | null;
+  city?: string | null;
+  province?: string | null;
+  country?: string | null;
+  zip?: string | null;
+}
+
 export interface Order {
   id: string;
   store_id: string;
@@ -70,6 +81,7 @@ export interface Order {
   tracking_number: string | null;
   tracking_company: string | null;
   shopify_fulfillment_id: string | null;
+  shipping_address?: OrderShippingAddress | null;
   created_at: string;
   customers?: Customer | null;
 }

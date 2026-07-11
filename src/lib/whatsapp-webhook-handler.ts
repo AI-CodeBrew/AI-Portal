@@ -226,6 +226,47 @@ export async function handleWhatsAppWebhookMessage(
             continue;
           }
 
+          // Per-conversation AI reply limit → hand off to human
+          {
+            const { data: storeLimits } = await supabase
+              .from("stores")
+              .select("ai_conversation_reply_limit")
+              .eq("id", activeStore.id)
+              .maybeSingle();
+            const replyLimit =
+              storeLimits?.ai_conversation_reply_limit != null
+                ? Number(storeLimits.ai_conversation_reply_limit)
+                : null;
+            const currentCount = Number(
+              (conversation as { ai_reply_count?: number }).ai_reply_count ?? 0
+            );
+            if (replyLimit != null && currentCount >= replyLimit) {
+              await supabase
+                .from("whatsapp_conversations")
+                .update({
+                  status: "human_handoff",
+                  ai_exhausted: true,
+                  updated_at: new Date().toISOString(),
+                })
+                .eq("id", conversation.id);
+              const handoffText =
+                "Thanks for messaging us! A team member will continue this chat with you shortly.";
+              const handoffSent = await sendReply(
+                activeStore,
+                customerPhone,
+                handoffText
+              );
+              if (handoffSent.ok) {
+                await supabase.from("whatsapp_messages").insert({
+                  conversation_id: conversation.id,
+                  direction: "out",
+                  content: handoffText,
+                });
+              }
+              continue;
+            }
+          }
+
           const adSlug = parseAdRefFromMessage(inboundText);
           if (adSlug) {
             const adLink = await resolveAdLinkBySlug(activeStore.id, adSlug);
@@ -335,6 +376,36 @@ export async function handleWhatsAppWebhookMessage(
               direction: "out",
               content: replyText,
             });
+
+            // Count AI replies toward per-conversation limit
+            const prevCount = Number(
+              (conversation as { ai_reply_count?: number }).ai_reply_count ?? 0
+            );
+            const nextCount = prevCount + 1;
+            const { data: storeLimitsAfter } = await supabase
+              .from("stores")
+              .select("ai_conversation_reply_limit")
+              .eq("id", activeStore.id)
+              .maybeSingle();
+            const replyLimitAfter =
+              storeLimitsAfter?.ai_conversation_reply_limit != null
+                ? Number(storeLimitsAfter.ai_conversation_reply_limit)
+                : null;
+            const exhausted =
+              replyLimitAfter != null && nextCount >= replyLimitAfter;
+            await supabase
+              .from("whatsapp_conversations")
+              .update({
+                ai_reply_count: nextCount,
+                ...(exhausted
+                  ? {
+                      status: "human_handoff",
+                      ai_exhausted: true,
+                    }
+                  : {}),
+                updated_at: new Date().toISOString(),
+              })
+              .eq("id", conversation.id);
           } else {
             console.error(
               `[whatsapp-webhook] AI reply NOT delivered to WhatsApp (${customerPhone}): ${sent.error}`

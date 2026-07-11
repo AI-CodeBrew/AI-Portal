@@ -1,9 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import Link from "next/link";
 import { formatMoney } from "@/lib/currency";
-import type { AdWhatsAppLink } from "@/lib/ads/types";
 
 type ListProduct = {
   id: number;
@@ -16,7 +14,6 @@ type ListProduct = {
   imageUrl: string | null;
   priceFrom: string | null;
   currency: string | null;
-  totalInventory: number | null;
   variantCount: number;
 };
 
@@ -36,8 +33,6 @@ type ProductDetail = {
     sku: string | null;
     price: string;
     compareAtPrice: string | null;
-    inventoryQuantity: number;
-    inStock: boolean;
     barcode: string | null;
   }>;
   createdAt: string | null;
@@ -71,7 +66,6 @@ export function ShopifyProductsPanel() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [currency, setCurrency] = useState("USD");
-  const [whatsappConnected, setWhatsappConnected] = useState(false);
   const [hasNextPage, setHasNextPage] = useState(false);
   const [hasPreviousPage, setHasPreviousPage] = useState(false);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -80,15 +74,12 @@ export function ShopifyProductsPanel() {
 
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [detail, setDetail] = useState<ProductDetail | null>(null);
-  const [existingLink, setExistingLink] = useState<AdWhatsAppLink | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [selectedVariantId, setSelectedVariantId] = useState<number | null>(
     null
   );
-  const [generating, setGenerating] = useState(false);
-  const [generatedLink, setGeneratedLink] = useState<AdWhatsAppLink | null>(
-    null
-  );
+  const [fetchingSku, setFetchingSku] = useState(false);
+  const [portalSku, setPortalSku] = useState<string | null>(null);
 
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -113,7 +104,6 @@ export function ShopifyProductsPanel() {
 
         setProducts(data.products ?? []);
         setCurrency(data.currency ?? "USD");
-        setWhatsappConnected(Boolean(data.whatsappConnected));
         setHasNextPage(Boolean(data.hasNextPage));
         setHasPreviousPage(Boolean(data.hasPreviousPage));
         setNextCursor(data.nextCursor ?? null);
@@ -154,8 +144,7 @@ export function ShopifyProductsPanel() {
   async function openProduct(id: number) {
     setSelectedId(id);
     setDetail(null);
-    setExistingLink(null);
-    setGeneratedLink(null);
+    setPortalSku(null);
     setDetailLoading(true);
     setError(null);
 
@@ -165,8 +154,6 @@ export function ShopifyProductsPanel() {
       if (!res.ok) throw new Error(data.error ?? "Failed to load product");
 
       setDetail(data.product);
-      setExistingLink(data.existingLink ?? null);
-      setWhatsappConnected(Boolean(data.whatsappConnected));
       if (data.currency) setCurrency(data.currency);
       setSelectedVariantId(data.product?.variants?.[0]?.id ?? null);
     } catch (err) {
@@ -180,64 +167,43 @@ export function ShopifyProductsPanel() {
   function closeDetail() {
     setSelectedId(null);
     setDetail(null);
-    setExistingLink(null);
-    setGeneratedLink(null);
+    setPortalSku(null);
   }
 
-  async function generateLink() {
+  async function getProductSku() {
     if (!detail) return;
-    if (!whatsappConnected) {
-      setError("Connect WhatsApp in Integrations to generate ad links.");
-      return;
-    }
-
-    setGenerating(true);
+    setFetchingSku(true);
     setError(null);
 
     try {
-      const res = await fetch("/api/store/ad-links", {
+      const res = await fetch(`/api/store/shopify-products/${detail.id}/sku`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          productId: detail.id,
           variantId: selectedVariantId,
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Failed to generate link");
-
-      setGeneratedLink(data.link);
-      setExistingLink(data.link);
+      if (!res.ok) throw new Error(data.error ?? "Failed to get SKU");
+      setPortalSku(data.sku as string);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to generate link");
+      setError(err instanceof Error ? err.message : "Failed to get SKU");
     } finally {
-      setGenerating(false);
+      setFetchingSku(false);
     }
   }
-
-  const activeLink = generatedLink ?? existingLink;
 
   return (
     <div className="space-y-6">
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
-        <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h2 className="text-lg font-bold text-slate-900">
-              Shopify products
-            </h2>
-            <p className="mt-1 text-sm text-slate-600">
-              Browse your catalog, open a product for full details, and generate
-              a WhatsApp ad link to copy for Meta ads.
-            </p>
-          </div>
-          {!whatsappConnected && (
-            <Link
-              href="/dashboard/integrations/whatsapp"
-              className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900 hover:bg-amber-100"
-            >
-              Connect WhatsApp to generate links
-            </Link>
-          )}
+        <div className="mb-5">
+          <h2 className="text-lg font-bold text-slate-900">
+            Shopify products
+          </h2>
+          <p className="mt-1 text-sm text-slate-600">
+            Browse your catalog and generate a unique portal SKU for each
+            product.
+          </p>
         </div>
 
         <form onSubmit={submitSearch} className="flex flex-col gap-3 sm:flex-row">
@@ -318,9 +284,6 @@ export function ShopifyProductsPanel() {
                     <p className="mt-1 text-xs text-slate-500">
                       {product.variantCount} variant
                       {product.variantCount === 1 ? "" : "s"}
-                      {product.totalInventory != null
-                        ? ` · ${product.totalInventory} in stock`
-                        : ""}
                     </p>
                   </div>
                 </button>
@@ -498,9 +461,8 @@ export function ShopifyProductsPanel() {
                         <thead>
                           <tr className="border-b border-slate-200 bg-slate-50 text-left text-xs uppercase text-slate-500">
                             <th className="px-3 py-2">Variant</th>
-                            <th className="px-3 py-2">SKU</th>
+                            <th className="px-3 py-2">Shopify SKU</th>
                             <th className="px-3 py-2">Price</th>
-                            <th className="px-3 py-2">Stock</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
@@ -515,14 +477,6 @@ export function ShopifyProductsPanel() {
                               <td className="px-3 py-2 text-slate-800">
                                 {formatMoney(parseFloat(v.price), currency)}
                               </td>
-                              <td className="px-3 py-2 text-slate-600">
-                                {v.inventoryQuantity}
-                                {!v.inStock && (
-                                  <span className="ml-1 text-xs text-amber-700">
-                                    (out)
-                                  </span>
-                                )}
-                              </td>
                             </tr>
                           ))}
                         </tbody>
@@ -532,16 +486,16 @@ export function ShopifyProductsPanel() {
 
                   <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                     <p className="text-sm font-bold text-slate-900">
-                      WhatsApp ad link
+                      Portal product SKU
                     </p>
                     <p className="mt-1 text-xs text-slate-600">
-                      Generate a tracking link for Meta ads. WhatsApp must be
-                      connected.
+                      Generate a globally unique SKU for this Shopify product
+                      (used across the portal catalog).
                     </p>
 
                     {detail.variants.length > 1 && (
                       <label className="mt-3 block text-xs font-medium text-slate-600">
-                        Variant for ad
+                        Variant reference
                         <select
                           value={selectedVariantId ?? ""}
                           onChange={(e) =>
@@ -562,59 +516,29 @@ export function ShopifyProductsPanel() {
                     <div className="mt-3 flex flex-wrap gap-2">
                       <button
                         type="button"
-                        onClick={generateLink}
-                        disabled={generating || !whatsappConnected}
+                        onClick={getProductSku}
+                        disabled={fetchingSku}
                         className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
                       >
-                        {generating
-                          ? "Generating..."
-                          : activeLink
-                            ? "Generate new link"
-                            : "Generate link"}
+                        {fetchingSku
+                          ? "Getting SKU..."
+                          : portalSku
+                            ? "Refresh SKU"
+                            : "Get product SKU"}
                       </button>
-                      {!whatsappConnected && (
-                        <Link
-                          href="/dashboard/integrations/whatsapp"
-                          className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900"
-                        >
-                          Connect WhatsApp
-                        </Link>
-                      )}
                     </div>
 
-                    {activeLink?.whatsapp_url && (
-                      <div className="mt-4 space-y-3">
-                        <div>
-                          <p className="mb-1 text-xs font-semibold uppercase text-slate-500">
-                            WhatsApp URL
-                          </p>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <code className="block max-w-full flex-1 overflow-x-auto rounded-lg bg-white px-3 py-2 text-xs text-slate-800">
-                              {activeLink.whatsapp_url}
-                            </code>
-                            <CopyButton
-                              text={activeLink.whatsapp_url}
-                              label="Copy link"
-                            />
-                          </div>
-                        </div>
-                        <div>
-                          <p className="mb-1 text-xs font-semibold uppercase text-slate-500">
-                            Pre-filled message
-                          </p>
-                          <div className="flex flex-wrap items-start gap-2">
-                            <p className="flex-1 rounded-lg bg-white px-3 py-2 text-sm text-slate-800">
-                              {activeLink.prefill_message}
-                            </p>
-                            <CopyButton
-                              text={activeLink.prefill_message}
-                              label="Copy message"
-                            />
-                          </div>
-                        </div>
-                        <p className="text-xs text-slate-500">
-                          Clicks tracked: {activeLink.click_count}
+                    {portalSku && (
+                      <div className="mt-4">
+                        <p className="mb-1 text-xs font-semibold uppercase text-slate-500">
+                          Unique SKU
                         </p>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <code className="block max-w-full flex-1 overflow-x-auto rounded-lg bg-white px-3 py-2 text-sm font-semibold tracking-wide text-slate-900">
+                            {portalSku}
+                          </code>
+                          <CopyButton text={portalSku} label="Copy SKU" />
+                        </div>
                       </div>
                     )}
                   </div>

@@ -7,6 +7,7 @@ import {
   buildAdPrefillMessage,
   buildWhatsAppAdUrl,
 } from "@/lib/ads/whatsapp-ad-links";
+import { allocateUniqueProductSku } from "./global-sku";
 import type {
   ProductInput,
   StoreProduct,
@@ -18,8 +19,8 @@ import type {
 function normalizeSku(sku: string): string {
   return sku
     .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9-_]+/g, "-")
+    .toUpperCase()
+    .replace(/[^A-Z0-9-_]+/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "")
     .slice(0, 48);
@@ -341,8 +342,7 @@ export async function createStoreProduct(
   storeId: string,
   input: ProductInput
 ): Promise<{ product: StoreProduct; whatsapp_url?: string } | { error: string }> {
-  const sku = normalizeSku(input.sku);
-  if (!sku) return { error: "SKU is required (letters, numbers, - or _)." };
+  const sku = await allocateUniqueProductSku(input.sku || input.name);
   if (!input.name.trim()) return { error: "Product name is required." };
   if (input.price < 0) return { error: "Price must be 0 or greater." };
 
@@ -372,7 +372,7 @@ export async function createStoreProduct(
 
   if (error || !row) {
     if (error?.code === "23505") {
-      return { error: "A product with this SKU already exists." };
+      return { error: "A product with this SKU already exists globally. Try again." };
     }
     const hint = error?.message.includes("store_products")
       ? " — Run migration 011_store_products.sql in Supabase"
@@ -382,15 +382,10 @@ export async function createStoreProduct(
 
   await replaceChildren(storeId, row.id, input);
 
-  const linkResult = await ensureProductAdLink(storeId, row.id);
   const product = await getStoreProduct(storeId, row.id);
   if (!product) return { error: "Product created but could not reload." };
 
-  return {
-    product,
-    whatsapp_url:
-      "whatsapp_url" in linkResult ? linkResult.whatsapp_url : undefined,
-  };
+  return { product };
 }
 
 export async function updateStoreProduct(
@@ -398,8 +393,11 @@ export async function updateStoreProduct(
   productId: string,
   input: ProductInput
 ): Promise<{ product: StoreProduct; whatsapp_url?: string } | { error: string }> {
-  const sku = normalizeSku(input.sku);
-  if (!sku) return { error: "SKU is required (letters, numbers, - or _)." };
+  const existing = await getStoreProduct(storeId, productId);
+  if (!existing) return { error: "Product not found" };
+  const sku =
+    existing.sku ||
+    (await allocateUniqueProductSku(input.sku || input.name));
   if (!input.name.trim()) return { error: "Product name is required." };
 
   const images = normalizeImages(input);
@@ -413,8 +411,8 @@ export async function updateStoreProduct(
       image_url: images.image_url,
       image_urls: images.image_urls,
       price: input.price,
-      currency: input.currency || "AED",
-      target_country: input.target_country || "UAE",
+      currency: input.currency || existing.currency || "AED",
+      target_country: input.target_country || existing.target_country || "UAE",
       sku,
       discount_enabled: Boolean(input.discount_enabled),
       discount_type: input.discount_enabled ? input.discount_type ?? null : null,
@@ -428,21 +426,16 @@ export async function updateStoreProduct(
 
   if (error || !row) {
     if (error?.code === "23505") {
-      return { error: "A product with this SKU already exists." };
+      return { error: "SKU conflict with another product." };
     }
     return { error: error?.message ?? "Failed to update product" };
   }
 
   await replaceChildren(storeId, productId, input);
-  const linkResult = await ensureProductAdLink(storeId, productId);
   const product = await getStoreProduct(storeId, productId);
   if (!product) return { error: "Product updated but could not reload." };
 
-  return {
-    product,
-    whatsapp_url:
-      "whatsapp_url" in linkResult ? linkResult.whatsapp_url : undefined,
-  };
+  return { product };
 }
 
 export async function deleteStoreProduct(

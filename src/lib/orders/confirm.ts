@@ -4,8 +4,13 @@ import {
   fetchShopifyOrderContact,
 } from "@/lib/shopify";
 import { notifyCustomerOrderConfirmed } from "@/lib/orders/notify";
+import { sendOrderFollowUp } from "@/lib/orders/follow-up";
 import type { AuthUser } from "@/lib/auth";
 import type { Store } from "@/lib/types";
+
+export type ConfirmActor =
+  | AuthUser
+  | { email: string; role: "system"; storeId: string; id?: string };
 
 export interface ConfirmOrderResult {
   ok: true;
@@ -15,11 +20,14 @@ export interface ConfirmOrderResult {
   whatsapp_sent: boolean;
   whatsapp_method?: "template" | "text";
   whatsapp_error?: string;
+  follow_up_sent?: boolean;
+  follow_up_error?: string;
 }
 
 export async function confirmPortalOrder(
   orderId: string,
-  user: AuthUser
+  user: ConfirmActor,
+  options?: { followUpTemplateId?: string | null }
 ): Promise<ConfirmOrderResult | { error: string; status: number }> {
   const supabase = createAdminClient();
 
@@ -32,6 +40,8 @@ export async function confirmPortalOrder(
     if (!user.storeId) {
       return { error: "No store linked", status: 403 };
     }
+    orderQuery = orderQuery.eq("store_id", user.storeId);
+  } else if (user.role === "system") {
     orderQuery = orderQuery.eq("store_id", user.storeId);
   }
 
@@ -104,7 +114,7 @@ export async function confirmPortalOrder(
     return { error: updateError.message, status: 500 };
   }
 
-  let customer = order.customers as {
+  const customer = order.customers as {
     phone: string;
     name: string | null;
   } | null;
@@ -159,6 +169,32 @@ export async function confirmPortalOrder(
     currency: order.currency as string | null,
   });
 
+  let followUpSent = false;
+  let followUpError: string | undefined;
+  const followUpTemplateId =
+    options?.followUpTemplateId ??
+    (store.auto_follow_up_template_id as string | null) ??
+    null;
+
+  if (followUpTemplateId && user.role !== "admin") {
+    const actor: AuthUser =
+      user.role === "system"
+        ? {
+            id: user.id ?? "system",
+            email: user.email,
+            role: "reseller",
+            fullName: null,
+            storeId,
+          }
+        : user;
+    const follow = await sendOrderFollowUp(orderId, actor, followUpTemplateId);
+    if ("error" in follow) {
+      followUpError = follow.error;
+    } else {
+      followUpSent = true;
+    }
+  }
+
   return {
     ok: true,
     confirmed_at: now,
@@ -167,5 +203,41 @@ export async function confirmPortalOrder(
     whatsapp_sent: whatsappResult.sent,
     whatsapp_method: whatsappResult.sent ? whatsappResult.method : undefined,
     whatsapp_error: whatsappResult.sent ? undefined : whatsappResult.reason,
+    follow_up_sent: followUpSent,
+    follow_up_error: followUpError,
   };
+}
+
+/** Auto-confirm a newly imported Shopify order when store setting is on. */
+export async function maybeAutoConfirmShopifyOrder(
+  storeId: string,
+  orderId: string
+): Promise<void> {
+  const supabase = createAdminClient();
+  const { data: store } = await supabase
+    .from("stores")
+    .select("auto_confirm_orders, auto_follow_up_template_id")
+    .eq("id", storeId)
+    .maybeSingle();
+
+  if (!store?.auto_confirm_orders) return;
+
+  const result = await confirmPortalOrder(
+    orderId,
+    {
+      email: "auto-confirm@system",
+      role: "system",
+      storeId,
+    },
+    {
+      followUpTemplateId:
+        (store.auto_follow_up_template_id as string | null) ?? null,
+    }
+  );
+
+  if ("error" in result) {
+    console.error(
+      `[auto-confirm] order=${orderId} failed: ${result.error}`
+    );
+  }
 }
