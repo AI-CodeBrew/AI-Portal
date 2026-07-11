@@ -70,44 +70,42 @@ export function ShopifyConnectionSteps({
 }
 
 export function WhatsAppConnectionSteps({
-  hasCredentials,
-  webhookConfigured,
+  platformReady,
   isConnected,
-  phoneNumberId,
+  phoneLabel,
 }: {
-  hasCredentials: boolean;
-  webhookConfigured?: boolean;
+  platformReady: boolean;
   isConnected: boolean;
-  phoneNumberId?: string | null;
+  phoneLabel?: string | null;
 }) {
   return (
     <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-3">
       <Step
-        done={hasCredentials}
-        active={!hasCredentials}
-        label="Save Meta app credentials"
-        detail="App ID, App Secret, and Embedded Signup Config ID"
-      />
-      <Step
-        done={Boolean(webhookConfigured || isConnected)}
-        active={hasCredentials && !webhookConfigured && !isConnected}
-        label="Configure webhook in Meta"
-        detail="Copy webhook URL and verify token into Meta Developer Console"
-      />
-      <Step
-        done={isConnected}
-        active={hasCredentials && !isConnected}
-        label="Connect WhatsApp number"
+        done={platformReady}
+        active={!platformReady}
+        label="Platform WhatsApp ready"
         detail={
-          isConnected
-            ? `Connected — Phone ID ${phoneNumberId}`
-            : "Click Connect with Meta after pasting webhook in step 2"
+          platformReady
+            ? "Arabia AI Meta app is configured"
+            : "Waiting for admin to finish WhatsApp Platform Setup"
         }
       />
       <Step
         done={isConnected}
-        label="Approve message template"
-        detail="Create and approve order_confirmed in Meta Business Manager"
+        active={platformReady && !isConnected}
+        label="Connect your WhatsApp number"
+        detail={
+          isConnected
+            ? phoneLabel
+              ? `Connected · ${phoneLabel}`
+              : "Connected"
+            : "Takes about 2 minutes with Meta Embedded Signup"
+        }
+      />
+      <Step
+        done={isConnected}
+        label="Receive messages & order updates"
+        detail="Customers can chat and get confirmation messages"
       />
     </div>
   );

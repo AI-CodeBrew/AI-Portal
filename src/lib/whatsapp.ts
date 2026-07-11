@@ -160,7 +160,8 @@ export async function exchangeEmbeddedSignupToken(
   );
 
   if (!tokenRes.ok) {
-    throw new Error(`Meta token exchange failed: ${await tokenRes.text()}`);
+    const raw = await tokenRes.text();
+    throw new Error(friendlyMetaError(raw, "Could not finish WhatsApp signup"));
   }
 
   return tokenRes.json() as Promise<{ access_token: string }>;
@@ -182,8 +183,89 @@ export async function subscribeWabaWebhooks(
   });
 
   if (!res.ok) {
-    throw new Error(`WABA subscription failed: ${await res.text()}`);
+    const raw = await res.text();
+    throw new Error(
+      friendlyMetaError(raw, "Could not subscribe WhatsApp webhooks")
+    );
   }
+}
+
+/** Best-effort Cloud API phone registration after Embedded Signup. */
+export async function registerWhatsAppPhoneNumber(
+  phoneNumberId: string,
+  accessToken: string,
+  pin = "000000"
+): Promise<void> {
+  const res = await fetch(`${GRAPH_API}/${phoneNumberId}/register`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      messaging_product: "whatsapp",
+      pin,
+    }),
+  });
+
+  if (!res.ok) {
+    const raw = await res.text();
+    // Already registered is fine
+    if (/already registered|already been registered/i.test(raw)) return;
+    console.warn("[whatsapp] phone register:", raw);
+  }
+}
+
+export function friendlyMetaError(
+  raw: string,
+  fallback: string
+): string {
+  const lower = raw.toLowerCase();
+  if (
+    lower.includes("user cancelled") ||
+    lower.includes("user canceled") ||
+    lower.includes("access_denied")
+  ) {
+    return "Signup was cancelled. You can try Connect WhatsApp again anytime.";
+  }
+  if (
+    lower.includes("already been added") ||
+    lower.includes("phone number is already") ||
+    lower.includes("already registered") ||
+    lower.includes("(#100)")
+  ) {
+    return "This WhatsApp number is already connected to another app or business. Disconnect it there first, then try again.";
+  }
+  if (
+    lower.includes("verification") ||
+    lower.includes("not verified") ||
+    lower.includes("otp")
+  ) {
+    return "Phone verification did not complete. Restart Connect WhatsApp and finish the SMS/code step.";
+  }
+  if (lower.includes("invalid oauth") || lower.includes("code has expired")) {
+    return "The signup session expired. Please click Connect WhatsApp again.";
+  }
+  if (lower.includes("permissions") || lower.includes("insufficient")) {
+    return "Meta did not grant the required WhatsApp permissions. Try again and approve all requested permissions.";
+  }
+  try {
+    const parsed = JSON.parse(raw) as {
+      error?: { message?: string; error_user_msg?: string };
+    };
+    const msg =
+      parsed.error?.error_user_msg || parsed.error?.message || "";
+    if (msg && msg.length < 180 && !msg.includes("{")) {
+      // Still sanitize raw Graph codes when possible
+      if (/^\(#\d+\)/.test(msg) || msg.includes("OAuthException")) {
+        return fallback;
+      }
+      return msg;
+    }
+  } catch {
+    // ignore
+  }
+  return fallback;
 }
 
 export function getStoreMetaCredentials(store: {

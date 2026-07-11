@@ -13,9 +13,11 @@ export interface StoreStatus {
   meta_app_id: string | null;
   meta_config_id: string | null;
   has_whatsapp_credentials: boolean;
+  platform_whatsapp_ready?: boolean;
   whatsapp_verify_token: string | null;
   whatsapp_phone_number_id: string | null;
   whatsapp_waba_id: string | null;
+  whatsapp_display_phone?: string | null;
   whatsapp_connected: boolean;
 }
 

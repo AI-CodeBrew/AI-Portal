@@ -20,6 +20,7 @@ import {
   sendWhatsAppText,
   normalizePhone,
 } from "@/lib/whatsapp";
+import { getPlatformMetaCredentials } from "@/lib/platform/meta-settings";
 import type { Store } from "@/lib/types";
 
 function verifyWebhookSignature(
@@ -83,6 +84,11 @@ export async function handleWhatsAppWebhookVerify(
     if (store?.whatsapp_verify_token === token) {
       return new NextResponse(challenge, { status: 200 });
     }
+  }
+
+  const platform = await getPlatformMetaCredentials();
+  if (platform?.verifyToken && token === platform.verifyToken) {
+    return new NextResponse(challenge, { status: 200 });
   }
 
   if (token === process.env.WHATSAPP_VERIFY_TOKEN) {
@@ -164,14 +170,19 @@ export async function handleWhatsAppWebhookMessage(
       }
 
       const storeSecret = resolveMetaSecret(activeStore.meta_app_secret ?? null);
+      const platform = await getPlatformMetaCredentials();
+      const platformSecret = platform?.appSecret ?? null;
       const envSecret = process.env.META_APP_SECRET ?? null;
       const verified =
-        (storeSecret && verifyWebhookSignature(rawBody, signature, storeSecret)) ||
+        (platformSecret &&
+          verifyWebhookSignature(rawBody, signature, platformSecret)) ||
+        (storeSecret &&
+          verifyWebhookSignature(rawBody, signature, storeSecret)) ||
         (envSecret && verifyWebhookSignature(rawBody, signature, envSecret));
 
-      if ((storeSecret || envSecret) && !verified) {
+      if ((platformSecret || storeSecret || envSecret) && !verified) {
         console.error(
-          "[whatsapp-webhook] Invalid signature — check Meta App Secret in Integrations → WhatsApp matches your Meta app."
+          "[whatsapp-webhook] Invalid signature — check Meta App Secret in Admin → WhatsApp Platform Setup."
         );
         return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
       }

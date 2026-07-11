@@ -1,21 +1,25 @@
 import { NextResponse } from "next/server";
 import { requireResellerStore } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getPlatformMetaPublic } from "@/lib/platform/meta-settings";
 
 export async function GET() {
   try {
     const { storeId } = await requireResellerStore();
     const supabase = createAdminClient();
 
-    const { data: store } = await supabase
-      .from("stores")
-      .select(
-        `id, store_name, shop_domain, shopify_api_key, shopify_api_secret, shopify_scopes,
-         shopify_access_token, meta_app_id, meta_app_secret, meta_config_id, whatsapp_verify_token,
-         whatsapp_phone_number_id, whatsapp_waba_id, whatsapp_access_token, created_at`
-      )
-      .eq("id", storeId)
-      .single();
+    const [{ data: store }, platform] = await Promise.all([
+      supabase
+        .from("stores")
+        .select(
+          `id, store_name, shop_domain, shopify_api_key, shopify_api_secret, shopify_scopes,
+           shopify_access_token, meta_app_id, meta_app_secret, meta_config_id, whatsapp_verify_token,
+           whatsapp_phone_number_id, whatsapp_waba_id, whatsapp_access_token, whatsapp_display_phone, created_at`
+        )
+        .eq("id", storeId)
+        .single(),
+      getPlatformMetaPublic(),
+    ]);
 
     if (!store) {
       return NextResponse.json({ store: null });
@@ -34,12 +38,15 @@ export async function GET() {
         shopify_connected: Boolean(store.shopify_access_token),
         meta_app_id: store.meta_app_id,
         meta_config_id: store.meta_config_id,
-        has_whatsapp_credentials: Boolean(
-          store.meta_app_id && store.meta_app_secret
-        ),
+        // Platform Meta app is configured by admin — reseller no longer BYO Meta app
+        has_whatsapp_credentials: platform.configured,
+        platform_whatsapp_ready: platform.configured,
         whatsapp_verify_token: store.whatsapp_verify_token,
         whatsapp_phone_number_id: store.whatsapp_phone_number_id,
         whatsapp_waba_id: store.whatsapp_waba_id,
+        whatsapp_display_phone:
+          (store as { whatsapp_display_phone?: string | null })
+            .whatsapp_display_phone ?? null,
         whatsapp_connected: Boolean(
           store.whatsapp_phone_number_id && store.whatsapp_access_token
         ),

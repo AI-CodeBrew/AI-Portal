@@ -10,6 +10,7 @@ const PUBLIC_PATHS = [
   "/api/billing/paytabs/callback",
   "/api/auth/setup-admin",
   "/api/auth/signup",
+  "/api/platform/meta-public",
 ];
 const RESELLER_PATHS = ["/dashboard"];
 const ADMIN_PATHS = ["/admin"];

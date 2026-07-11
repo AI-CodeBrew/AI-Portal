@@ -19,6 +19,7 @@ export interface Store {
   whatsapp_phone_number_id: string | null;
   whatsapp_access_token: string | null;
   whatsapp_waba_id: string | null;
+  whatsapp_display_phone?: string | null;
   owner_email: string | null;
   owner_id: string | null;
   plan_id?: string | null;

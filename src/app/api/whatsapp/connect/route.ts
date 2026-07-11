@@ -2,9 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { encrypt } from "@/lib/crypto";
 import { requireResellerStore } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getPlatformMetaCredentials } from "@/lib/platform/meta-settings";
 import {
   exchangeEmbeddedSignupToken,
-  getStoreMetaCredentials,
+  friendlyMetaError,
+  getWhatsAppDisplayPhone,
+  registerWhatsAppPhoneNumber,
   subscribeWabaWebhooks,
 } from "@/lib/whatsapp";
 
@@ -19,61 +22,133 @@ export async function POST(request: NextRequest) {
     };
 
     const { code, phone_number_id, waba_id, access_token } = body;
+    const platformMeta = await getPlatformMetaCredentials();
 
-    const supabase = createAdminClient();
-    const { data: store } = await supabase
-      .from("stores")
-      .select("meta_app_id, meta_app_secret")
-      .eq("id", storeId)
-      .single();
-
-    const metaCreds = store ? getStoreMetaCredentials(store) : null;
+    if (!platformMeta) {
+      return NextResponse.json(
+        {
+          error:
+            "WhatsApp is not ready yet. Please contact support — the platform Meta app is not configured.",
+        },
+        { status: 503 }
+      );
+    }
 
     let token = access_token;
 
     if (code && !token) {
-      if (!metaCreds) {
-        return NextResponse.json(
-          {
-            error:
-              "Save your Meta App ID and secret first, then try connecting again.",
-          },
-          { status: 400 }
-        );
+      try {
+        const tokenData = await exchangeEmbeddedSignupToken(code, {
+          appId: platformMeta.appId,
+          appSecret: platformMeta.appSecret,
+        });
+        token = tokenData.access_token;
+      } catch (err) {
+        const message =
+          err instanceof Error
+            ? err.message
+            : "Could not finish WhatsApp signup";
+        return NextResponse.json({ error: message }, { status: 400 });
       }
-      const tokenData = await exchangeEmbeddedSignupToken(code, metaCreds);
-      token = tokenData.access_token;
     }
 
     if (!token || !phone_number_id || !waba_id) {
       return NextResponse.json(
         {
           error:
-            "Phone Number ID, WABA ID, and Access Token are required. Use embedded signup or enter them manually.",
+            "We could not finish connecting. Please try Connect WhatsApp again and complete every step.",
         },
         { status: 400 }
       );
     }
 
-    await supabase
+    try {
+      await registerWhatsAppPhoneNumber(phone_number_id, token);
+    } catch (err) {
+      console.warn("[whatsapp/connect] register phone:", err);
+    }
+
+    try {
+      await subscribeWabaWebhooks(waba_id, token);
+    } catch (err) {
+      const message =
+        err instanceof Error
+          ? err.message
+          : "Could not enable message delivery for this number";
+      return NextResponse.json({ error: message }, { status: 400 });
+    }
+
+    let displayPhone: string | null = null;
+    try {
+      displayPhone = await getWhatsAppDisplayPhone(phone_number_id, token);
+    } catch {
+      // optional
+    }
+
+    const supabase = createAdminClient();
+    const { error: updateError } = await supabase
       .from("stores")
       .update({
         whatsapp_phone_number_id: phone_number_id,
         whatsapp_waba_id: waba_id,
         whatsapp_access_token: encrypt(token),
+        whatsapp_display_phone: displayPhone,
       })
       .eq("id", storeId);
 
-    try {
-      await subscribeWabaWebhooks(waba_id, token);
-    } catch (err) {
-      console.error("WABA subscription error:", err);
+    if (updateError) {
+      const hint = updateError.message.includes("whatsapp_display_phone")
+        ? " — Run migration 023_platform_settings.sql in Supabase"
+        : "";
+      return NextResponse.json(
+        { error: updateError.message + hint },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json({
+      ok: true,
+      phone_number_id,
+      waba_id,
+      display_phone: displayPhone,
+    });
+  } catch (err) {
+    const raw =
+      err instanceof Error ? err.message : "WhatsApp connection failed";
+    return NextResponse.json(
+      {
+        error: friendlyMetaError(
+          raw,
+          "WhatsApp connection failed. Please try again."
+        ),
+      },
+      { status: 500 }
+    );
+  }
+}
+
+/** Clear WhatsApp credentials from this store (portal disconnect). */
+export async function DELETE() {
+  try {
+    const { storeId } = await requireResellerStore();
+    const supabase = createAdminClient();
+
+    const { error } = await supabase
+      .from("stores")
+      .update({
+        whatsapp_phone_number_id: null,
+        whatsapp_waba_id: null,
+        whatsapp_access_token: null,
+        whatsapp_display_phone: null,
+      })
+      .eq("id", storeId);
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
     return NextResponse.json({ ok: true });
-  } catch (err) {
-    const message =
-      err instanceof Error ? err.message : "WhatsApp connection failed";
-    return NextResponse.json({ error: message }, { status: 500 });
+  } catch {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 }
