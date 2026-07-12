@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { ChatMessageBody } from "@/components/ChatMessageBody";
 import type { WhatsappConversation, WhatsappMessage } from "@/lib/types";
 
 type InboxFilter = "all" | "ai" | "handoff" | "exhausted";
@@ -328,7 +329,7 @@ export function InboxPanel() {
                         : "border border-slate-200 bg-white text-slate-900 shadow-sm"
                     }`}
                   >
-                    {msg.content}
+                    <ChatMessageBody content={msg.content} />
                   </div>
                 </div>
               ))}

@@ -8,6 +8,7 @@ import type {
   AdminConversation,
 } from "@/lib/admin/chats";
 import type { WhatsappMessage } from "@/lib/types";
+import { ChatMessageBody } from "@/components/ChatMessageBody";
 
 const FILTERS: {
   value: AdminChatFilter;
@@ -324,7 +325,7 @@ export function AdminChatsPanel({
                     <p className="mb-1 text-[10px] font-semibold uppercase opacity-70">
                       {msg.direction === "out" ? "Store / AI" : "Customer"}
                     </p>
-                    {msg.content}
+                    <ChatMessageBody content={msg.content} />
                   </div>
                 </div>
               ))
