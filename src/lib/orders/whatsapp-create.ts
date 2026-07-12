@@ -73,6 +73,41 @@ async function findPortalVariantRow(
   return { product, variant };
 }
 
+async function resolveShopifySkuRegistry(
+  storeId: string,
+  sku: string
+): Promise<{ variant_id: string; product_id: string; title: string } | null> {
+  const supabase = createAdminClient();
+  const candidates = Array.from(
+    new Set(
+      [
+        extractSkuFromText(sku),
+        sku.trim().toUpperCase(),
+        sku.trim(),
+      ].filter((s): s is string => Boolean(s && s.length >= 4))
+    )
+  );
+
+  for (const candidate of candidates) {
+    const { data } = await supabase
+      .from("shopify_product_skus")
+      .select("sku, product_title, shopify_product_id, shopify_variant_id")
+      .eq("store_id", storeId)
+      .ilike("sku", candidate)
+      .maybeSingle();
+
+    const variantId = String(data?.shopify_variant_id ?? "").trim();
+    if (variantId && isShopifyVariantId(variantId)) {
+      return {
+        variant_id: variantId,
+        product_id: String(data?.shopify_product_id ?? ""),
+        title: String(data?.product_title || data?.sku || candidate),
+      };
+    }
+  }
+  return null;
+}
+
 async function resolvePortalLine(
   storeId: string,
   line: WhatsAppOrderLineInput
@@ -224,20 +259,29 @@ export async function createWhatsAppAiOrder(params: {
 
   for (const line of params.lineItems) {
     const sourceHint = String(line.source ?? "").toLowerCase();
-    const variantId = String(line.variant_id ?? "").trim();
+    let variantId = String(line.variant_id ?? "").trim();
+    const skuHint = String(line.sku ?? "").trim();
 
     // Prefer portal when UUID / SKU / explicit portal source
     if (
       sourceHint === "portal" ||
       isUuid(variantId) ||
       isUuid(String(line.product_id ?? "")) ||
-      line.sku ||
+      skuHint ||
       !isShopifyVariantId(variantId)
     ) {
       const resolved = await resolvePortalLine(store.id, line);
       if (resolved) {
         portalLines.push(resolved);
         continue;
+      }
+    }
+
+    // Shopify SKU registry (portal catalog miss, e.g. AA-… mapped to Shopify)
+    if (skuHint && shopifyConnected && !isShopifyVariantId(variantId)) {
+      const registry = await resolveShopifySkuRegistry(store.id, skuHint);
+      if (registry) {
+        variantId = registry.variant_id;
       }
     }
 
@@ -273,7 +317,7 @@ export async function createWhatsAppAiOrder(params: {
 
     return {
       ok: false,
-      error: `Could not resolve product/variant for line item (${variantId || line.sku || "unknown"}). Search the product again and use the returned variant id or SKU.`,
+      error: `Could not resolve product/variant for line item (${variantId || skuHint || "unknown"}). Search the product again and use the returned variant id or SKU.`,
     };
   }
 

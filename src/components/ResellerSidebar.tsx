@@ -231,7 +231,7 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
       </nav>
 
       <div className="border-t border-slate-800 px-4 py-3">
-        <p className="text-xs text-slate-500">Arabia AI</p>
+        <p className="text-xs text-slate-500">Powered by FynkTech</p>
       </div>
     </>
   );

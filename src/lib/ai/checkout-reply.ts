@@ -50,7 +50,18 @@ export async function tryDirectCheckoutReply(
   latestUserMessage: string,
   history: Array<{ role: "user" | "assistant"; content: string }>
 ): Promise<string | null> {
-  const pendingOffer = getPendingRecoveryOffer(history);
+  const { discount, bundle } = {
+    discount:
+      ctx.aiConfig?.effectiveRecoveryDiscountPercent ??
+      undefined,
+    bundle:
+      ctx.aiConfig?.effectiveRecoveryBundleDiscountPercent ??
+      undefined,
+  };
+  const pendingOffer = getPendingRecoveryOffer(history, {
+    discount,
+    bundle,
+  });
   const shouldTry =
     looksLikeCheckoutMessage(latestUserMessage, history) ||
     (pendingOffer != null &&
@@ -86,10 +97,13 @@ export async function tryDirectCheckoutReply(
     latestUserMessage,
     pendingOffer?.defaultQty ?? 1
   );
-  const discountPercent = pendingOffer?.percent;
+  const discountPercent =
+    pendingOffer?.percent && pendingOffer.percent > 0
+      ? pendingOffer.percent
+      : undefined;
 
   console.log(
-    `[checkout] placing order store=${ctx.store.id} sku=${productRef.sku ?? ""} variant=${productRef.variant_id ?? ""} qty=${quantity} discount=${discountPercent ?? 0} phone=${details.phone}`
+    `[checkout] placing order store=${ctx.store.id} sku=${productRef.sku ?? ""} variant=${productRef.variant_id ?? ""} source=${productRef.source ?? ""} qty=${quantity} discount=${discountPercent ?? 0} phone=${details.phone}`
   );
 
   const { result } = await executeSalesTool(
@@ -98,13 +112,14 @@ export async function tryDirectCheckoutReply(
       line_items: [
         {
           quantity,
-          ...(productRef.sku ? { sku: productRef.sku, source: "portal" } : {}),
+          ...(productRef.sku ? { sku: productRef.sku } : {}),
           ...(productRef.variant_id
-            ? { variant_id: productRef.variant_id, source: productRef.source }
+            ? { variant_id: productRef.variant_id }
             : {}),
           ...(productRef.product_id
-            ? { product_id: productRef.product_id, source: "portal" }
+            ? { product_id: productRef.product_id }
             : {}),
+          ...(productRef.source ? { source: productRef.source } : {}),
         },
       ],
       customer_name: details.customer_name,

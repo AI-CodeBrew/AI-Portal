@@ -168,31 +168,51 @@ export function parseCheckoutDetails(text: string): CheckoutDetails | null {
   return { customer_name, phone, address1, city };
 }
 
+function extractRefFromContent(content: string): string | null {
+  return (
+    content.match(/\bRef:\s*([0-9a-f-]{36}|\d{5,})\b/i)?.[1] ||
+    content.match(
+      /\b([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/i
+    )?.[1] ||
+    content.match(/\bvariant[_ ]?id[:\s]*([0-9a-f-]{36}|\d{5,})\b/i)?.[1] ||
+    null
+  );
+}
+
+/**
+ * Prefer the assistant product card that has both SKU and Ref so Shopify-registry
+ * products (SKU mapped, numeric variant Ref) can still be ordered.
+ */
 export function findProductRefFromHistory(
   history: Array<{ role: "user" | "assistant"; content: string }>
 ): { sku?: string; variant_id?: string; product_id?: string; source?: string } | null {
   const combined = [...history].reverse();
 
   for (const msg of combined) {
+    if (msg.role !== "assistant") continue;
     const sku = extractSkuFromText(msg.content);
-    if (sku) {
-      return { sku, source: "portal" };
-    }
+    const ref = extractRefFromContent(msg.content);
+    if (!sku && !ref) continue;
+
+    const isShopifyRef = Boolean(ref && /^\d{5,}$/.test(ref));
+    const isPortalRef = Boolean(
+      ref &&
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+          ref
+        )
+    );
+
+    return {
+      ...(sku ? { sku } : {}),
+      ...(ref ? { variant_id: ref } : {}),
+      source: isShopifyRef ? "shopify" : isPortalRef || sku ? "portal" : "shopify",
+    };
   }
 
   for (const msg of combined) {
-    if (msg.role !== "assistant") continue;
-    const ref =
-      msg.content.match(/\bRef:\s*([0-9a-f-]{36}|\d{5,})\b/i)?.[1] ||
-      msg.content.match(
-        /\b([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/i
-      )?.[1] ||
-      msg.content.match(/\bvariant[_ ]?id[:\s]*([0-9a-f-]{36}|\d{5,})\b/i)?.[1];
-    if (ref) {
-      return {
-        variant_id: ref,
-        source: /^\d+$/.test(ref) ? "shopify" : "portal",
-      };
+    const sku = extractSkuFromText(msg.content);
+    if (sku) {
+      return { sku, source: "portal" };
     }
   }
 

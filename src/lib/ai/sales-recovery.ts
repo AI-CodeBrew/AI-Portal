@@ -135,40 +135,59 @@ function nextRecoveryAction(
   return "discount";
 }
 
+/** Last regex match in text (prefer newest offer when several appear). */
+function lastPercentMatch(
+  text: string,
+  re: RegExp
+): RegExpMatchArray | null {
+  const flags = re.flags.includes("g") ? re.flags : `${re.flags}g`;
+  const matches = [...text.matchAll(new RegExp(re.source, flags))];
+  return matches.length ? matches[matches.length - 1] : null;
+}
+
 /** Detect an open recovery offer in chat (for checkout discount + qty). */
 export function getPendingRecoveryOffer(
-  history: Array<{ role: "user" | "assistant"; content: string }>
+  history: Array<{ role: "user" | "assistant"; content: string }>,
+  defaults?: { discount?: number; bundle?: number }
 ): { type: "discount" | "bundle"; percent: number; defaultQty: number } | null {
   const recent = lastAssistantMessages(history, 8).join("\n");
   if (recent.includes(MARKER_CLOSED)) return null;
 
-  const bundleMatch = recent.match(
-    /\[Deal 2\/2[^\]]*(\d+)\s*%\s*off\]/i
-  ) || recent.match(/2-pack bundle[^\d]*(\d+)\s*%/i);
-  if (bundleMatch || /\[Deal 2\/2/i.test(recent) || /\b2-pack bundle\b/i.test(recent)) {
-    const percent = bundleMatch
-      ? Number(bundleMatch[1])
+  const defaultDiscount =
+    defaults?.discount && defaults.discount > 0
+      ? defaults.discount
+      : AI_SETTING_DEFAULTS.recoveryDiscountPercent;
+  const defaultBundle =
+    defaults?.bundle && defaults.bundle > 0
+      ? defaults.bundle
       : AI_SETTING_DEFAULTS.recoveryBundleDiscountPercent;
+
+  // Use \b before digits so "20% off" is not captured as "0" (greedy [^\]]* bug).
+  const bundleMatch =
+    lastPercentMatch(
+      recent,
+      /\[Deal\s+2\/2[^\]]*?\b(\d{1,2})\s*%\s*off\]/gi
+    ) || lastPercentMatch(recent, /2-pack bundle[^\d]*(\d{1,2})\s*%/gi);
+  if (bundleMatch || /\[Deal\s+2\/2/i.test(recent) || /\b2-pack bundle\b/i.test(recent)) {
+    const percent = bundleMatch ? Number(bundleMatch[1]) : defaultBundle;
     return {
       type: "bundle",
-      percent: Number.isFinite(percent)
-        ? percent
-        : AI_SETTING_DEFAULTS.recoveryBundleDiscountPercent,
+      percent: Number.isFinite(percent) && percent > 0 ? percent : defaultBundle,
       defaultQty: 2,
     };
   }
 
-  const discMatch = recent.match(/\[Deal 1\/2[^\]]*(\d+)\s*%\s*off\]/i) ||
-    recent.match(/(\d+)\s*%\s*off/i);
-  if (discMatch || /\[Deal 1\/2/i.test(recent)) {
-    const percent = discMatch
-      ? Number(discMatch[1])
-      : AI_SETTING_DEFAULTS.recoveryDiscountPercent;
+  const discMatch =
+    lastPercentMatch(
+      recent,
+      /\[Deal\s+1\/2[^\]]*?\b(\d{1,2})\s*%\s*off\]/gi
+    ) || lastPercentMatch(recent, /\b(\d{1,2})\s*%\s*off\b/gi);
+  if (discMatch || /\[Deal\s+1\/2/i.test(recent)) {
+    const percent = discMatch ? Number(discMatch[1]) : defaultDiscount;
     return {
       type: "discount",
-      percent: Number.isFinite(percent)
-        ? percent
-        : AI_SETTING_DEFAULTS.recoveryDiscountPercent,
+      percent:
+        Number.isFinite(percent) && percent > 0 ? percent : defaultDiscount,
       defaultQty: 1,
     };
   }
@@ -226,7 +245,7 @@ export async function tryDirectSalesRecoveryReply(
 
   // Soft accept without details yet → ask for name / phone / address
   if (looksLikeOfferAcceptance(latestUserMessage)) {
-    const pending = getPendingRecoveryOffer(history);
+    const pending = getPendingRecoveryOffer(history, { discount, bundle });
     if (!pending) return null;
 
     if (pending.type === "bundle") {
