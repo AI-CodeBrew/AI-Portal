@@ -210,6 +210,7 @@ export async function createWhatsAppAiOrder(params: {
   lineItems: WhatsAppOrderLineInput[];
   shipping: WhatsAppOrderShipping;
   discountPercent?: number;
+  recoveryDealType?: "discount" | "bundle" | null;
   storeCurrency?: string | null;
 }): Promise<
   | {
@@ -370,6 +371,15 @@ export async function createWhatsAppAiOrder(params: {
   }>;
   let source: "portal" | "shopify" | "mixed" = "portal";
 
+  const recoveryFields = {
+    ...(params.recoveryDealType
+      ? { recovery_deal_type: params.recoveryDealType }
+      : {}),
+    ...(params.discountPercent != null && params.discountPercent > 0
+      ? { recovery_discount_percent: params.discountPercent }
+      : {}),
+  };
+
   if (shopifyLines.length > 0 && portalLines.length === 0) {
     source = "shopify";
     const draft = await createDraftOrder(
@@ -410,6 +420,7 @@ export async function createWhatsAppAiOrder(params: {
         source: "whatsapp_ai",
         shipping_address: portalShipping,
         shopify_sync_status: "synced",
+        ...recoveryFields,
       })
       .select("id")
       .single();
@@ -464,6 +475,7 @@ export async function createWhatsAppAiOrder(params: {
         source: "whatsapp_ai",
         shipping_address: portalShipping,
         shopify_sync_status: "not_applicable",
+        ...recoveryFields,
       })
       .select("id")
       .single();

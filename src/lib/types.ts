@@ -1,6 +1,7 @@
 export type OrderStatus = "pending" | "confirmed" | "cancelled";
 export type OrderSource = "shopify" | "whatsapp_ai";
 export type ShopifySyncStatus = "synced" | "failed" | "not_applicable";
+export type RecoveryDealType = "discount" | "bundle";
 export type ConversationStatus = "ai_handling" | "human_handoff" | "closed";
 export type MessageDirection = "in" | "out";
 
@@ -83,6 +84,8 @@ export interface Order {
   tracking_company: string | null;
   shopify_fulfillment_id: string | null;
   shipping_address?: OrderShippingAddress | null;
+  recovery_deal_type?: RecoveryDealType | null;
+  recovery_discount_percent?: number | null;
   created_at: string;
   customers?: Customer | null;
 }

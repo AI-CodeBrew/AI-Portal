@@ -23,7 +23,7 @@ const ACCEPT_OFFER_PATTERN =
   /\b(yes|yeah|yep|ok|okay|sure|deal|fine|alright|i('ll| will)\s+take|interested|accept|go\s+ahead|order\s+(it|now|this)|book\s+it|let'?s\s+do\s+it)\b/i;
 
 const PRODUCT_OFFERED_PATTERN =
-  /\b(would you like to order|want to order|place the order|reply like this|share your full name|SKU:|Price:|From:|Deal 1\/2|Deal 2\/2)\b/i;
+  /\b(would you like to order|want to order|place the order|reply like this|share your full name|SKU:|Price:|From:|Deal 1\/2|Deal 2\/2|𝟮-𝗣𝗔𝗖𝗞|𝗙𝗟𝗔𝗧|FLAT.*OFF)\b/i;
 
 function discountMarker(percent: number) {
   return `[Deal 1/2 — ${percent}% off]`;
@@ -52,8 +52,9 @@ export function extractOutboundMedia(text: string): {
   imageUrls: string[];
 } {
   const imageUrls: string[] = [];
+  // Match anywhere (not only line-start) so markers are always pulled out first
   const withoutImages = text.replace(
-    /^\s*\[Image:\s*(https?:\/\/[^\]]+)\]\s*\n?/gim,
+    /\[Image:\s*(https?:\/\/[^\]]+)\]\s*/gi,
     (_, url: string) => {
       const cleaned = String(url).trim();
       if (/^https:\/\//i.test(cleaned) && !imageUrls.includes(cleaned)) {
@@ -266,6 +267,133 @@ function toBoldPercent(percent: number): string {
     .join("");
 }
 
+function newestRecoveryOfferMessage(
+  assistants: string[]
+): string | null {
+  for (const content of [...assistants].reverse()) {
+    if (
+      /\[Deal\s+[12]\/2/i.test(content) ||
+      /𝟮-𝗣𝗔𝗖𝗞|2-PACK|𝗕𝗨𝗡𝗗𝗟𝗘|𝗙𝗟𝗔𝗧.*𝗢𝗙𝗙|FLAT.*OFF/i.test(content)
+    ) {
+      return content;
+    }
+  }
+  return null;
+}
+
+function percentFromOfferMessage(
+  content: string,
+  fallback: number
+): number {
+  const marker =
+    content.match(/\[Deal\s+[12]\/2[^\]]*?\b(\d{1,2})\s*%\s*off\]/i) ||
+    content.match(/\b(\d{1,2})\s*%\s*off\b/i);
+  const n = marker ? Number(marker[1]) : fallback;
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+function isBundleOfferMessage(content: string): boolean {
+  return (
+    /\[Deal\s+2\/2/i.test(content) ||
+    /𝟮-𝗣𝗔𝗖𝗞|2-PACK|𝗕𝗨𝗡𝗗𝗟𝗘/i.test(content)
+  );
+}
+
+function isDiscountOfferMessage(content: string): boolean {
+  return (
+    /\[Deal\s+1\/2/i.test(content) ||
+    /𝗙𝗟𝗔𝗧|FLAT.*OFF/i.test(content)
+  );
+}
+
+function formatPersonalOfferLine(
+  type: "discount" | "bundle",
+  percent: number,
+  productLabel: string,
+  unitPrice: number | null,
+  currency: string
+): string {
+  const compare = priceCompareLine(
+    unitPrice,
+    percent,
+    currency,
+    type === "bundle" ? 2 : 1
+  );
+  if (type === "bundle") {
+    const now = compare?.match(/\*([^*]+)\*/)?.[1];
+    const was = compare?.match(/~([^~]+)~/i)?.[1];
+    if (now && was) {
+      return `I wanted to personally offer you a *2-pack bundle (${percent}% off)* on *${productLabel}* — *${now}* instead of ${was}.`;
+    }
+    return [
+      `I wanted to personally offer you a *2-pack bundle (${percent}% off)* on *${productLabel}*`,
+      compare,
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+  const now = compare?.match(/\*([^*]+)\*/)?.[1];
+  const was = compare?.match(/~([^~]+)~/i)?.[1];
+  if (now && was) {
+    return `I wanted to personally offer you *${percent}% off* on *${productLabel}* — *${now}* instead of ${was}.`;
+  }
+  return `I wanted to personally offer you *${percent}% off* on *${productLabel}*.${compare ? `\n${compare}` : ""}`;
+}
+
+function formatRecoveryOfferReply(params: {
+  type: "discount" | "bundle";
+  percent: number;
+  productLabel: string;
+  sku: string | null;
+  unitPrice: number | null;
+  currency: string;
+  accepting?: boolean;
+}): string {
+  const { type, percent, productLabel, unitPrice, currency } = params;
+  const boldPct = toBoldPercent(percent);
+  const personal = formatPersonalOfferLine(
+    type,
+    percent,
+    productLabel,
+    unitPrice,
+    currency
+  );
+
+  if (params.accepting) {
+    return [
+      type === "bundle"
+        ? `🔥 Locked in: *2-PACK* at *${percent}% OFF*`
+        : `🔥 Deal locked: *${percent}% OFF*`,
+      personal,
+      orderDetailsTemplate({ defaultQty: type === "bundle" ? 2 : 1 }),
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  if (type === "bundle") {
+    return [
+      bundleMarker(percent),
+      `💥 𝟮-𝗣𝗔𝗖𝗞 𝗕𝗨𝗡𝗗𝗟𝗘 · ${boldPct}% 𝗢𝗙𝗙 💥`,
+      personal,
+      `🎁 Best value — reply *YES* to lock it:`,
+      orderDetailsTemplate({ defaultQty: 2 }),
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  return [
+    discountMarker(percent),
+    `🔥 𝗙𝗟𝗔𝗧 ${boldPct}% 𝗢𝗙𝗙 🔥`,
+    personal,
+    `⚡ Limited WhatsApp deal — reply *YES* to grab it:`,
+    orderDetailsTemplate(),
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 function recoveryPercents(ctx: AgentContext): {
   discount: number;
   bundle: number;
@@ -283,37 +411,22 @@ function recoveryPercents(ctx: AgentContext): {
 function nextRecoveryAction(
   history: Array<{ role: "user" | "assistant"; content: string }>
 ): "discount" | "bundle" | "close" | null {
-  const recent = lastAssistantMessages(history, 12).join("\n");
+  const assistants = lastAssistantMessages(history, 12);
+  const recent = assistants.join("\n");
 
   if (recent.includes(MARKER_CLOSED) || /\[Deal closed\]/i.test(recent)) {
     return null;
   }
 
-  if (
-    /\[Deal 2\/2/i.test(recent) ||
-    /\b2-pack bundle\b/i.test(recent)
-  ) {
+  const lastOffer = newestRecoveryOfferMessage(assistants);
+  if (lastOffer && isBundleOfferMessage(lastOffer)) {
     return "close";
   }
-
-  if (
-    /\[Deal 1\/2/i.test(recent) ||
-    /\d+\s*%\s*off/i.test(recent)
-  ) {
+  if (lastOffer && isDiscountOfferMessage(lastOffer)) {
     return "bundle";
   }
 
   return "discount";
-}
-
-/** Last regex match in text (prefer newest offer when several appear). */
-function lastPercentMatch(
-  text: string,
-  re: RegExp
-): RegExpMatchArray | null {
-  const flags = re.flags.includes("g") ? re.flags : `${re.flags}g`;
-  const matches = [...text.matchAll(new RegExp(re.source, flags))];
-  return matches.length ? matches[matches.length - 1] : null;
 }
 
 /** Detect an open recovery offer in chat (for checkout discount + qty). */
@@ -321,7 +434,8 @@ export function getPendingRecoveryOffer(
   history: Array<{ role: "user" | "assistant"; content: string }>,
   defaults?: { discount?: number; bundle?: number }
 ): { type: "discount" | "bundle"; percent: number; defaultQty: number } | null {
-  const recent = lastAssistantMessages(history, 8).join("\n");
+  const assistants = lastAssistantMessages(history, 8);
+  const recent = assistants.join("\n");
   if (recent.includes(MARKER_CLOSED)) return null;
 
   const defaultDiscount =
@@ -333,32 +447,21 @@ export function getPendingRecoveryOffer(
       ? defaults.bundle
       : AI_SETTING_DEFAULTS.recoveryBundleDiscountPercent;
 
-  // Use \b before digits so "20% off" is not captured as "0" (greedy [^\]]* bug).
-  const bundleMatch =
-    lastPercentMatch(
-      recent,
-      /\[Deal\s+2\/2[^\]]*?\b(\d{1,2})\s*%\s*off\]/gi
-    ) || lastPercentMatch(recent, /2-pack bundle[^\d]*(\d{1,2})\s*%/gi);
-  if (bundleMatch || /\[Deal\s+2\/2/i.test(recent) || /\b2-pack bundle\b/i.test(recent)) {
-    const percent = bundleMatch ? Number(bundleMatch[1]) : defaultBundle;
+  const lastOffer = newestRecoveryOfferMessage(assistants);
+  if (!lastOffer) return null;
+
+  if (isBundleOfferMessage(lastOffer)) {
     return {
       type: "bundle",
-      percent: Number.isFinite(percent) && percent > 0 ? percent : defaultBundle,
+      percent: percentFromOfferMessage(lastOffer, defaultBundle),
       defaultQty: 2,
     };
   }
 
-  const discMatch =
-    lastPercentMatch(
-      recent,
-      /\[Deal\s+1\/2[^\]]*?\b(\d{1,2})\s*%\s*off\]/gi
-    ) || lastPercentMatch(recent, /\b(\d{1,2})\s*%\s*off\b/gi);
-  if (discMatch || /\[Deal\s+1\/2/i.test(recent)) {
-    const percent = discMatch ? Number(discMatch[1]) : defaultDiscount;
+  if (isDiscountOfferMessage(lastOffer)) {
     return {
       type: "discount",
-      percent:
-        Number.isFinite(percent) && percent > 0 ? percent : defaultDiscount,
+      percent: percentFromOfferMessage(lastOffer, defaultDiscount),
       defaultQty: 1,
     };
   }
@@ -420,32 +523,15 @@ export async function tryDirectSalesRecoveryReply(
     const pending = getPendingRecoveryOffer(history, { discount, bundle });
     if (!pending) return null;
 
-    const compare = priceCompareLine(
+    return formatRecoveryOfferReply({
+      type: pending.type,
+      percent: pending.percent,
+      productLabel,
+      sku: product.sku,
       unitPrice,
-      pending.percent,
       currency,
-      pending.type === "bundle" ? 2 : 1
-    );
-
-    if (pending.type === "bundle") {
-      return [
-        `🔥 Locked in: *2-PACK* at *${pending.percent}% OFF*`,
-        productLabel + (product.sku ? ` (${product.sku})` : ""),
-        compare,
-        orderDetailsTemplate({ defaultQty: 2 }),
-      ]
-        .filter(Boolean)
-        .join("\n");
-    }
-
-    return [
-      `🔥 Deal locked: *${pending.percent}% OFF*`,
-      productLabel + (product.sku ? ` (${product.sku})` : ""),
-      compare,
-      orderDetailsTemplate(),
-    ]
-      .filter(Boolean)
-      .join("\n");
+      accepting: true,
+    });
   }
 
   if (!looksLikeOrderDecline(latestUserMessage)) return null;
@@ -458,35 +544,25 @@ export async function tryDirectSalesRecoveryReply(
   if (!action) return null;
 
   if (action === "discount") {
-    const compare = priceCompareLine(unitPrice, discount, currency, 1);
-    const boldPct = toBoldPercent(discount);
-
-    return [
-      discountMarker(discount),
-      `🔥 𝗙𝗟𝗔𝗧 ${boldPct}% 𝗢𝗙𝗙 🔥`,
+    return formatRecoveryOfferReply({
+      type: "discount",
+      percent: discount,
       productLabel,
-      compare,
-      `⚡ Limited WhatsApp deal — reply *YES* to grab it:`,
-      orderDetailsTemplate(),
-    ]
-      .filter(Boolean)
-      .join("\n");
+      sku: product.sku,
+      unitPrice,
+      currency,
+    });
   }
 
   if (action === "bundle") {
-    const compare = priceCompareLine(unitPrice, bundle, currency, 2);
-    const boldPct = toBoldPercent(bundle);
-
-    return [
-      bundleMarker(bundle),
-      `💥 𝟮-𝗣𝗔𝗖𝗞 𝗕𝗨𝗡𝗗𝗟𝗘 · ${boldPct}% 𝗢𝗙𝗙 💥`,
+    return formatRecoveryOfferReply({
+      type: "bundle",
+      percent: bundle,
       productLabel,
-      compare,
-      `🎁 Best value — reply *YES* to lock it:`,
-      orderDetailsTemplate({ defaultQty: 2 }),
-    ]
-      .filter(Boolean)
-      .join("\n");
+      sku: product.sku,
+      unitPrice,
+      currency,
+    });
   }
 
   return [

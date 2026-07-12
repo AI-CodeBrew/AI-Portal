@@ -127,6 +127,9 @@ export async function tryDirectCheckoutReply(
       ...(discountPercent != null
         ? { discount_percent: discountPercent }
         : {}),
+      ...(pendingOffer?.type
+        ? { recovery_deal_type: pendingOffer.type }
+        : {}),
     },
     ctx
   );

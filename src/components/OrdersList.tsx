@@ -89,6 +89,25 @@ function formatShortDate(iso: string) {
   });
 }
 
+function orderTotalQty(order: Order): number {
+  return (order.items ?? []).reduce(
+    (sum, item) => sum + Math.max(0, Number(item.quantity) || 0),
+    0
+  );
+}
+
+function recoveryDealBadge(order: Order): string | null {
+  if (order.recovery_deal_type === "discount") {
+    const pct = order.recovery_discount_percent;
+    return pct ? `AI discount ${pct}%` : "AI discount";
+  }
+  if (order.recovery_deal_type === "bundle") {
+    const pct = order.recovery_discount_percent;
+    return pct ? `AI 2-pack ${pct}%` : "AI 2-pack bundle";
+  }
+  return null;
+}
+
 export function formatShippingAddress(
   addr?: OrderShippingAddress | null
 ): string {
@@ -1512,6 +1531,9 @@ export function OrdersList() {
                     Address
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-slate-600">
+                    Qty
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-slate-600">
                     Total
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-slate-600">
@@ -1542,6 +1564,11 @@ export function OrdersList() {
                         {order.order_number ?? order.id.slice(0, 8)}
                       </p>
                       <p className="text-xs text-slate-500">{order.source}</p>
+                      {recoveryDealBadge(order) && (
+                        <span className="mt-1 inline-block rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-800">
+                          {recoveryDealBadge(order)}
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-sm text-slate-700">
                       <p>{order.customers?.name ?? "—"}</p>
@@ -1559,6 +1586,9 @@ export function OrdersList() {
                           className="line-clamp-2"
                         />
                       </span>
+                    </td>
+                    <td className="px-4 py-3 text-sm text-slate-700">
+                      {orderTotalQty(order) || "—"}
                     </td>
                     <td className="px-4 py-3 text-sm font-medium text-slate-800">
                       {formatMoney(Number(order.total ?? 0), order.currency)}
@@ -1636,6 +1666,12 @@ export function OrdersList() {
                       <p className="text-xs text-slate-500">
                         {order.customers?.name ?? "Customer"} ·{" "}
                         {formatShortDate(order.created_at)}
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        Qty: {orderTotalQty(order) || "—"}
+                        {recoveryDealBadge(order)
+                          ? ` · ${recoveryDealBadge(order)}`
+                          : ""}
                       </p>
                       <p className="mt-1 text-xs text-slate-500">
                         <OrderAddressButton

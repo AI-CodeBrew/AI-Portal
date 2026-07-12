@@ -55,8 +55,10 @@ async function sendReply(
   }
 
   const to = normalizePhone(customerPhone);
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
   try {
+    let imagesSent = 0;
     for (const imageUrl of imageUrls.slice(0, 3)) {
       try {
         await sendWhatsAppImage({
@@ -65,6 +67,9 @@ async function sendReply(
           to,
           imageUrl,
         });
+        imagesSent += 1;
+        // Meta accepts image async — wait so it usually lands before the text
+        await sleep(1500);
       } catch (imgErr) {
         console.error(
           `[whatsapp-webhook] image send failed (${imageUrl}):`,
@@ -74,6 +79,9 @@ async function sendReply(
     }
 
     if (text.trim()) {
+      if (imagesSent > 0) {
+        await sleep(500);
+      }
       await sendWhatsAppText({
         phoneNumberId: waCreds.phoneNumberId,
         accessToken: waCreds.accessToken,

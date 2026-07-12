@@ -964,6 +964,11 @@ export async function executeSalesTool(
           input.discount_percent != null
             ? Number(input.discount_percent)
             : undefined;
+        const recoveryDealType =
+          input.recovery_deal_type === "bundle" ||
+          input.recovery_deal_type === "discount"
+            ? (input.recovery_deal_type as "discount" | "bundle")
+            : undefined;
 
         const rawLines = Array.isArray(input.line_items)
           ? (input.line_items as Array<Record<string, unknown>>)
@@ -993,6 +998,7 @@ export async function executeSalesTool(
             zip: String(input.zip ?? "").trim() || undefined,
           },
           discountPercent,
+          recoveryDealType,
           storeCurrency: currency ?? ctx.storeCurrency,
         });
 
