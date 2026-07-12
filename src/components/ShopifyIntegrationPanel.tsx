@@ -33,11 +33,23 @@ export function ShopifyIntegrationPanel({ appUrl }: { appUrl: string }) {
   const [saving, setSaving] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
+  const [displayAppUrl, setDisplayAppUrl] = useState(appUrl.replace(/\/$/, ""));
   const [message, setMessage] = useState<{
     type: "info" | "error" | "success";
     text: string;
   } | null>(null);
   const searchParams = useSearchParams();
+
+  useEffect(() => {
+    const origin = window.location.origin.replace(/\/$/, "");
+    const fromServer = appUrl.replace(/\/$/, "");
+    // Prefer the live site origin when the server still has localhost baked in
+    if (fromServer.includes("localhost") && !origin.includes("localhost")) {
+      setDisplayAppUrl(origin);
+    } else {
+      setDisplayAppUrl(fromServer || origin);
+    }
+  }, [appUrl]);
 
   useEffect(() => {
     if (store) {
@@ -183,6 +195,7 @@ export function ShopifyIntegrationPanel({ appUrl }: { appUrl: string }) {
           hasCredentials={store?.has_shopify_credentials ?? false}
           isConnected={store?.shopify_connected ?? false}
           shopDomain={store?.shop_domain}
+          appUrl={displayAppUrl}
         />
 
         {store?.shopify_connected && (
@@ -288,12 +301,20 @@ export function ShopifyIntegrationPanel({ appUrl }: { appUrl: string }) {
             adding scopes in Shopify Partners.
           </p>
           <p>
+            <strong>App URL (Shopify Partners):</strong>{" "}
+            <code className="text-slate-800">{displayAppUrl}</code>
+          </p>
+          <p>
             <strong>Redirect URL:</strong>{" "}
-            <code className="text-slate-800">{appUrl}/auth/shopify/callback</code>
+            <code className="text-slate-800">
+              {displayAppUrl}/auth/shopify/callback
+            </code>
           </p>
           <p>
             <strong>Webhook URL:</strong>{" "}
-            <code className="text-slate-800">{appUrl}/api/webhook/shopify</code>
+            <code className="text-slate-800">
+              {displayAppUrl}/api/webhook/shopify
+            </code>
           </p>
         </div>
       </div>

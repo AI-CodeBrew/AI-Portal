@@ -37,18 +37,21 @@ export function ShopifyConnectionSteps({
   hasCredentials,
   isConnected,
   shopDomain,
+  appUrl,
 }: {
   hasCredentials: boolean;
   isConnected: boolean;
   shopDomain?: string | null;
+  appUrl: string;
 }) {
+  const base = appUrl.replace(/\/$/, "");
   return (
     <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 space-y-3">
       <Step
         done={hasCredentials}
         active={!hasCredentials}
-        label="Save Shopify app credentials"
-        detail="API key, secret, and shop domain"
+        label="Whitelist URLs in Shopify Partners, then save credentials"
+        detail={`App URL: ${base} · Redirect URL: ${base}/auth/shopify/callback · then paste API key, secret, and shop domain here`}
       />
       <Step
         done={isConnected}
