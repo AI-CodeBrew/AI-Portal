@@ -1,6 +1,10 @@
 import { extractSkuFromText } from "@/lib/products/products-service";
 import { normalizePhone } from "@/lib/whatsapp";
 import { executeSalesTool, type AgentContext } from "./sales-tools";
+import {
+  getPendingRecoveryOffer,
+  parseOrderQuantity,
+} from "./sales-recovery";
 
 const CHECKOUT_INTENT =
   /\b(place\s+(an\s+)?order|want\s+to\s+(order|buy)|order\s+(this|it|now)|buy\s+(this|it|now)|checkout|confirm\s+(my\s+)?order|i('m| am)?\s+(ready|ordering))\b/i;
@@ -158,12 +162,19 @@ export async function tryDirectCheckoutReply(
     return "I have your details. Which product should I order? Please send the product name or SKU again.";
   }
 
+  const pendingOffer = getPendingRecoveryOffer(history);
+  const quantity = parseOrderQuantity(
+    latestUserMessage,
+    pendingOffer?.defaultQty ?? 1
+  );
+  const discountPercent = pendingOffer?.percent;
+
   const { result } = await executeSalesTool(
     "create_draft_order",
     {
       line_items: [
         {
-          quantity: 1,
+          quantity,
           ...(productRef.sku ? { sku: productRef.sku, source: "portal" } : {}),
           ...(productRef.variant_id
             ? { variant_id: productRef.variant_id, source: productRef.source }
@@ -177,6 +188,9 @@ export async function tryDirectCheckoutReply(
       phone: details.phone,
       address1: details.address1,
       city: details.city,
+      ...(discountPercent != null
+        ? { discount_percent: discountPercent }
+        : {}),
     },
     ctx
   );

@@ -170,7 +170,7 @@ export async function runSalesAgentWithAnthropic(
     : "";
 
   const messages: Anthropic.MessageParam[] = history
-    .slice(-CHAT_HISTORY_LIMIT)
+    .slice(-(ctx.aiConfig?.effectiveChatHistoryLimit ?? CHAT_HISTORY_LIMIT))
     .map((m) => ({
       role: m.role,
       content: m.content,

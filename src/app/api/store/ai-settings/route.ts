@@ -2,23 +2,20 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireResellerStore } from "@/lib/auth";
 import {
   getStoreAiSettings,
-  listAiTemplates,
   updateStoreAiSettings,
 } from "@/lib/ai/store-ai-settings";
 import { getPlatformAiDefaults } from "@/lib/ai/platform-defaults";
 import { listWhatsAppTemplates } from "@/lib/whatsapp/message-templates";
-import type { AiReplyLength } from "@/lib/ai/ai-settings-types";
+import type { AiReplyLength, StoreAiSettings } from "@/lib/ai/ai-settings-types";
 
 export async function GET() {
   try {
     const { storeId } = await requireResellerStore();
-    const [settings, templates, platformDefaults, waTemplates] =
-      await Promise.all([
-        getStoreAiSettings(storeId),
-        listAiTemplates(storeId),
-        getPlatformAiDefaults(),
-        listWhatsAppTemplates(storeId),
-      ]);
+    const [settings, platformDefaults, waTemplates] = await Promise.all([
+      getStoreAiSettings(storeId),
+      getPlatformAiDefaults(),
+      listWhatsAppTemplates(storeId),
+    ]);
 
     const approvedWhatsAppTemplates = waTemplates.filter(
       (t) => t.status === "approved"
@@ -26,7 +23,6 @@ export async function GET() {
 
     return NextResponse.json({
       settings,
-      templates,
       platformDefaults,
       approvedWhatsAppTemplates,
     });
@@ -38,17 +34,8 @@ export async function GET() {
 export async function PATCH(request: NextRequest) {
   try {
     const { storeId } = await requireResellerStore();
-    const body = (await request.json()) as {
-      agentName?: string | null;
-      openingMessage?: string | null;
+    const body = (await request.json()) as Partial<StoreAiSettings> & {
       replyLength?: AiReplyLength;
-      orderTemplateId?: string | null;
-      generalTemplateId?: string | null;
-      whatsappOrderTemplateId?: string | null;
-      whatsappSalesInstructions?: string | null;
-      shopifyConfirmInstructions?: string | null;
-      autoConfirmOrders?: boolean;
-      autoFollowUpTemplateId?: string | null;
     };
 
     const result = await updateStoreAiSettings(storeId, body);

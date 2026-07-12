@@ -38,6 +38,18 @@ export interface StoreAiSettings {
   shopifyConfirmTemplateId: string | null;
   autoConfirmOrders: boolean;
   autoFollowUpTemplateId: string | null;
+  /** Last N messages AI remembers (null = use platform default) */
+  chatHistoryLimit: number | null;
+  /** Hours until AI session resets (null = use platform default) */
+  sessionWindowHours: number | null;
+  /** First "no" discount % (null = use platform default) */
+  recoveryDiscountPercent: number | null;
+  /** Bundle (2-pack) discount % (null = use platform default) */
+  recoveryBundleDiscountPercent: number | null;
+  /** Max AI replies per chat before human handoff (null = unlimited / platform) */
+  conversationReplyLimit: number | null;
+  /** Spam window hours (null = whole chat / platform) */
+  conversationReplyWindowHours: number | null;
 }
 
 export interface ResolvedStoreAiConfig extends StoreAiSettings {
@@ -46,6 +58,33 @@ export interface ResolvedStoreAiConfig extends StoreAiSettings {
   whatsappSalesPrompt: string | null;
   shopifyConfirmPrompt: string | null;
   tone?: AiTone;
+  /** Resolved effective values used at runtime */
+  effectiveChatHistoryLimit: number;
+  effectiveSessionWindowHours: number;
+  effectiveRecoveryDiscountPercent: number;
+  effectiveRecoveryBundleDiscountPercent: number;
+}
+
+export const AI_SETTING_DEFAULTS = {
+  chatHistoryLimit: 10,
+  sessionWindowHours: 2,
+  recoveryDiscountPercent: 15,
+  recoveryBundleDiscountPercent: 25,
+} as const;
+
+export function clampChatHistoryLimit(n: number | null | undefined): number {
+  if (n == null || !Number.isFinite(n)) return AI_SETTING_DEFAULTS.chatHistoryLimit;
+  return Math.min(50, Math.max(5, Math.round(n)));
+}
+
+export function clampSessionWindowHours(n: number | null | undefined): number {
+  if (n == null || !Number.isFinite(n)) return AI_SETTING_DEFAULTS.sessionWindowHours;
+  return Math.min(72, Math.max(1, Math.round(n)));
+}
+
+export function clampDiscountPercent(n: number | null | undefined, fallback: number): number {
+  if (n == null || !Number.isFinite(n)) return fallback;
+  return Math.min(90, Math.max(1, Math.round(n)));
 }
 
 export const REPLY_LENGTH_OPTIONS: Array<{
@@ -107,9 +146,10 @@ export const DEFAULT_WHATSAPP_SALES_INSTRUCTIONS = `You are a WhatsApp sales age
   2) Phone number (confirm the WhatsApp number or ask if different)
   3) Full delivery address (house/street, area/city, and postal code if available)
 - If they say they don't want to order / not interested / too expensive — recover the sale step by step (one offer per reply):
-  1) Offer 15% off the same product (show discounted price). If they accept, collect details and create_draft_order with discount_percent 15.
-  2) If they still refuse, offer a 2-pack bundle (~20–25% off). If they accept, create_draft_order qty 2 with that discount.
+  1) Offer the configured first-refusal discount % off the same product (show discounted price). If they accept, collect details + quantity and create_draft_order with that discount_percent.
+  2) If they still refuse, offer a 2-pack bundle at the configured bundle discount %. If they accept, create_draft_order with qty and that discount.
   3) If they refuse again, thank them and stop pushing.
+- Always calculate totals as unit price × quantity × (1 − discount%/100).
 - Use the last 10 chat messages for context (sizes, "that one", follow-ups).
 - Never call create_draft_order until name + phone + full address are confirmed.
 - After create_draft_order succeeds, tell them the order is confirmed and share brief dispatching details (processing / expected delivery window).

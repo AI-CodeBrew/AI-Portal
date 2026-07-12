@@ -4,6 +4,10 @@ import {
   DEFAULT_ORDER_TEMPLATE_ID,
   DEFAULT_SHOPIFY_CONFIRM_INSTRUCTIONS,
   DEFAULT_WHATSAPP_SALES_INSTRUCTIONS,
+  clampChatHistoryLimit,
+  clampDiscountPercent,
+  clampSessionWindowHours,
+  AI_SETTING_DEFAULTS,
   type AiPromptTemplate,
   type AiReplyLength,
   type AiTemplateCategory,
@@ -34,10 +38,16 @@ export async function getStoreAiSettingsRaw(
   const { data } = await supabase
     .from("stores")
     .select(
-      "ai_agent_name, ai_opening_message, ai_reply_length, ai_order_template_id, ai_general_template_id, whatsapp_order_template_id, whatsapp_sales_instructions, shopify_confirm_instructions, auto_confirm_orders, auto_follow_up_template_id"
+      "ai_agent_name, ai_opening_message, ai_reply_length, ai_order_template_id, ai_general_template_id, whatsapp_order_template_id, whatsapp_sales_instructions, shopify_confirm_instructions, auto_confirm_orders, auto_follow_up_template_id, ai_chat_history_limit, ai_session_window_hours, ai_recovery_discount_percent, ai_recovery_bundle_discount_percent, ai_conversation_reply_limit, ai_conversation_reply_window_hours"
     )
     .eq("id", storeId)
     .single();
+
+  const numOrNull = (v: unknown): number | null => {
+    if (v == null) return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  };
 
   return {
     agentName: (data?.ai_agent_name as string | null) ?? null,
@@ -51,12 +61,21 @@ export async function getStoreAiSettingsRaw(
       (data?.whatsapp_sales_instructions as string | null) ?? null,
     shopifyConfirmInstructions:
       (data?.shopify_confirm_instructions as string | null) ?? null,
-    // Preset picks copy into free-text; no FK columns in migration 020
     whatsappSalesTemplateId: null,
     shopifyConfirmTemplateId: null,
     autoConfirmOrders: Boolean(data?.auto_confirm_orders),
     autoFollowUpTemplateId:
       (data?.auto_follow_up_template_id as string | null) ?? null,
+    chatHistoryLimit: numOrNull(data?.ai_chat_history_limit),
+    sessionWindowHours: numOrNull(data?.ai_session_window_hours),
+    recoveryDiscountPercent: numOrNull(data?.ai_recovery_discount_percent),
+    recoveryBundleDiscountPercent: numOrNull(
+      data?.ai_recovery_bundle_discount_percent
+    ),
+    conversationReplyLimit: numOrNull(data?.ai_conversation_reply_limit),
+    conversationReplyWindowHours: numOrNull(
+      data?.ai_conversation_reply_window_hours
+    ),
   };
 }
 
@@ -118,6 +137,18 @@ export async function resolveStoreAiConfig(
     shopifyConfirmTemplateId: null,
     autoConfirmOrders: settings.autoConfirmOrders,
     autoFollowUpTemplateId: settings.autoFollowUpTemplateId,
+    chatHistoryLimit: raw.chatHistoryLimit,
+    sessionWindowHours: raw.sessionWindowHours,
+    recoveryDiscountPercent: raw.recoveryDiscountPercent,
+    recoveryBundleDiscountPercent: raw.recoveryBundleDiscountPercent,
+    conversationReplyLimit: settings.conversationReplyLimit,
+    conversationReplyWindowHours: settings.conversationReplyWindowHours,
+    effectiveChatHistoryLimit: settings.effectiveChatHistoryLimit,
+    effectiveSessionWindowHours: settings.effectiveSessionWindowHours,
+    effectiveRecoveryDiscountPercent:
+      settings.effectiveRecoveryDiscountPercent,
+    effectiveRecoveryBundleDiscountPercent:
+      settings.effectiveRecoveryBundleDiscountPercent,
     orderTemplatePrompt,
     generalTemplatePrompt,
     whatsappSalesPrompt,
@@ -130,7 +161,7 @@ export async function updateStoreAiSettings(
   input: Partial<StoreAiSettings>
 ): Promise<StoreAiSettings | { error: string }> {
   const supabase = createAdminClient();
-  const payload: Record<string, string | boolean | null> = {};
+  const payload: Record<string, string | boolean | number | null> = {};
 
   if (input.agentName !== undefined) {
     payload.ai_agent_name = input.agentName?.trim() || null;
@@ -202,6 +233,50 @@ export async function updateStoreAiSettings(
     }
     payload.auto_follow_up_template_id = input.autoFollowUpTemplateId;
   }
+  if (input.chatHistoryLimit !== undefined) {
+    payload.ai_chat_history_limit =
+      input.chatHistoryLimit == null
+        ? null
+        : clampChatHistoryLimit(input.chatHistoryLimit);
+  }
+  if (input.sessionWindowHours !== undefined) {
+    payload.ai_session_window_hours =
+      input.sessionWindowHours == null
+        ? null
+        : clampSessionWindowHours(input.sessionWindowHours);
+  }
+  if (input.recoveryDiscountPercent !== undefined) {
+    payload.ai_recovery_discount_percent =
+      input.recoveryDiscountPercent == null
+        ? null
+        : clampDiscountPercent(
+            input.recoveryDiscountPercent,
+            AI_SETTING_DEFAULTS.recoveryDiscountPercent
+          );
+  }
+  if (input.recoveryBundleDiscountPercent !== undefined) {
+    payload.ai_recovery_bundle_discount_percent =
+      input.recoveryBundleDiscountPercent == null
+        ? null
+        : clampDiscountPercent(
+            input.recoveryBundleDiscountPercent,
+            AI_SETTING_DEFAULTS.recoveryBundleDiscountPercent
+          );
+  }
+  if (input.conversationReplyLimit !== undefined) {
+    const n = input.conversationReplyLimit;
+    payload.ai_conversation_reply_limit =
+      n == null || Number(n) === 0
+        ? null
+        : Math.min(500, Math.max(1, Math.round(Number(n))));
+  }
+  if (input.conversationReplyWindowHours !== undefined) {
+    const n = input.conversationReplyWindowHours;
+    payload.ai_conversation_reply_window_hours =
+      n == null || Number(n) === 0
+        ? null
+        : Math.min(168, Math.max(1, Math.round(Number(n))));
+  }
 
   const { error } = await supabase
     .from("stores")
@@ -212,8 +287,10 @@ export async function updateStoreAiSettings(
     const hint =
       error.message.includes("ai_agent_name") ||
       error.message.includes("whatsapp_sales_instructions") ||
-      error.message.includes("auto_confirm_orders")
-        ? " — Run migrations 009_ai_settings.sql / 020_auto_confirm_and_dual_ai.sql in Supabase"
+      error.message.includes("auto_confirm_orders") ||
+      error.message.includes("ai_chat_history_limit") ||
+      error.message.includes("ai_recovery")
+        ? " — Run migrations 009 / 020 / 026 in Supabase"
         : "";
     return { error: error.message + hint };
   }

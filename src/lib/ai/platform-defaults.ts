@@ -1,7 +1,11 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
+  AI_SETTING_DEFAULTS,
   DEFAULT_GENERAL_TEMPLATE_ID,
   DEFAULT_ORDER_TEMPLATE_ID,
+  clampChatHistoryLimit,
+  clampDiscountPercent,
+  clampSessionWindowHours,
   type AiReplyLength,
   type AiTone,
   type StoreAiSettings,
@@ -27,6 +31,12 @@ export type PlatformAiDefaultsInput = {
   platformName?: string | null;
   supportEmail?: string | null;
   supportPhone?: string | null;
+  chatHistoryLimit?: number | null;
+  sessionWindowHours?: number | null;
+  recoveryDiscountPercent?: number | null;
+  recoveryBundleDiscountPercent?: number | null;
+  conversationReplyLimit?: number | null;
+  conversationReplyWindowHours?: number | null;
 };
 
 const FALLBACK_OPENING =
@@ -47,13 +57,41 @@ function isTone(value: unknown): value is AiTone {
   );
 }
 
+function numOrNull(value: unknown): number | null {
+  if (value == null || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+const PLATFORM_SELECT =
+  "ai_agent_name, ai_opening_message, ai_reply_length, ai_tone, ai_order_template_id, ai_general_template_id, platform_name, support_email, support_phone, updated_at, ai_chat_history_limit, ai_session_window_hours, ai_recovery_discount_percent, ai_recovery_bundle_discount_percent, ai_conversation_reply_limit, ai_conversation_reply_window_hours";
+
+function emptyExtraSettings(): Pick<
+  StoreAiSettings,
+  | "whatsappOrderTemplateId"
+  | "whatsappSalesInstructions"
+  | "shopifyConfirmInstructions"
+  | "whatsappSalesTemplateId"
+  | "shopifyConfirmTemplateId"
+  | "autoConfirmOrders"
+  | "autoFollowUpTemplateId"
+> {
+  return {
+    whatsappOrderTemplateId: null,
+    whatsappSalesInstructions: null,
+    shopifyConfirmInstructions: null,
+    whatsappSalesTemplateId: null,
+    shopifyConfirmTemplateId: null,
+    autoConfirmOrders: false,
+    autoFollowUpTemplateId: null,
+  };
+}
+
 export async function getPlatformAiDefaults(): Promise<PlatformAiDefaults> {
   const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("platform_ai_defaults")
-    .select(
-      "ai_agent_name, ai_opening_message, ai_reply_length, ai_tone, ai_order_template_id, ai_general_template_id, platform_name, support_email, support_phone, updated_at"
-    )
+    .select(PLATFORM_SELECT)
     .eq("id", 1)
     .maybeSingle();
 
@@ -65,13 +103,14 @@ export async function getPlatformAiDefaults(): Promise<PlatformAiDefaults> {
       tone: "friendly",
       orderTemplateId: DEFAULT_ORDER_TEMPLATE_ID,
       generalTemplateId: DEFAULT_GENERAL_TEMPLATE_ID,
-      whatsappOrderTemplateId: null,
-      whatsappSalesInstructions: null,
-      shopifyConfirmInstructions: null,
-      whatsappSalesTemplateId: null,
-      shopifyConfirmTemplateId: null,
-      autoConfirmOrders: false,
-      autoFollowUpTemplateId: null,
+      ...emptyExtraSettings(),
+      chatHistoryLimit: AI_SETTING_DEFAULTS.chatHistoryLimit,
+      sessionWindowHours: AI_SETTING_DEFAULTS.sessionWindowHours,
+      recoveryDiscountPercent: AI_SETTING_DEFAULTS.recoveryDiscountPercent,
+      recoveryBundleDiscountPercent:
+        AI_SETTING_DEFAULTS.recoveryBundleDiscountPercent,
+      conversationReplyLimit: null,
+      conversationReplyWindowHours: null,
       ...FALLBACK_BRANDING,
       updatedAt: null,
     };
@@ -88,13 +127,23 @@ export async function getPlatformAiDefaults(): Promise<PlatformAiDefaults> {
     generalTemplateId:
       (data.ai_general_template_id as string | null) ??
       DEFAULT_GENERAL_TEMPLATE_ID,
-    whatsappOrderTemplateId: null,
-    whatsappSalesInstructions: null,
-    shopifyConfirmInstructions: null,
-    whatsappSalesTemplateId: null,
-    shopifyConfirmTemplateId: null,
-    autoConfirmOrders: false,
-    autoFollowUpTemplateId: null,
+    ...emptyExtraSettings(),
+    chatHistoryLimit:
+      numOrNull(data.ai_chat_history_limit) ??
+      AI_SETTING_DEFAULTS.chatHistoryLimit,
+    sessionWindowHours:
+      numOrNull(data.ai_session_window_hours) ??
+      AI_SETTING_DEFAULTS.sessionWindowHours,
+    recoveryDiscountPercent:
+      numOrNull(data.ai_recovery_discount_percent) ??
+      AI_SETTING_DEFAULTS.recoveryDiscountPercent,
+    recoveryBundleDiscountPercent:
+      numOrNull(data.ai_recovery_bundle_discount_percent) ??
+      AI_SETTING_DEFAULTS.recoveryBundleDiscountPercent,
+    conversationReplyLimit: numOrNull(data.ai_conversation_reply_limit),
+    conversationReplyWindowHours: numOrNull(
+      data.ai_conversation_reply_window_hours
+    ),
     platformName:
       (data.platform_name as string | null)?.trim() ||
       FALLBACK_BRANDING.platformName,
@@ -112,7 +161,7 @@ export async function updatePlatformAiDefaults(
   input: PlatformAiDefaultsInput
 ): Promise<PlatformAiDefaults | { error: string }> {
   const supabase = createAdminClient();
-  const payload: Record<string, string | null> = {
+  const payload: Record<string, string | number | null> = {
     updated_at: new Date().toISOString(),
   };
 
@@ -137,6 +186,50 @@ export async function updatePlatformAiDefaults(
   if (input.supportPhone !== undefined) {
     payload.support_phone = input.supportPhone?.trim() || null;
   }
+  if (input.chatHistoryLimit !== undefined) {
+    payload.ai_chat_history_limit =
+      input.chatHistoryLimit == null
+        ? AI_SETTING_DEFAULTS.chatHistoryLimit
+        : clampChatHistoryLimit(input.chatHistoryLimit);
+  }
+  if (input.sessionWindowHours !== undefined) {
+    payload.ai_session_window_hours =
+      input.sessionWindowHours == null
+        ? AI_SETTING_DEFAULTS.sessionWindowHours
+        : clampSessionWindowHours(input.sessionWindowHours);
+  }
+  if (input.recoveryDiscountPercent !== undefined) {
+    payload.ai_recovery_discount_percent =
+      input.recoveryDiscountPercent == null
+        ? AI_SETTING_DEFAULTS.recoveryDiscountPercent
+        : clampDiscountPercent(
+            input.recoveryDiscountPercent,
+            AI_SETTING_DEFAULTS.recoveryDiscountPercent
+          );
+  }
+  if (input.recoveryBundleDiscountPercent !== undefined) {
+    payload.ai_recovery_bundle_discount_percent =
+      input.recoveryBundleDiscountPercent == null
+        ? AI_SETTING_DEFAULTS.recoveryBundleDiscountPercent
+        : clampDiscountPercent(
+            input.recoveryBundleDiscountPercent,
+            AI_SETTING_DEFAULTS.recoveryBundleDiscountPercent
+          );
+  }
+  if (input.conversationReplyLimit !== undefined) {
+    const n = input.conversationReplyLimit;
+    payload.ai_conversation_reply_limit =
+      n == null || n === 0
+        ? null
+        : Math.min(500, Math.max(1, Math.round(n)));
+  }
+  if (input.conversationReplyWindowHours !== undefined) {
+    const n = input.conversationReplyWindowHours;
+    payload.ai_conversation_reply_window_hours =
+      n == null || n === 0
+        ? null
+        : Math.min(168, Math.max(1, Math.round(n)));
+  }
 
   const { error } = await supabase
     .from("platform_ai_defaults")
@@ -145,9 +238,9 @@ export async function updatePlatformAiDefaults(
   if (error) {
     const hint =
       error.message.includes("platform_ai_defaults") ||
-      error.message.includes("ai_tone") ||
-      error.message.includes("platform_name")
-        ? " — Run migration 017_platform_ai_branding.sql in Supabase"
+      error.message.includes("ai_chat_history_limit") ||
+      error.message.includes("ai_recovery")
+        ? " — Run migration 026_ai_context_and_recovery_settings.sql in Supabase"
         : "";
     return { error: error.message + hint };
   }
@@ -167,8 +260,21 @@ export async function resolveEffectiveAiSettings(storeSettings: {
   shopifyConfirmInstructions?: string | null;
   autoConfirmOrders?: boolean;
   autoFollowUpTemplateId?: string | null;
+  chatHistoryLimit?: number | null;
+  sessionWindowHours?: number | null;
+  recoveryDiscountPercent?: number | null;
+  recoveryBundleDiscountPercent?: number | null;
+  conversationReplyLimit?: number | null;
+  conversationReplyWindowHours?: number | null;
 }): Promise<
-  StoreAiSettings & { usingPlatformDefaults: boolean; tone: AiTone }
+  StoreAiSettings & {
+    usingPlatformDefaults: boolean;
+    tone: AiTone;
+    effectiveChatHistoryLimit: number;
+    effectiveSessionWindowHours: number;
+    effectiveRecoveryDiscountPercent: number;
+    effectiveRecoveryBundleDiscountPercent: number;
+  }
 > {
   const platform = await getPlatformAiDefaults();
 
@@ -188,6 +294,22 @@ export async function resolveEffectiveAiSettings(storeSettings: {
   const usingPlatformDefaults =
     !storeSettings.agentName?.trim() || !storeSettings.openingMessage?.trim();
 
+  const effectiveChatHistoryLimit = clampChatHistoryLimit(
+    storeSettings.chatHistoryLimit ?? platform.chatHistoryLimit
+  );
+  const effectiveSessionWindowHours = clampSessionWindowHours(
+    storeSettings.sessionWindowHours ?? platform.sessionWindowHours
+  );
+  const effectiveRecoveryDiscountPercent = clampDiscountPercent(
+    storeSettings.recoveryDiscountPercent ?? platform.recoveryDiscountPercent,
+    AI_SETTING_DEFAULTS.recoveryDiscountPercent
+  );
+  const effectiveRecoveryBundleDiscountPercent = clampDiscountPercent(
+    storeSettings.recoveryBundleDiscountPercent ??
+      platform.recoveryBundleDiscountPercent,
+    AI_SETTING_DEFAULTS.recoveryBundleDiscountPercent
+  );
+
   return {
     agentName,
     openingMessage,
@@ -204,6 +326,23 @@ export async function resolveEffectiveAiSettings(storeSettings: {
     shopifyConfirmTemplateId: null,
     autoConfirmOrders: Boolean(storeSettings.autoConfirmOrders),
     autoFollowUpTemplateId: storeSettings.autoFollowUpTemplateId ?? null,
+    chatHistoryLimit: storeSettings.chatHistoryLimit ?? null,
+    sessionWindowHours: storeSettings.sessionWindowHours ?? null,
+    recoveryDiscountPercent: storeSettings.recoveryDiscountPercent ?? null,
+    recoveryBundleDiscountPercent:
+      storeSettings.recoveryBundleDiscountPercent ?? null,
+    conversationReplyLimit:
+      storeSettings.conversationReplyLimit ??
+      platform.conversationReplyLimit ??
+      null,
+    conversationReplyWindowHours:
+      storeSettings.conversationReplyWindowHours ??
+      platform.conversationReplyWindowHours ??
+      null,
+    effectiveChatHistoryLimit,
+    effectiveSessionWindowHours,
+    effectiveRecoveryDiscountPercent,
+    effectiveRecoveryBundleDiscountPercent,
     usingPlatformDefaults,
   };
 }

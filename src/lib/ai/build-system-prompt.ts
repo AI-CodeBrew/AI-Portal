@@ -99,5 +99,9 @@ Your name is ${agentName}. When introducing yourself, use this name.${currencyNo
 Tone: ${toneInstruction}
 Reply length: ${replyInstruction}${templateBlock}${agentModesBlock}
 
-You receive up to the last ${CHAT_HISTORY_LIMIT} messages from the current ${AI_SESSION_WINDOW_HOURS}-hour session only (oldest to newest). Messages older than ${AI_SESSION_WINDOW_HOURS} hours are not in your context — treat that as a fresh session for conversation continuity, but still look up orders with tools. The reseller inbox keeps the full chat history separately.`;
+You receive up to the last ${
+    aiConfig?.effectiveChatHistoryLimit ?? CHAT_HISTORY_LIMIT
+  } messages from the current ${
+    aiConfig?.effectiveSessionWindowHours ?? AI_SESSION_WINDOW_HOURS
+  }-hour session only (oldest to newest). Messages older than that window are not in your context — treat that as a fresh session for conversation continuity, but still look up orders with tools. The reseller inbox keeps the full chat history separately.`;
 }

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { verifyHubSignature256 } from "@/lib/crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { runSalesAgent, isSalesAgentConfigured } from "@/lib/ai/run-sales-agent";
-import { getRecentChatHistory } from "@/lib/ai/chat-history";
+import { getRecentChatHistory, getStoreChatContextLimits } from "@/lib/ai/chat-history";
 import { quotaLimitMessage } from "@/lib/ai/plans";
 import { tryConsumeAiQuota } from "@/lib/ai/quota";
 import {
@@ -355,7 +355,14 @@ export async function handleWhatsAppWebhookMessage(
                   `[whatsapp-webhook] AI quota exceeded store=${activeStore.id} used=${quota.usage.used}/${quota.usage.limit}`
                 );
               } else {
-                const chatHistory = await getRecentChatHistory(conversation.id);
+                const chatLimits = await getStoreChatContextLimits(
+                  activeStore.id
+                );
+                const chatHistory = await getRecentChatHistory(
+                  conversation.id,
+                  chatLimits.historyLimit,
+                  chatLimits.windowMs
+                );
 
                 replyText = await runSalesAgent(
                   {

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
+  AI_SETTING_DEFAULTS,
   REPLY_LENGTH_OPTIONS,
   TONE_OPTIONS,
   type AiReplyLength,
@@ -24,6 +25,21 @@ export function AdminAiDefaultsPanel() {
   const [supportEmail, setSupportEmail] = useState("");
   const [supportPhone, setSupportPhone] = useState("");
 
+  const [chatHistoryLimit, setChatHistoryLimit] = useState(
+    String(AI_SETTING_DEFAULTS.chatHistoryLimit)
+  );
+  const [sessionWindowHours, setSessionWindowHours] = useState(
+    String(AI_SETTING_DEFAULTS.sessionWindowHours)
+  );
+  const [recoveryDiscountPercent, setRecoveryDiscountPercent] = useState(
+    String(AI_SETTING_DEFAULTS.recoveryDiscountPercent)
+  );
+  const [recoveryBundleDiscountPercent, setRecoveryBundleDiscountPercent] =
+    useState(String(AI_SETTING_DEFAULTS.recoveryBundleDiscountPercent));
+  const [conversationReplyLimit, setConversationReplyLimit] = useState("");
+  const [conversationReplyWindowHours, setConversationReplyWindowHours] =
+    useState("");
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -40,6 +56,34 @@ export function AdminAiDefaultsPanel() {
       setPlatformName(s.platformName ?? "Arabia AI");
       setSupportEmail(s.supportEmail ?? "");
       setSupportPhone(s.supportPhone ?? "");
+      setChatHistoryLimit(
+        String(s.chatHistoryLimit ?? AI_SETTING_DEFAULTS.chatHistoryLimit)
+      );
+      setSessionWindowHours(
+        String(s.sessionWindowHours ?? AI_SETTING_DEFAULTS.sessionWindowHours)
+      );
+      setRecoveryDiscountPercent(
+        String(
+          s.recoveryDiscountPercent ??
+            AI_SETTING_DEFAULTS.recoveryDiscountPercent
+        )
+      );
+      setRecoveryBundleDiscountPercent(
+        String(
+          s.recoveryBundleDiscountPercent ??
+            AI_SETTING_DEFAULTS.recoveryBundleDiscountPercent
+        )
+      );
+      setConversationReplyLimit(
+        s.conversationReplyLimit != null
+          ? String(s.conversationReplyLimit)
+          : ""
+      );
+      setConversationReplyWindowHours(
+        s.conversationReplyWindowHours != null
+          ? String(s.conversationReplyWindowHours)
+          : ""
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load");
     } finally {
@@ -67,6 +111,24 @@ export function AdminAiDefaultsPanel() {
           platformName: platformName || null,
           supportEmail: supportEmail || null,
           supportPhone: supportPhone || null,
+          chatHistoryLimit: Number(chatHistoryLimit) || AI_SETTING_DEFAULTS.chatHistoryLimit,
+          sessionWindowHours:
+            Number(sessionWindowHours) ||
+            AI_SETTING_DEFAULTS.sessionWindowHours,
+          recoveryDiscountPercent:
+            Number(recoveryDiscountPercent) ||
+            AI_SETTING_DEFAULTS.recoveryDiscountPercent,
+          recoveryBundleDiscountPercent:
+            Number(recoveryBundleDiscountPercent) ||
+            AI_SETTING_DEFAULTS.recoveryBundleDiscountPercent,
+          conversationReplyLimit:
+            conversationReplyLimit.trim() === ""
+              ? null
+              : Number(conversationReplyLimit),
+          conversationReplyWindowHours:
+            conversationReplyWindowHours.trim() === ""
+              ? null
+              : Number(conversationReplyWindowHours),
         }),
       });
       const data = await res.json();
@@ -212,6 +274,125 @@ export function AdminAiDefaultsPanel() {
                 placeholder="+971 4 555 0100"
               />
             </label>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-2">
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h2 className="text-lg font-bold text-slate-900">
+            Conversation & sales defaults
+          </h2>
+          <p className="mt-1 text-sm text-slate-500">
+            Used when a reseller leaves these fields empty
+          </p>
+          <div className="mt-5 grid gap-4 sm:grid-cols-2">
+            <label className="block text-sm">
+              <span className="font-medium text-slate-700">
+                Chat history (messages)
+              </span>
+              <input
+                type="number"
+                min={5}
+                max={50}
+                value={chatHistoryLimit}
+                onChange={(e) => setChatHistoryLimit(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm"
+              />
+            </label>
+            <label className="block text-sm">
+              <span className="font-medium text-slate-700">
+                Session window (hours)
+              </span>
+              <input
+                type="number"
+                min={1}
+                max={72}
+                value={sessionWindowHours}
+                onChange={(e) => setSessionWindowHours(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm"
+              />
+            </label>
+            <label className="block text-sm">
+              <span className="font-medium text-slate-700">
+                First “no” discount %
+              </span>
+              <input
+                type="number"
+                min={1}
+                max={90}
+                value={recoveryDiscountPercent}
+                onChange={(e) => setRecoveryDiscountPercent(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm"
+              />
+            </label>
+            <label className="block text-sm">
+              <span className="font-medium text-slate-700">
+                Bundle discount %
+              </span>
+              <input
+                type="number"
+                min={1}
+                max={90}
+                value={recoveryBundleDiscountPercent}
+                onChange={(e) =>
+                  setRecoveryBundleDiscountPercent(e.target.value)
+                }
+                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm"
+              />
+            </label>
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h2 className="text-lg font-bold text-slate-900">
+            Default spam protection
+          </h2>
+          <p className="mt-1 text-sm text-slate-500">
+            Applied when reseller has not set their own per-chat limits
+          </p>
+          <div className="mt-5 flex flex-wrap items-end gap-3">
+            <label className="flex flex-col gap-1 text-xs font-semibold uppercase text-slate-500">
+              Max AI replies
+              <input
+                type="number"
+                min={1}
+                max={500}
+                value={conversationReplyLimit}
+                onChange={(e) => setConversationReplyLimit(e.target.value)}
+                placeholder="Unlimited"
+                className="w-28 rounded-lg border border-slate-200 px-3 py-2 text-sm font-normal text-slate-900"
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-xs font-semibold uppercase text-slate-500">
+              Within (hours)
+              <select
+                value={conversationReplyWindowHours}
+                onChange={(e) =>
+                  setConversationReplyWindowHours(e.target.value)
+                }
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-normal text-slate-900"
+              >
+                <option value="">Whole chat</option>
+                <option value="1">1 hour</option>
+                <option value="2">2 hours</option>
+                <option value="6">6 hours</option>
+                <option value="12">12 hours</option>
+                <option value="24">24 hours</option>
+                <option value="48">48 hours</option>
+                <option value="72">72 hours</option>
+              </select>
+            </label>
+            <button
+              type="button"
+              onClick={() => {
+                setConversationReplyLimit("");
+                setConversationReplyWindowHours("");
+              }}
+              className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700"
+            >
+              Unlimited
+            </button>
           </div>
         </div>
       </div>

@@ -174,7 +174,11 @@ export async function runSalesAgentWithGroq(
         pendingOrdersHint: ctx.pendingOrdersHint,
       }),
     },
-    ...history.slice(-CHAT_HISTORY_LIMIT).map((m) => ({
+    ...history
+      .slice(
+        -(ctx.aiConfig?.effectiveChatHistoryLimit ?? CHAT_HISTORY_LIMIT)
+      )
+      .map((m) => ({
       role: m.role,
       content: m.content,
     })),

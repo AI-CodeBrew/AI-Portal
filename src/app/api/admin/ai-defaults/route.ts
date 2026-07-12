@@ -3,8 +3,8 @@ import { requireAuth } from "@/lib/auth";
 import {
   getPlatformAiDefaults,
   updatePlatformAiDefaults,
+  type PlatformAiDefaultsInput,
 } from "@/lib/ai/platform-defaults";
-import type { AiReplyLength, AiTone } from "@/lib/ai/ai-settings-types";
 
 export async function GET() {
   try {
@@ -19,15 +19,7 @@ export async function GET() {
 export async function PATCH(request: NextRequest) {
   try {
     await requireAuth("admin");
-    const body = (await request.json()) as {
-      agentName?: string | null;
-      openingMessage?: string | null;
-      replyLength?: AiReplyLength;
-      tone?: AiTone;
-      platformName?: string | null;
-      supportEmail?: string | null;
-      supportPhone?: string | null;
-    };
+    const body = (await request.json()) as PlatformAiDefaultsInput;
 
     const result = await updatePlatformAiDefaults(body);
     if ("error" in result) {

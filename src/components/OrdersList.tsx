@@ -107,6 +107,110 @@ export function formatShippingAddress(
   return parts.join(", ");
 }
 
+export function formatFullShippingAddress(
+  addr?: OrderShippingAddress | null
+): { lines: string[]; empty: boolean } {
+  if (!addr) return { lines: [], empty: true };
+  const lines = [
+    addr.name?.trim() ? `Name: ${addr.name.trim()}` : null,
+    addr.phone?.trim() ? `Phone: ${addr.phone.trim()}` : null,
+    addr.address1?.trim() || null,
+    addr.address2?.trim() || null,
+    [addr.city, addr.province, addr.zip]
+      .filter((p) => typeof p === "string" && p.trim())
+      .join(", ") || null,
+    addr.country?.trim() || null,
+  ].filter((p): p is string => Boolean(p && p.trim()));
+  return { lines, empty: lines.length === 0 };
+}
+
+function OrderAddressButton({
+  order,
+  onOpen,
+  className,
+}: {
+  order: Order;
+  onOpen: () => void;
+  className?: string;
+}) {
+  const text = formatShippingAddress(order.shipping_address);
+  const hasAddress = text !== "—";
+  if (!hasAddress) {
+    return <span className={className}>—</span>;
+  }
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      title="Tap to view full address"
+      className={`text-left text-emerald-700 underline-offset-2 hover:underline ${className ?? ""}`}
+    >
+      {text}
+    </button>
+  );
+}
+
+function OrderAddressModal({
+  order,
+  onClose,
+}: {
+  order: Order;
+  onClose: () => void;
+}) {
+  const { lines, empty } = formatFullShippingAddress(order.shipping_address);
+  const orderLabel = order.order_number ?? order.id.slice(0, 8);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 p-4 sm:items-center"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="order-address-title"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2
+              id="order-address-title"
+              className="text-base font-bold text-slate-900"
+            >
+              Delivery address
+            </h2>
+            <p className="mt-0.5 text-xs text-slate-500">Order {orderLabel}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+          >
+            Close
+          </button>
+        </div>
+        {empty ? (
+          <p className="mt-4 text-sm text-slate-500">No address on this order.</p>
+        ) : (
+          <div className="mt-4 space-y-1.5 text-sm leading-relaxed text-slate-800">
+            {lines.map((line) => (
+              <p key={line}>{line}</p>
+            ))}
+          </div>
+        )}
+        {(order.customers?.name || order.customers?.phone) && (
+          <div className="mt-4 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+            <p className="font-semibold text-slate-700">Customer on file</p>
+            {order.customers?.name && <p>{order.customers.name}</p>}
+            {order.customers?.phone && <p>{order.customers.phone}</p>}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function StatusPill({ status }: { status: OrderStatus }) {
   const styles = {
     pending: "bg-amber-100 text-amber-900",
@@ -180,6 +284,7 @@ export function OrdersList() {
   );
   const [trackingOrder, setTrackingOrder] = useState<Order | null>(null);
   const [followUpOrder, setFollowUpOrder] = useState<Order | null>(null);
+  const [addressOrder, setAddressOrder] = useState<Order | null>(null);
   const [importing, setImporting] = useState(false);
   const importInputRef = useRef<HTMLInputElement>(null);
 
@@ -1448,7 +1553,11 @@ export function OrdersList() {
                     </td>
                     <td className="max-w-[200px] px-4 py-3 text-xs text-slate-600">
                       <span className="line-clamp-2">
-                        {formatShippingAddress(order.shipping_address)}
+                        <OrderAddressButton
+                          order={order}
+                          onOpen={() => setAddressOrder(order)}
+                          className="line-clamp-2"
+                        />
                       </span>
                     </td>
                     <td className="px-4 py-3 text-sm font-medium text-slate-800">
@@ -1529,7 +1638,11 @@ export function OrdersList() {
                         {formatShortDate(order.created_at)}
                       </p>
                       <p className="mt-1 text-xs text-slate-500">
-                        {formatShippingAddress(order.shipping_address)}
+                        <OrderAddressButton
+                          order={order}
+                          onOpen={() => setAddressOrder(order)}
+                          className="text-xs"
+                        />
                       </p>
                     </div>
                   </div>
@@ -1601,6 +1714,13 @@ export function OrdersList() {
           order={trackingOrder}
           onClose={() => setTrackingOrder(null)}
           onSaved={handleTrackingSaved}
+        />
+      )}
+
+      {addressOrder && (
+        <OrderAddressModal
+          order={addressOrder}
+          onClose={() => setAddressOrder(null)}
         />
       )}
 

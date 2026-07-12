@@ -3,13 +3,9 @@ import {
   extractSkuFromText,
   getStoreProductBySku,
 } from "@/lib/products/products-service";
+import { AI_SETTING_DEFAULTS } from "./ai-settings-types";
 import type { AgentContext } from "./sales-tools";
 import { looksLikeCheckoutMessage } from "./checkout-reply";
-
-/** Stable markers so we can detect which recovery step already ran. */
-const MARKER_DISCOUNT = "[Deal 1/2 — 15% off]";
-const MARKER_BUNDLE = "[Deal 2/2 — 2-pack bundle]";
-const MARKER_CLOSED = "[Deal closed]";
 
 const DECLINE_PATTERN =
   /\b(don'?t\s+want|do\s+not\s+want|not\s+(interested|now|today|ordering|buying)|no\s+thanks|no\s+thank\s+you|nah+|nope|not\s+for\s+me|maybe\s+later|later|skip|cancel|i'?ll\s+pass|no\s+order|won'?t\s+(order|buy)|expensive|too\s+(much|pricey|costly)|can'?t\s+afford)\b/i;
@@ -22,6 +18,16 @@ const ACCEPT_OFFER_PATTERN =
 
 const PRODUCT_OFFERED_PATTERN =
   /\b(would you like to order|want to order|place the order|share your full name|SKU:|Price:|From:|Deal 1\/2|Deal 2\/2)\b/i;
+
+function discountMarker(percent: number) {
+  return `[Deal 1/2 — ${percent}% off]`;
+}
+
+function bundleMarker(percent: number) {
+  return `[Deal 2/2 — 2-pack bundle ${percent}% off]`;
+}
+
+const MARKER_CLOSED = "[Deal closed]";
 
 function lastAssistantMessages(
   history: Array<{ role: "user" | "assistant"; content: string }>,
@@ -76,36 +82,99 @@ function findProductContext(
   return { sku, title, priceText };
 }
 
-/**
- * Next recovery action based on markers already present in assistant history.
- * - no discount yet → offer discount
- * - discount offered, no bundle → offer bundle
- * - bundle offered → polite close
- * - already closed → null (don't loop)
- */
+function recoveryPercents(ctx: AgentContext): {
+  discount: number;
+  bundle: number;
+} {
+  return {
+    discount:
+      ctx.aiConfig?.effectiveRecoveryDiscountPercent ??
+      AI_SETTING_DEFAULTS.recoveryDiscountPercent,
+    bundle:
+      ctx.aiConfig?.effectiveRecoveryBundleDiscountPercent ??
+      AI_SETTING_DEFAULTS.recoveryBundleDiscountPercent,
+  };
+}
+
 function nextRecoveryAction(
   history: Array<{ role: "user" | "assistant"; content: string }>
 ): "discount" | "bundle" | "close" | null {
   const recent = lastAssistantMessages(history, 12).join("\n");
 
-  const closed =
-    recent.includes(MARKER_CLOSED) ||
-    /\[Deal closed\]/i.test(recent);
-  if (closed) return null;
+  if (recent.includes(MARKER_CLOSED) || /\[Deal closed\]/i.test(recent)) {
+    return null;
+  }
 
-  const bundleOffered =
-    recent.includes(MARKER_BUNDLE) ||
+  if (
     /\[Deal 2\/2/i.test(recent) ||
-    /\b2-pack bundle\b/i.test(recent);
-  if (bundleOffered) return "close";
+    /\b2-pack bundle\b/i.test(recent)
+  ) {
+    return "close";
+  }
 
-  const discountOffered =
-    recent.includes(MARKER_DISCOUNT) ||
+  if (
     /\[Deal 1\/2/i.test(recent) ||
-    /15\s*%\s*off/i.test(recent);
-  if (discountOffered) return "bundle";
+    /\d+\s*%\s*off/i.test(recent)
+  ) {
+    return "bundle";
+  }
 
   return "discount";
+}
+
+/** Detect an open recovery offer in chat (for checkout discount + qty). */
+export function getPendingRecoveryOffer(
+  history: Array<{ role: "user" | "assistant"; content: string }>
+): { type: "discount" | "bundle"; percent: number; defaultQty: number } | null {
+  const recent = lastAssistantMessages(history, 8).join("\n");
+  if (recent.includes(MARKER_CLOSED)) return null;
+
+  const bundleMatch = recent.match(
+    /\[Deal 2\/2[^\]]*(\d+)\s*%\s*off\]/i
+  ) || recent.match(/2-pack bundle[^\d]*(\d+)\s*%/i);
+  if (bundleMatch || /\[Deal 2\/2/i.test(recent) || /\b2-pack bundle\b/i.test(recent)) {
+    const percent = bundleMatch
+      ? Number(bundleMatch[1])
+      : AI_SETTING_DEFAULTS.recoveryBundleDiscountPercent;
+    return {
+      type: "bundle",
+      percent: Number.isFinite(percent)
+        ? percent
+        : AI_SETTING_DEFAULTS.recoveryBundleDiscountPercent,
+      defaultQty: 2,
+    };
+  }
+
+  const discMatch = recent.match(/\[Deal 1\/2[^\]]*(\d+)\s*%\s*off\]/i) ||
+    recent.match(/(\d+)\s*%\s*off/i);
+  if (discMatch || /\[Deal 1\/2/i.test(recent)) {
+    const percent = discMatch
+      ? Number(discMatch[1])
+      : AI_SETTING_DEFAULTS.recoveryDiscountPercent;
+    return {
+      type: "discount",
+      percent: Number.isFinite(percent)
+        ? percent
+        : AI_SETTING_DEFAULTS.recoveryDiscountPercent,
+      defaultQty: 1,
+    };
+  }
+
+  return null;
+}
+
+export function parseOrderQuantity(
+  text: string,
+  defaultQty = 1
+): number {
+  const m =
+    text.match(/(?:qty|quantity|pcs|pieces|units|items)\s*[:=]?\s*(\d{1,2})\b/i) ||
+    text.match(/\bx\s*(\d{1,2})\b/i) ||
+    text.match(/\b(\d{1,2})\s*(?:pcs|pieces|units|items|x)\b/i) ||
+    text.match(/\b(?:want|need|order|buy)\s+(\d{1,2})\b/i);
+  const n = m ? Number(m[1]) : defaultQty;
+  if (!Number.isFinite(n)) return defaultQty;
+  return Math.min(50, Math.max(1, Math.round(n)));
 }
 
 export function looksLikeOrderDecline(text: string): boolean {
@@ -126,10 +195,6 @@ export function looksLikeOfferAcceptance(text: string): boolean {
   return ACCEPT_OFFER_PATTERN.test(t) && t.length <= 80;
 }
 
-/**
- * After product details + ask-to-order, if customer declines:
- * 1) 15% discount  2) 2-pack bundle  3) polite stop
- */
 export async function tryDirectSalesRecoveryReply(
   ctx: AgentContext,
   latestUserMessage: string,
@@ -142,27 +207,21 @@ export async function tryDirectSalesRecoveryReply(
 
   const product = findProductContext(history);
   const productLabel = product.title || "this product";
+  const { discount, bundle } = recoveryPercents(ctx);
 
-  // Soft accept of a recovery offer → close with contact collection
   if (looksLikeOfferAcceptance(latestUserMessage)) {
-    const offeredBundle =
-      recentAssistant.includes(MARKER_BUNDLE) ||
-      /\[Deal 2\/2/i.test(recentAssistant);
-    const offeredDiscount =
-      recentAssistant.includes(MARKER_DISCOUNT) ||
-      /\[Deal 1\/2/i.test(recentAssistant) ||
-      /15\s*%\s*off/i.test(recentAssistant);
-    if (!offeredDiscount && !offeredBundle) return null;
+    const pending = getPendingRecoveryOffer(history);
+    if (!pending) return null;
 
-    if (offeredBundle) {
-      return `Great choice! I'll lock in the 2-pack deal for ${productLabel}${
+    if (pending.type === "bundle") {
+      return `Great choice! I'll lock in the 2-pack deal (*${pending.percent}% off*) for ${productLabel}${
         product.sku ? ` (${product.sku})` : ""
-      }.\n\nPlease share:\n1) Full name\n2) Phone (for confirmation)\n3) Full delivery address (with city)\n\nI'll place the order with the bundle discount right away.`;
+      }.\n\nPlease share:\n1) Full name\n2) Phone (for confirmation)\n3) Full delivery address (with city)\n4) Quantity if not 2\n\nI'll place the order with the bundle discount.`;
     }
 
-    return `Awesome — I'll apply the 15% discount on ${productLabel}${
+    return `Awesome — I'll apply *${pending.percent}% off* on ${productLabel}${
       product.sku ? ` (${product.sku})` : ""
-    }.\n\nPlease share:\n1) Full name\n2) Phone (for confirmation)\n3) Full delivery address (with city)\n\nOnce I have that, I'll confirm your order.`;
+    }.\n\nPlease share:\n1) Full name\n2) Phone (for confirmation)\n3) Full delivery address (with city)\n4) Quantity (optional, default 1)\n\nOnce I have that, I'll confirm your order at the discounted price.`;
   }
 
   if (!looksLikeOrderDecline(latestUserMessage)) return null;
@@ -172,10 +231,7 @@ export async function tryDirectSalesRecoveryReply(
   }
 
   const action = nextRecoveryAction(history);
-  if (!action) {
-    // Already closed once — don't spam the same close forever
-    return null;
-  }
+  if (!action) return null;
 
   let unitPrice: number | null = null;
   let currency = ctx.storeCurrency || "PKR";
@@ -193,9 +249,10 @@ export async function tryDirectSalesRecoveryReply(
   }
 
   if (action === "discount") {
+    const factor = 1 - discount / 100;
     const discounted =
       unitPrice != null && Number.isFinite(unitPrice)
-        ? formatMoney(Math.round(unitPrice * 0.85 * 100) / 100, currency)
+        ? formatMoney(Math.round(unitPrice * factor * 100) / 100, currency)
         : null;
     const was =
       unitPrice != null && Number.isFinite(unitPrice)
@@ -203,8 +260,8 @@ export async function tryDirectSalesRecoveryReply(
         : product.priceText;
 
     return [
-      MARKER_DISCOUNT,
-      `No worries at all! Before you go — I can offer you ${productLabel} at *15% off* just for you${
+      discountMarker(discount),
+      `No worries at all! Before you go — I can offer you ${productLabel} at *${discount}% off* just for you${
         was && discounted
           ? ` (${was} → ${discounted})`
           : discounted
@@ -213,14 +270,18 @@ export async function tryDirectSalesRecoveryReply(
       }.`,
       ``,
       `It's a limited WhatsApp deal. Want me to reserve it?`,
-      `Reply YES and share your name, phone, and delivery address — I'll place it with the discount.`,
+      `Reply YES and share your name, phone, delivery address, and quantity — I'll place it with the discount.`,
     ].join("\n");
   }
 
   if (action === "bundle") {
+    const factor = 1 - bundle / 100;
     const bundleTotal =
       unitPrice != null && Number.isFinite(unitPrice)
-        ? formatMoney(Math.round(unitPrice * 2 * 0.75 * 100) / 100, currency)
+        ? formatMoney(
+            Math.round(unitPrice * 2 * factor * 100) / 100,
+            currency
+          )
         : null;
     const twoFull =
       unitPrice != null && Number.isFinite(unitPrice)
@@ -228,8 +289,8 @@ export async function tryDirectSalesRecoveryReply(
         : null;
 
     return [
-      MARKER_BUNDLE,
-      `Totally fine — last offer: a *2-pack bundle* of ${productLabel} with about *25% off* the 2-unit total${
+      bundleMarker(bundle),
+      `Totally fine — last offer: a *2-pack bundle* of ${productLabel} with *${bundle}% off* the 2-unit total${
         twoFull && bundleTotal
           ? ` (${twoFull} → ${bundleTotal})`
           : bundleTotal
@@ -242,7 +303,6 @@ export async function tryDirectSalesRecoveryReply(
     ].join("\n");
   }
 
-  // action === "close"
   return [
     MARKER_CLOSED,
     `I understand — thank you for considering ${productLabel}. If you change your mind or need help with another product or an existing order, just message anytime. Have a wonderful day!`,

@@ -119,14 +119,29 @@ export async function getStoreSpamLimits(
     .eq("id", storeId)
     .maybeSingle();
 
-  return {
-    replyLimit:
-      data?.ai_conversation_reply_limit != null
-        ? Number(data.ai_conversation_reply_limit)
-        : null,
-    windowHours:
-      data?.ai_conversation_reply_window_hours != null
-        ? Number(data.ai_conversation_reply_window_hours)
-        : null,
-  };
+  let replyLimit =
+    data?.ai_conversation_reply_limit != null
+      ? Number(data.ai_conversation_reply_limit)
+      : null;
+  let windowHours =
+    data?.ai_conversation_reply_window_hours != null
+      ? Number(data.ai_conversation_reply_window_hours)
+      : null;
+
+  if (replyLimit == null || windowHours == null) {
+    try {
+      const { getPlatformAiDefaults } = await import("./platform-defaults");
+      const platform = await getPlatformAiDefaults();
+      if (replyLimit == null) {
+        replyLimit = platform.conversationReplyLimit;
+      }
+      if (windowHours == null) {
+        windowHours = platform.conversationReplyWindowHours;
+      }
+    } catch {
+      // platform defaults optional
+    }
+  }
+
+  return { replyLimit, windowHours };
 }
