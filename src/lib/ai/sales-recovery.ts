@@ -6,6 +6,11 @@ import {
 import type { AgentContext } from "./sales-tools";
 import { looksLikeCheckoutMessage } from "./checkout-reply";
 
+/** Stable markers so we can detect which recovery step already ran. */
+const MARKER_DISCOUNT = "[Deal 1/2 — 15% off]";
+const MARKER_BUNDLE = "[Deal 2/2 — 2-pack bundle]";
+const MARKER_CLOSED = "[Deal closed]";
+
 const DECLINE_PATTERN =
   /\b(don'?t\s+want|do\s+not\s+want|not\s+(interested|now|today|ordering|buying)|no\s+thanks|no\s+thank\s+you|nah+|nope|not\s+for\s+me|maybe\s+later|later|skip|cancel|i'?ll\s+pass|no\s+order|won'?t\s+(order|buy)|expensive|too\s+(much|pricey|costly)|can'?t\s+afford)\b/i;
 
@@ -15,18 +20,12 @@ const HARD_STOP_PATTERN =
 const ACCEPT_OFFER_PATTERN =
   /\b(yes|yeah|yep|ok|okay|sure|deal|fine|alright|i('ll| will)\s+take|interested|accept|go\s+ahead|order\s+(it|now|this)|book\s+it|let'?s\s+do\s+it)\b/i;
 
-const DISCOUNT_OFFERED_PATTERN =
-  /\b(15\s*%|\b15 percent\b|special\s+discount|limited\s+discount|off\s+just\s+for\s+you)\b/i;
-
-const BUNDLE_OFFERED_PATTERN =
-  /\b(2[\s-]?pack|bundle|buy\s+2|two\s+units|pack\s+of\s+2)\b/i;
-
 const PRODUCT_OFFERED_PATTERN =
-  /\b(would you like to order|want to order|place the order|share your full name|SKU:|Price:|From:)\b/i;
+  /\b(would you like to order|want to order|place the order|share your full name|SKU:|Price:|From:|Deal 1\/2|Deal 2\/2)\b/i;
 
 function lastAssistantMessages(
   history: Array<{ role: "user" | "assistant"; content: string }>,
-  n = 6
+  n = 12
 ): string[] {
   return history
     .filter((m) => m.role === "assistant")
@@ -37,7 +36,7 @@ function lastAssistantMessages(
 function findProductContext(
   history: Array<{ role: "user" | "assistant"; content: string }>
 ): { sku: string | null; title: string | null; priceText: string | null } {
-  const assistants = lastAssistantMessages(history, 8);
+  const assistants = lastAssistantMessages(history, 12);
   let sku: string | null = null;
   let title: string | null = null;
   let priceText: string | null = null;
@@ -55,7 +54,7 @@ function findProductContext(
         .find(
           (l) =>
             l &&
-            !/^(SKU:|Ref:|Price:|From:|Stock:|Options:|Variants|Bundles:|Would you)/i.test(
+            !/^(SKU:|Ref:|Price:|From:|Stock:|Options:|Variants|Bundles:|Would you|\[Deal)/i.test(
               l
             )
         );
@@ -77,16 +76,36 @@ function findProductContext(
   return { sku, title, priceText };
 }
 
-function recoveryStage(
+/**
+ * Next recovery action based on markers already present in assistant history.
+ * - no discount yet → offer discount
+ * - discount offered, no bundle → offer bundle
+ * - bundle offered → polite close
+ * - already closed → null (don't loop)
+ */
+function nextRecoveryAction(
   history: Array<{ role: "user" | "assistant"; content: string }>
-): "none" | "discount" | "bundle" | "exhausted" {
-  const recent = lastAssistantMessages(history, 8).join("\n");
-  const discount = DISCOUNT_OFFERED_PATTERN.test(recent);
-  const bundle = BUNDLE_OFFERED_PATTERN.test(recent);
-  if (bundle) return "exhausted";
-  if (discount) return "bundle";
-  if (PRODUCT_OFFERED_PATTERN.test(recent)) return "discount";
-  return "none";
+): "discount" | "bundle" | "close" | null {
+  const recent = lastAssistantMessages(history, 12).join("\n");
+
+  const closed =
+    recent.includes(MARKER_CLOSED) ||
+    /\[Deal closed\]/i.test(recent);
+  if (closed) return null;
+
+  const bundleOffered =
+    recent.includes(MARKER_BUNDLE) ||
+    /\[Deal 2\/2/i.test(recent) ||
+    /\b2-pack bundle\b/i.test(recent);
+  if (bundleOffered) return "close";
+
+  const discountOffered =
+    recent.includes(MARKER_DISCOUNT) ||
+    /\[Deal 1\/2/i.test(recent) ||
+    /15\s*%\s*off/i.test(recent);
+  if (discountOffered) return "bundle";
+
+  return "discount";
 }
 
 export function looksLikeOrderDecline(text: string): boolean {
@@ -94,8 +113,9 @@ export function looksLikeOrderDecline(text: string): boolean {
   if (t.length < 2) return false;
   if (looksLikeCheckoutMessage(t)) return false;
   if (HARD_STOP_PATTERN.test(t)) return true;
-  // Short nos after an ask-to-order
-  if (/^(no|nope|nah|not now|maybe later)\.?$/i.test(t)) return true;
+  if (/^(no|nope|nah|not now|maybe later|no thanks|don't want)\.?$/i.test(t)) {
+    return true;
+  }
   return DECLINE_PATTERN.test(t);
 }
 
@@ -109,14 +129,13 @@ export function looksLikeOfferAcceptance(text: string): boolean {
 /**
  * After product details + ask-to-order, if customer declines:
  * 1) 15% discount  2) 2-pack bundle  3) polite stop
- * Also handles soft "yes" to an offer by asking for name/phone/address.
  */
 export async function tryDirectSalesRecoveryReply(
   ctx: AgentContext,
   latestUserMessage: string,
   history: Array<{ role: "user" | "assistant"; content: string }>
 ): Promise<string | null> {
-  const assistants = lastAssistantMessages(history, 8);
+  const assistants = lastAssistantMessages(history, 12);
   const recentAssistant = assistants.join("\n");
   const hadProductPitch = PRODUCT_OFFERED_PATTERN.test(recentAssistant);
   if (!hadProductPitch) return null;
@@ -126,8 +145,13 @@ export async function tryDirectSalesRecoveryReply(
 
   // Soft accept of a recovery offer → close with contact collection
   if (looksLikeOfferAcceptance(latestUserMessage)) {
-    const offeredDiscount = DISCOUNT_OFFERED_PATTERN.test(recentAssistant);
-    const offeredBundle = BUNDLE_OFFERED_PATTERN.test(recentAssistant);
+    const offeredBundle =
+      recentAssistant.includes(MARKER_BUNDLE) ||
+      /\[Deal 2\/2/i.test(recentAssistant);
+    const offeredDiscount =
+      recentAssistant.includes(MARKER_DISCOUNT) ||
+      /\[Deal 1\/2/i.test(recentAssistant) ||
+      /15\s*%\s*off/i.test(recentAssistant);
     if (!offeredDiscount && !offeredBundle) return null;
 
     if (offeredBundle) {
@@ -144,10 +168,14 @@ export async function tryDirectSalesRecoveryReply(
   if (!looksLikeOrderDecline(latestUserMessage)) return null;
 
   if (HARD_STOP_PATTERN.test(latestUserMessage)) {
-    return "Understood — I won't push further. If you need anything later, just message us. Have a great day!";
+    return `${MARKER_CLOSED}\nUnderstood — I won't push further. If you need anything later, just message us. Have a great day!`;
   }
 
-  const stage = recoveryStage(history);
+  const action = nextRecoveryAction(history);
+  if (!action) {
+    // Already closed once — don't spam the same close forever
+    return null;
+  }
 
   let unitPrice: number | null = null;
   let currency = ctx.storeCurrency || "PKR";
@@ -164,7 +192,7 @@ export async function tryDirectSalesRecoveryReply(
     }
   }
 
-  if (stage === "discount" || stage === "none") {
+  if (action === "discount") {
     const discounted =
       unitPrice != null && Number.isFinite(unitPrice)
         ? formatMoney(Math.round(unitPrice * 0.85 * 100) / 100, currency)
@@ -175,8 +203,13 @@ export async function tryDirectSalesRecoveryReply(
         : product.priceText;
 
     return [
+      MARKER_DISCOUNT,
       `No worries at all! Before you go — I can offer you ${productLabel} at *15% off* just for you${
-        was && discounted ? ` (${was} → ${discounted})` : discounted ? ` (${discounted})` : ""
+        was && discounted
+          ? ` (${was} → ${discounted})`
+          : discounted
+            ? ` (${discounted})`
+            : ""
       }.`,
       ``,
       `It's a limited WhatsApp deal. Want me to reserve it?`,
@@ -184,7 +217,7 @@ export async function tryDirectSalesRecoveryReply(
     ].join("\n");
   }
 
-  if (stage === "bundle") {
+  if (action === "bundle") {
     const bundleTotal =
       unitPrice != null && Number.isFinite(unitPrice)
         ? formatMoney(Math.round(unitPrice * 2 * 0.75 * 100) / 100, currency)
@@ -195,8 +228,13 @@ export async function tryDirectSalesRecoveryReply(
         : null;
 
     return [
+      MARKER_BUNDLE,
       `Totally fine — last offer: a *2-pack bundle* of ${productLabel} with about *25% off* the 2-unit total${
-        twoFull && bundleTotal ? ` (${twoFull} → ${bundleTotal})` : bundleTotal ? ` (${bundleTotal})` : ""
+        twoFull && bundleTotal
+          ? ` (${twoFull} → ${bundleTotal})`
+          : bundleTotal
+            ? ` (${bundleTotal})`
+            : ""
       }.`,
       ``,
       `Great value if you want a spare or to share. Interested?`,
@@ -204,6 +242,9 @@ export async function tryDirectSalesRecoveryReply(
     ].join("\n");
   }
 
-  // Exhausted recovery steps
-  return `I understand — thank you for considering ${productLabel}. If you change your mind or need help with another product or an existing order, just message anytime. Have a wonderful day!`;
+  // action === "close"
+  return [
+    MARKER_CLOSED,
+    `I understand — thank you for considering ${productLabel}. If you change your mind or need help with another product or an existing order, just message anytime. Have a wonderful day!`,
+  ].join("\n");
 }
