@@ -3,6 +3,7 @@ import { encrypt } from "@/lib/crypto";
 import { requireResellerStore } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { DEFAULT_SHOPIFY_SCOPES } from "@/lib/shopify";
+import { clearStoreShopifyOrders } from "@/lib/orders/clear-shopify-orders";
 
 export async function POST(request: NextRequest) {
   try {
@@ -32,7 +33,7 @@ export async function POST(request: NextRequest) {
 
     const { data: current } = await supabase
       .from("stores")
-      .select("shopify_api_secret")
+      .select("shopify_api_secret, shop_domain")
       .eq("id", storeId)
       .single();
 
@@ -57,6 +58,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const previousShop = (current?.shop_domain as string | null) ?? null;
+    const shopChanged =
+      previousShop != null &&
+      previousShop.toLowerCase() !== normalizedShop.toLowerCase();
+
+    if (shopChanged) {
+      const cleared = await clearStoreShopifyOrders(supabase, storeId);
+      if (cleared.error) {
+        return NextResponse.json({ error: cleared.error }, { status: 500 });
+      }
+    }
+
     const updatePayload: Record<string, string | null> = {
       store_name: storeName?.trim() || null,
       shop_domain: normalizedShop,
@@ -66,6 +79,11 @@ export async function POST(request: NextRequest) {
 
     if (apiSecret?.trim()) {
       updatePayload.shopify_api_secret = encrypt(apiSecret.trim());
+    }
+
+    // Switching shops invalidates the previous OAuth token
+    if (shopChanged) {
+      updatePayload.shopify_access_token = null;
     }
 
     const { error } = await supabase
@@ -97,15 +115,9 @@ export async function DELETE() {
     const { storeId } = await requireResellerStore();
     const supabase = createAdminClient();
 
-    // Drop synced Shopify orders so a previous shop's orders do not linger
-    const { error: ordersError } = await supabase
-      .from("orders")
-      .delete()
-      .eq("store_id", storeId)
-      .eq("source", "shopify");
-
-    if (ordersError) {
-      return NextResponse.json({ error: ordersError.message }, { status: 500 });
+    const cleared = await clearStoreShopifyOrders(supabase, storeId);
+    if (cleared.error) {
+      return NextResponse.json({ error: cleared.error }, { status: 500 });
     }
 
     const { error } = await supabase

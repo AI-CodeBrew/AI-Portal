@@ -9,6 +9,7 @@ import {
 } from "@/lib/shopify";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getAuthUser } from "@/lib/auth";
+import { clearStoreShopifyOrders } from "@/lib/orders/clear-shopify-orders";
 
 export async function GET(request: NextRequest) {
   const user = await getAuthUser();
@@ -43,14 +44,17 @@ export async function GET(request: NextRequest) {
 
   const { data: store } = await supabase
     .from("stores")
-    .select("shopify_api_key, shopify_api_secret, shopify_scopes")
+    .select("shopify_api_key, shopify_api_secret, shopify_scopes, shop_domain")
     .eq("id", user.storeId)
     .single();
 
   const apiSecret = resolveShopifySecret(store?.shopify_api_secret ?? null);
   if (!store?.shopify_api_key || !apiSecret) {
     return NextResponse.redirect(
-      new URL("/dashboard/integrations/shopify?error=missing_credentials", request.url)
+      new URL(
+        "/dashboard/integrations/shopify?error=missing_credentials",
+        request.url
+      )
     );
   }
 
@@ -73,6 +77,13 @@ export async function GET(request: NextRequest) {
       return NextResponse.redirect(
         new URL("/dashboard/integrations/shopify?error=shop_taken", request.url)
       );
+    }
+
+    // Drop leftover Shopify orders so a previous shop never mixes with this one.
+    // Fresh sync after connect will import only the newly connected shop.
+    const cleared = await clearStoreShopifyOrders(supabase, user.storeId);
+    if (cleared.error) {
+      throw new Error(cleared.error);
     }
 
     const { error } = await supabase
@@ -101,7 +112,10 @@ export async function GET(request: NextRequest) {
   } catch (err) {
     console.error("Shopify OAuth callback error:", err);
     return NextResponse.redirect(
-      new URL("/dashboard/integrations/shopify?error=oauth_callback", request.url)
+      new URL(
+        "/dashboard/integrations/shopify?error=oauth_callback",
+        request.url
+      )
     );
   }
 }
