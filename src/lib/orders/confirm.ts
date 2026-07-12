@@ -5,6 +5,7 @@ import {
 } from "@/lib/shopify";
 import { notifyCustomerOrderConfirmed } from "@/lib/orders/notify";
 import { sendOrderFollowUp } from "@/lib/orders/follow-up";
+import { toWhatsAppRecipient } from "@/lib/whatsapp";
 import type { AuthUser } from "@/lib/auth";
 import type { Store } from "@/lib/types";
 
@@ -27,7 +28,11 @@ export interface ConfirmOrderResult {
 export async function confirmPortalOrder(
   orderId: string,
   user: ConfirmActor,
-  options?: { followUpTemplateId?: string | null }
+  options?: {
+    followUpTemplateId?: string | null;
+    /** WhatsApp chat number (msg.from) — country hint + delivery fallback */
+    conversationPhone?: string | null;
+  }
 ): Promise<ConfirmOrderResult | { error: string; status: number }> {
   const supabase = createAdminClient();
 
@@ -134,6 +139,13 @@ export async function confirmPortalOrder(
     customer?.name ||
     null;
 
+  if (customerPhone) {
+    customerPhone = toWhatsAppRecipient(
+      customerPhone,
+      options?.conversationPhone
+    );
+  }
+
   if (
     !customerPhone &&
     shopifyOrderId &&
@@ -174,6 +186,7 @@ export async function confirmPortalOrder(
   const whatsappResult = await notifyCustomerOrderConfirmed({
     store: store as Store,
     customerPhone,
+    conversationPhone: options?.conversationPhone ?? null,
     customerName,
     orderNumber: order.order_number ?? orderId.slice(0, 8),
     items: order.items as Array<{ title: string; quantity: number }>,

@@ -6,7 +6,7 @@ import {
   getStoreProductBySku,
   extractSkuFromText,
 } from "@/lib/products/products-service";
-import { normalizePhone } from "@/lib/whatsapp";
+import { toWhatsAppRecipient } from "@/lib/whatsapp";
 import { formatMoney } from "@/lib/currency";
 import type { Store } from "@/lib/types";
 import type { StoreProduct } from "@/lib/products/types";
@@ -205,6 +205,8 @@ function nextPortalOrderNumber(): string {
 export async function createWhatsAppAiOrder(params: {
   store: Store;
   conversationCustomerId?: string | null;
+  /** WhatsApp chat number the customer is messaging from */
+  conversationPhone?: string | null;
   lineItems: WhatsAppOrderLineInput[];
   shipping: WhatsAppOrderShipping;
   discountPercent?: number;
@@ -227,7 +229,10 @@ export async function createWhatsAppAiOrder(params: {
   | { ok: false; error: string }
 > {
   const { store, shipping } = params;
-  const phoneForOrder = normalizePhone(shipping.phone);
+  const phoneForOrder = toWhatsAppRecipient(
+    shipping.phone,
+    params.conversationPhone
+  );
   if (!phoneForOrder || phoneForOrder.length < 10) {
     return {
       ok: false,
@@ -476,6 +481,8 @@ export async function createWhatsAppAiOrder(params: {
     email: "whatsapp-ai@system",
     role: "system",
     storeId: store.id,
+  }, {
+    conversationPhone: params.conversationPhone ?? phoneForOrder,
   });
 
   let confirmed = false;

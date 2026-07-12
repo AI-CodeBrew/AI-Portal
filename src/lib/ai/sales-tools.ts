@@ -950,6 +950,7 @@ export async function executeSalesTool(
         const created = await createWhatsAppAiOrder({
           store,
           conversationCustomerId: customerId,
+          conversationPhone: customerPhone,
           lineItems: rawLines.map((li) => ({
             variant_id:
               li.variant_id != null ? String(li.variant_id) : undefined,

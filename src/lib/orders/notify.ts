@@ -3,36 +3,30 @@ import {
   sendWhatsAppTemplate,
   sendWhatsAppText,
   formatOrderConfirmationParams,
-  normalizePhone,
+  toWhatsAppRecipient,
 } from "@/lib/whatsapp";
 import { getApprovedWhatsAppOrderTemplate } from "@/lib/whatsapp/message-templates";
 import { formatMoney } from "@/lib/currency";
 import type { Store } from "@/lib/types";
 
 export type WhatsAppNotifyResult =
-  | { sent: true; method: "template" | "text" }
-  | { sent: false; reason: string };
+  | { sent: true; method: "template" | "text"; to: string }
+  | { sent: false; reason: string; to?: string };
 
-export async function notifyCustomerOrderConfirmed(params: {
+async function sendOneConfirmation(params: {
   store: Store;
-  customerPhone: string | null | undefined;
+  to: string;
   customerName?: string | null;
   orderNumber: string;
   items: Array<{ title: string; quantity: number }>;
   total: number;
   currency?: string | null;
 }): Promise<WhatsAppNotifyResult> {
-  const phone = params.customerPhone?.trim();
-  if (!phone) {
-    return { sent: false, reason: "No customer phone on file" };
-  }
-
   const waCreds = getStoreWhatsAppCredentials(params.store);
   if (!waCreds) {
-    return { sent: false, reason: "WhatsApp not connected for this store" };
+    return { sent: false, reason: "WhatsApp not connected for this store", to: params.to };
   }
 
-  const to = normalizePhone(phone);
   const bodyParams = formatOrderConfirmationParams(
     params.orderNumber,
     params.items,
@@ -48,14 +42,20 @@ export async function notifyCustomerOrderConfirmed(params: {
     await sendWhatsAppTemplate({
       phoneNumberId: waCreds.phoneNumberId,
       accessToken: waCreds.accessToken,
-      to,
+      to: params.to,
       templateName,
       languageCode,
       bodyParams,
     });
-    return { sent: true, method: "template" };
+    console.log(
+      `[notify] order confirmation template sent to=${params.to} template=${templateName}`
+    );
+    return { sent: true, method: "template", to: params.to };
   } catch (templateErr) {
-    console.warn("WhatsApp template failed, falling back to text:", templateErr);
+    console.warn(
+      `[notify] template failed to=${params.to}, falling back to text:`,
+      templateErr
+    );
 
     try {
       const text = formatOrderConfirmationMessage(
@@ -68,16 +68,65 @@ export async function notifyCustomerOrderConfirmed(params: {
       await sendWhatsAppText({
         phoneNumberId: waCreds.phoneNumberId,
         accessToken: waCreds.accessToken,
-        to,
+        to: params.to,
         text,
       });
-      return { sent: true, method: "text" };
+      console.log(`[notify] order confirmation text sent to=${params.to}`);
+      return { sent: true, method: "text", to: params.to };
     } catch (textErr) {
       const message =
         textErr instanceof Error ? textErr.message : "WhatsApp send failed";
-      return { sent: false, reason: message };
+      console.error(`[notify] confirmation failed to=${params.to}: ${message}`);
+      return { sent: false, reason: message, to: params.to };
     }
   }
+}
+
+export async function notifyCustomerOrderConfirmed(params: {
+  store: Store;
+  customerPhone: string | null | undefined;
+  /** Open WhatsApp chat number — used as country hint + delivery fallback */
+  conversationPhone?: string | null;
+  customerName?: string | null;
+  orderNumber: string;
+  items: Array<{ title: string; quantity: number }>;
+  total: number;
+  currency?: string | null;
+}): Promise<WhatsAppNotifyResult> {
+  const hint = params.conversationPhone ?? null;
+  const primary = params.customerPhone?.trim()
+    ? toWhatsAppRecipient(params.customerPhone, hint)
+    : "";
+  const conversation = hint ? toWhatsAppRecipient(hint) : "";
+
+  if (!primary && !conversation) {
+    return { sent: false, reason: "No customer phone on file" };
+  }
+
+  const targets = Array.from(
+    new Set([primary, conversation].filter((p) => p.length >= 10))
+  );
+
+  let lastFail: WhatsAppNotifyResult = {
+    sent: false,
+    reason: "No valid WhatsApp recipient",
+  };
+
+  for (const to of targets) {
+    const result = await sendOneConfirmation({
+      store: params.store,
+      to,
+      customerName: params.customerName,
+      orderNumber: params.orderNumber,
+      items: params.items,
+      total: params.total,
+      currency: params.currency,
+    });
+    if (result.sent) return result;
+    lastFail = result;
+  }
+
+  return lastFail;
 }
 
 export function formatOrderConfirmationMessage(

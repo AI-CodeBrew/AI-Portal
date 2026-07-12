@@ -19,11 +19,18 @@ function formatOrderSuccess(params: {
   order_number?: string;
   total_formatted?: string;
   whatsapp_sent?: boolean;
+  whatsapp_error?: string;
   phone: string;
   customer_name: string;
   quantity: number;
   discountPercent?: number;
 }): string {
+  const confirmLine = params.whatsapp_sent
+    ? `A confirmation was also sent to ${params.phone}.`
+    : params.whatsapp_error
+      ? `Order is confirmed here. We couldn't deliver a separate WhatsApp confirmation to ${params.phone} yet (${params.whatsapp_error}).`
+      : `Confirmation details are above. If you need them resent to ${params.phone}, reply here.`;
+
   return [
     `✅ Order *${params.order_number}* confirmed!`,
     params.quantity > 1 ? `Qty: ${params.quantity}` : null,
@@ -32,9 +39,7 @@ function formatOrderSuccess(params: {
       : null,
     params.total_formatted ? `Total: ${params.total_formatted}` : null,
     `We'll prepare it for dispatch.`,
-    params.whatsapp_sent
-      ? `A confirmation was also sent to ${params.phone}.`
-      : `Confirmation will be sent to ${params.phone} shortly.`,
+    confirmLine,
     `Thank you, ${params.customer_name}!`,
   ]
     .filter(Boolean)
@@ -143,6 +148,7 @@ export async function tryDirectCheckoutReply(
       order_number?: string;
       total_formatted?: string;
       whatsapp_sent?: boolean;
+      whatsapp_error?: string;
     };
     return formatOrderSuccess({
       ...r,
