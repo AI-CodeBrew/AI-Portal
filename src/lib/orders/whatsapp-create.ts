@@ -404,7 +404,7 @@ export async function createWhatsAppAiOrder(params: {
         status: "pending",
         source: "whatsapp_ai",
         shipping_address: portalShipping,
-        shopify_sync_status: "pending",
+        shopify_sync_status: "synced",
       })
       .select("id")
       .single();
