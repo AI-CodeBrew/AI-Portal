@@ -41,8 +41,31 @@ export function stripInternalAiMarkers(text: string): string {
     .replace(/^\s*\[Deal\s+[^\]]+\]\s*\n?/gim, "")
     .replace(/^\s*\[Deal closed\]\s*\n?/gim, "")
     .replace(/^\s*\[Ref:\s*[^\]]+\]\s*\n?/gim, "")
+    .replace(/^\s*\[Image:\s*https?:\/\/[^\]]+\]\s*\n?/gim, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+/** Pull image URLs embedded as [Image: https://...] and return clean customer text. */
+export function extractOutboundMedia(text: string): {
+  text: string;
+  imageUrls: string[];
+} {
+  const imageUrls: string[] = [];
+  const withoutImages = text.replace(
+    /^\s*\[Image:\s*(https?:\/\/[^\]]+)\]\s*\n?/gim,
+    (_, url: string) => {
+      const cleaned = String(url).trim();
+      if (/^https:\/\//i.test(cleaned) && !imageUrls.includes(cleaned)) {
+        imageUrls.push(cleaned);
+      }
+      return "";
+    }
+  );
+  return {
+    text: stripInternalAiMarkers(withoutImages),
+    imageUrls: imageUrls.slice(0, 3),
+  };
 }
 
 function lastAssistantMessages(
@@ -219,7 +242,28 @@ function priceCompareLine(
     Math.round(unitPrice * qty * (1 - percent / 100) * 100) / 100,
     currency
   );
-  return `Was: ${was} → Now: *${now}*`;
+  // WhatsApp strikethrough: ~text~
+  return `~${was}~  →  *${now}*`;
+}
+
+function toBoldPercent(percent: number): string {
+  // Math bold digits for hype (WhatsApp-safe unicode)
+  const map: Record<string, string> = {
+    "0": "𝟬",
+    "1": "𝟭",
+    "2": "𝟮",
+    "3": "𝟯",
+    "4": "𝟰",
+    "5": "𝟱",
+    "6": "𝟲",
+    "7": "𝟳",
+    "8": "𝟴",
+    "9": "𝟵",
+  };
+  return String(percent)
+    .split("")
+    .map((c) => map[c] ?? c)
+    .join("");
 }
 
 function recoveryPercents(ctx: AgentContext): {
@@ -385,9 +429,8 @@ export async function tryDirectSalesRecoveryReply(
 
     if (pending.type === "bundle") {
       return [
-        `*${pending.percent}% off* 2-pack on ${productLabel}${
-          product.sku ? ` (${product.sku})` : ""
-        }.`,
+        `🔥 Locked in: *2-PACK* at *${pending.percent}% OFF*`,
+        productLabel + (product.sku ? ` (${product.sku})` : ""),
         compare,
         orderDetailsTemplate({ defaultQty: 2 }),
       ]
@@ -396,9 +439,8 @@ export async function tryDirectSalesRecoveryReply(
     }
 
     return [
-      `*${pending.percent}% off* on ${productLabel}${
-        product.sku ? ` (${product.sku})` : ""
-      }.`,
+      `🔥 Deal locked: *${pending.percent}% OFF*`,
+      productLabel + (product.sku ? ` (${product.sku})` : ""),
       compare,
       orderDetailsTemplate(),
     ]
@@ -417,12 +459,14 @@ export async function tryDirectSalesRecoveryReply(
 
   if (action === "discount") {
     const compare = priceCompareLine(unitPrice, discount, currency, 1);
+    const boldPct = toBoldPercent(discount);
 
     return [
       discountMarker(discount),
-      `Special offer: *${discount}% off* ${productLabel}`,
+      `🔥 𝗙𝗟𝗔𝗧 ${boldPct}% 𝗢𝗙𝗙 🔥`,
+      productLabel,
       compare,
-      `Reply YES to take it, then:`,
+      `⚡ Limited WhatsApp deal — reply *YES* to grab it:`,
       orderDetailsTemplate(),
     ]
       .filter(Boolean)
@@ -431,12 +475,14 @@ export async function tryDirectSalesRecoveryReply(
 
   if (action === "bundle") {
     const compare = priceCompareLine(unitPrice, bundle, currency, 2);
+    const boldPct = toBoldPercent(bundle);
 
     return [
       bundleMarker(bundle),
-      `Last offer: *2-pack* at *${bundle}% off*`,
+      `💥 𝟮-𝗣𝗔𝗖𝗞 𝗕𝗨𝗡𝗗𝗟𝗘 · ${boldPct}% 𝗢𝗙𝗙 💥`,
+      productLabel,
       compare,
-      `Reply YES, then:`,
+      `🎁 Best value — reply *YES* to lock it:`,
       orderDetailsTemplate({ defaultQty: 2 }),
     ]
       .filter(Boolean)

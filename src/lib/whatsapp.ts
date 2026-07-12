@@ -118,6 +118,60 @@ export async function sendWhatsAppText({
   }
 }
 
+/** Send an image by public HTTPS URL (Cloud API link message). */
+export async function sendWhatsAppImage({
+  phoneNumberId,
+  accessToken,
+  to,
+  imageUrl,
+  caption,
+}: {
+  phoneNumberId: string;
+  accessToken: string;
+  to: string;
+  imageUrl: string;
+  caption?: string;
+}): Promise<void> {
+  const link = imageUrl.trim();
+  if (!/^https:\/\//i.test(link)) {
+    throw new Error("WhatsApp image URL must be a public https link");
+  }
+
+  const res = await fetch(`${GRAPH_API}/${phoneNumberId}/messages`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      messaging_product: "whatsapp",
+      to: normalizePhone(to),
+      type: "image",
+      image: {
+        link,
+        ...(caption?.trim() ? { caption: caption.trim().slice(0, 1024) } : {}),
+      },
+    }),
+  });
+
+  if (!res.ok) {
+    const raw = await res.text();
+    let detail = raw;
+    try {
+      const parsed = JSON.parse(raw) as {
+        error?: { message?: string; error_user_msg?: string };
+      };
+      detail =
+        parsed.error?.error_user_msg ||
+        parsed.error?.message ||
+        raw;
+    } catch {
+      // keep raw
+    }
+    throw new Error(detail);
+  }
+}
+
 export function normalizePhone(phone: string): string {
   return phone.replace(/\D/g, "");
 }

@@ -9,6 +9,8 @@ export type SearchProduct = {
   title?: string;
   sku?: string;
   description?: string | null;
+  imageUrl?: string | null;
+  image_url?: string | null;
   options?: Array<{ name?: string; values?: string[] }>;
   bundles?: Array<{
     quantity?: number;
@@ -43,7 +45,18 @@ export function formatProductsReply(products: SearchProduct[]): string {
     return "Couldn't find that product. Send the name or SKU again?";
   }
 
+  const imageMarkers: string[] = [];
+
   const blocks = products.slice(0, 2).map((p) => {
+    const imageUrl = (p.imageUrl || p.image_url || "").trim();
+    if (
+      /^https:\/\//i.test(imageUrl) &&
+      imageMarkers.length < 2 &&
+      !imageMarkers.some((m) => m.includes(imageUrl))
+    ) {
+      imageMarkers.push(`[Image: ${imageUrl}]`);
+    }
+
     const realVariants = (p.variants ?? []).filter(
       (v) => v.title && v.title !== "Default"
     );
@@ -116,7 +129,9 @@ export function formatProductsReply(products: SearchProduct[]): string {
     (p.variants ?? []).some((v) => v.title && v.title !== "Default")
   );
 
-  return `${blocks.join("\n\n")}${multi}\n\nWant to order?\n${orderDetailsTemplate(
+  const prefix = imageMarkers.length ? `${imageMarkers.join("\n")}\n` : "";
+
+  return `${prefix}${blocks.join("\n\n")}${multi}\n\nWant to order?\n${orderDetailsTemplate(
     { includeVariantHint: hasVariants }
   )}`;
 }

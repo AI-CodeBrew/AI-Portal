@@ -19,11 +19,12 @@ import {
   resolveAdLinkBySlug,
 } from "@/lib/ads/ad-links-service";
 import { parseAdRefFromMessage } from "@/lib/ads/whatsapp-ad-links";
-import { stripInternalAiMarkers } from "@/lib/ai/sales-recovery";
+import { extractOutboundMedia } from "@/lib/ai/sales-recovery";
 import {
   getStoreWhatsAppCredentials,
   resolveMetaSecret,
   sendWhatsAppText,
+  sendWhatsAppImage,
   normalizePhone,
 } from "@/lib/whatsapp";
 import { getPlatformMetaCredentials } from "@/lib/platform/meta-settings";
@@ -42,7 +43,8 @@ function verifyWebhookSignature(
 async function sendReply(
   activeStore: Store,
   customerPhone: string,
-  text: string
+  text: string,
+  imageUrls: string[] = []
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const waCreds = getStoreWhatsAppCredentials(activeStore);
   if (!waCreds) {
@@ -52,13 +54,33 @@ async function sendReply(
     return { ok: false, error };
   }
 
+  const to = normalizePhone(customerPhone);
+
   try {
-    await sendWhatsAppText({
-      phoneNumberId: waCreds.phoneNumberId,
-      accessToken: waCreds.accessToken,
-      to: normalizePhone(customerPhone),
-      text,
-    });
+    for (const imageUrl of imageUrls.slice(0, 3)) {
+      try {
+        await sendWhatsAppImage({
+          phoneNumberId: waCreds.phoneNumberId,
+          accessToken: waCreds.accessToken,
+          to,
+          imageUrl,
+        });
+      } catch (imgErr) {
+        console.error(
+          `[whatsapp-webhook] image send failed (${imageUrl}):`,
+          imgErr
+        );
+      }
+    }
+
+    if (text.trim()) {
+      await sendWhatsAppText({
+        phoneNumberId: waCreds.phoneNumberId,
+        accessToken: waCreds.accessToken,
+        to,
+        text,
+      });
+    }
     return { ok: true };
   } catch (err) {
     const error = err instanceof Error ? err.message : "WhatsApp send failed";
@@ -389,11 +411,13 @@ export async function handleWhatsAppWebhookMessage(
               "Thanks for your message! Our team will get back to you shortly.";
           }
 
-          const customerFacingText = stripInternalAiMarkers(replyText);
+          const { text: customerFacingText, imageUrls } =
+            extractOutboundMedia(replyText);
           const sent = await sendReply(
             activeStore,
             customerPhone,
-            customerFacingText
+            customerFacingText,
+            imageUrls
           );
 
           if (sent.ok) {

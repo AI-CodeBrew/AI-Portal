@@ -3,6 +3,7 @@ import {
   checkStock,
   getOrderStatus,
   getShopCurrency,
+  getShopifyCatalogProduct,
 } from "@/lib/shopify";
 import { formatMoney } from "@/lib/currency";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -638,6 +639,7 @@ export async function executeSalesTool(
             let priceFormatted = "See store for price";
             let inStock = true;
             let variantTitle = "Default";
+            let imageUrl: string | null = null;
 
             if (variantId) {
               try {
@@ -663,6 +665,23 @@ export async function executeSalesTool(
               }
             }
 
+            const numericPid = Number(pid);
+            if (Number.isFinite(numericPid) && numericPid > 0) {
+              try {
+                const full = await getShopifyCatalogProduct(
+                  shopDomain,
+                  shopifyToken,
+                  numericPid
+                );
+                imageUrl = full?.images?.[0]?.url ?? null;
+              } catch (err) {
+                console.error(
+                  `[search_products] SKU registry image fetch failed for ${pid}:`,
+                  err
+                );
+              }
+            }
+
             shopifyMapped.unshift({
               id: pid,
               title: row.product_title || row.sku,
@@ -670,6 +689,7 @@ export async function executeSalesTool(
               sku: row.sku,
               source: "shopify",
               currency,
+              imageUrl,
               variants: [
                 {
                   id: variantId || pid,
