@@ -6,6 +6,11 @@ import { getRecentChatHistory } from "@/lib/ai/chat-history";
 import { quotaLimitMessage } from "@/lib/ai/plans";
 import { tryConsumeAiQuota } from "@/lib/ai/quota";
 import {
+  getStoreSpamLimits,
+  isConversationAiExhausted,
+  nextAiReplySpamState,
+} from "@/lib/ai/conversation-spam";
+import {
   resolveStoreAiConfig,
   personalizeOpeningMessage,
 } from "@/lib/ai/store-ai-settings";
@@ -237,21 +242,18 @@ export async function handleWhatsAppWebhookMessage(
             continue;
           }
 
-          // Per-conversation AI reply limit → hand off to human
+          // Per-conversation AI reply limit (+ optional time window) → hand off
           {
-            const { data: storeLimits } = await supabase
-              .from("stores")
-              .select("ai_conversation_reply_limit")
-              .eq("id", activeStore.id)
-              .maybeSingle();
-            const replyLimit =
-              storeLimits?.ai_conversation_reply_limit != null
-                ? Number(storeLimits.ai_conversation_reply_limit)
-                : null;
-            const currentCount = Number(
-              (conversation as { ai_reply_count?: number }).ai_reply_count ?? 0
-            );
-            if (replyLimit != null && currentCount >= replyLimit) {
+            const limits = await getStoreSpamLimits(activeStore.id);
+            if (
+              isConversationAiExhausted(
+                conversation as {
+                  ai_reply_count?: number;
+                  ai_reply_window_started_at?: string | null;
+                },
+                limits
+              )
+            ) {
               await supabase
                 .from("whatsapp_conversations")
                 .update({
@@ -388,27 +390,21 @@ export async function handleWhatsAppWebhookMessage(
               content: replyText,
             });
 
-            // Count AI replies toward per-conversation limit
-            const prevCount = Number(
-              (conversation as { ai_reply_count?: number }).ai_reply_count ?? 0
+            // Count AI replies toward per-conversation limit (+ optional window)
+            const limitsAfter = await getStoreSpamLimits(activeStore.id);
+            const spamNext = nextAiReplySpamState(
+              conversation as {
+                ai_reply_count?: number;
+                ai_reply_window_started_at?: string | null;
+              },
+              limitsAfter
             );
-            const nextCount = prevCount + 1;
-            const { data: storeLimitsAfter } = await supabase
-              .from("stores")
-              .select("ai_conversation_reply_limit")
-              .eq("id", activeStore.id)
-              .maybeSingle();
-            const replyLimitAfter =
-              storeLimitsAfter?.ai_conversation_reply_limit != null
-                ? Number(storeLimitsAfter.ai_conversation_reply_limit)
-                : null;
-            const exhausted =
-              replyLimitAfter != null && nextCount >= replyLimitAfter;
             await supabase
               .from("whatsapp_conversations")
               .update({
-                ai_reply_count: nextCount,
-                ...(exhausted
+                ai_reply_count: spamNext.ai_reply_count,
+                ai_reply_window_started_at: spamNext.ai_reply_window_started_at,
+                ...(spamNext.exhausted
                   ? {
                       status: "human_handoff",
                       ai_exhausted: true,

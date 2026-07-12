@@ -3,6 +3,7 @@ import { requireResellerStore } from "@/lib/auth";
 import {
   getStoreAiUsage,
   updateConversationReplyLimit,
+  updateConversationReplyWindowHours,
 } from "@/lib/ai/quota";
 
 export async function GET() {
@@ -20,12 +21,26 @@ export async function PATCH(request: NextRequest) {
     const { storeId } = await requireResellerStore();
     const body = (await request.json()) as {
       conversationReplyLimit?: number | null;
+      conversationReplyWindowHours?: number | null;
     };
 
     if (body.conversationReplyLimit !== undefined) {
       const result = await updateConversationReplyLimit(
         storeId,
         body.conversationReplyLimit
+      );
+      if (!result.ok) {
+        return NextResponse.json(
+          { error: result.error ?? "Failed to update" },
+          { status: 400 }
+        );
+      }
+    }
+
+    if (body.conversationReplyWindowHours !== undefined) {
+      const result = await updateConversationReplyWindowHours(
+        storeId,
+        body.conversationReplyWindowHours
       );
       if (!result.ok) {
         return NextResponse.json(

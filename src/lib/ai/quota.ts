@@ -20,6 +20,8 @@ export interface StoreAiUsage {
   topupCredits: number;
   /** Max AI replies per conversation before human handoff */
   conversationReplyLimit: number | null;
+  /** Hours window for that reply limit; null = lifetime of the chat */
+  conversationReplyWindowHours: number | null;
 }
 
 type QuotaRpcResult = {
@@ -37,7 +39,9 @@ export async function getStoreAiUsage(storeId: string): Promise<StoreAiUsage> {
 
   const { data: store } = await supabase
     .from("stores")
-    .select("plan_id, ai_topup_credits, ai_conversation_reply_limit")
+    .select(
+      "plan_id, ai_topup_credits, ai_conversation_reply_limit, ai_conversation_reply_window_hours"
+    )
     .eq("id", storeId)
     .maybeSingle();
 
@@ -71,6 +75,10 @@ export async function getStoreAiUsage(storeId: string): Promise<StoreAiUsage> {
     conversationReplyLimit:
       store?.ai_conversation_reply_limit != null
         ? Number(store.ai_conversation_reply_limit)
+        : null,
+    conversationReplyWindowHours:
+      store?.ai_conversation_reply_window_hours != null
+        ? Number(store.ai_conversation_reply_window_hours)
         : null,
   };
 }
@@ -113,6 +121,7 @@ export async function tryConsumeAiQuota(storeId: string): Promise<{
     limitReached: !result.allowed || used >= limit,
     topupCredits: base.topupCredits,
     conversationReplyLimit: base.conversationReplyLimit,
+    conversationReplyWindowHours: base.conversationReplyWindowHours,
   };
 
   return {
@@ -135,6 +144,30 @@ export async function updateConversationReplyLimit(
     .update({ ai_conversation_reply_limit: limit })
     .eq("id", storeId);
   if (error) return { ok: false, error: error.message };
+  return { ok: true };
+}
+
+export async function updateConversationReplyWindowHours(
+  storeId: string,
+  hours: number | null
+): Promise<{ ok: boolean; error?: string }> {
+  if (
+    hours != null &&
+    (!Number.isFinite(hours) || hours < 1 || hours > 168)
+  ) {
+    return { error: "Time window must be between 1 and 168 hours", ok: false };
+  }
+  const supabase = createAdminClient();
+  const { error } = await supabase
+    .from("stores")
+    .update({ ai_conversation_reply_window_hours: hours })
+    .eq("id", storeId);
+  if (error) {
+    const hint = error.message.includes("ai_conversation_reply_window_hours")
+      ? " — Run migration 025_ai_reply_window.sql in Supabase"
+      : "";
+    return { ok: false, error: error.message + hint };
+  }
   return { ok: true };
 }
 

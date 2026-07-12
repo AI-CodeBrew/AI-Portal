@@ -97,38 +97,77 @@ export function PlanUsageCard({ compact }: { compact?: boolean }) {
             AI replies per chat (spam protection)
           </p>
           <p className="mt-1 text-xs text-slate-600">
-            After this many AI replies in one conversation, the chat switches to
-            Human and appears under “AI exhausted”.
+            After this many AI replies in one conversation
+            {usage.conversationReplyWindowHours != null
+              ? ` within ${usage.conversationReplyWindowHours} hour${
+                  usage.conversationReplyWindowHours === 1 ? "" : "s"
+                }`
+              : ""}
+            , the chat switches to Human and appears under “AI exhausted”.
           </p>
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <input
-              type="number"
-              min={1}
-              max={500}
-              placeholder="Unlimited"
-              defaultValue={usage.conversationReplyLimit ?? ""}
-              id="ai-reply-limit"
-              className="w-28 rounded-lg border border-slate-200 px-3 py-2 text-sm"
-            />
+          <div className="mt-3 flex flex-wrap items-end gap-3">
+            <label className="flex flex-col gap-1 text-[10px] font-semibold uppercase text-slate-500">
+              Max AI replies
+              <input
+                type="number"
+                min={1}
+                max={500}
+                placeholder="Unlimited"
+                defaultValue={usage.conversationReplyLimit ?? ""}
+                id="ai-reply-limit"
+                className="w-28 rounded-lg border border-slate-200 px-3 py-2 text-sm font-normal text-slate-900"
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-[10px] font-semibold uppercase text-slate-500">
+              Within (hours)
+              <select
+                id="ai-reply-window"
+                defaultValue={
+                  usage.conversationReplyWindowHours != null
+                    ? String(usage.conversationReplyWindowHours)
+                    : ""
+                }
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-normal text-slate-900"
+              >
+                <option value="">Whole chat (no time limit)</option>
+                <option value="1">1 hour</option>
+                <option value="2">2 hours</option>
+                <option value="6">6 hours</option>
+                <option value="12">12 hours</option>
+                <option value="24">24 hours</option>
+                <option value="48">48 hours</option>
+                <option value="72">72 hours</option>
+              </select>
+            </label>
             <button
               type="button"
               onClick={async () => {
-                const el = document.getElementById(
+                const limitEl = document.getElementById(
                   "ai-reply-limit"
                 ) as HTMLInputElement | null;
-                const raw = el?.value?.trim() ?? "";
-                const value = raw === "" ? null : Number(raw);
+                const windowEl = document.getElementById(
+                  "ai-reply-window"
+                ) as HTMLSelectElement | null;
+                const rawLimit = limitEl?.value?.trim() ?? "";
+                const rawWindow = windowEl?.value?.trim() ?? "";
+                const value = rawLimit === "" ? null : Number(rawLimit);
+                const windowHours =
+                  rawWindow === "" ? null : Number(rawWindow);
                 const res = await fetch("/api/store/ai-usage", {
                   method: "PATCH",
                   headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ conversationReplyLimit: value }),
+                  body: JSON.stringify({
+                    conversationReplyLimit: value,
+                    conversationReplyWindowHours: windowHours,
+                  }),
                 });
                 const data = await res.json();
                 if (res.ok && data.usage) setUsage(data.usage);
+                else if (data.error) alert(data.error);
               }}
               className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800"
             >
-              Save limit
+              Save
             </button>
             <button
               type="button"
@@ -136,15 +175,22 @@ export function PlanUsageCard({ compact }: { compact?: boolean }) {
                 const res = await fetch("/api/store/ai-usage", {
                   method: "PATCH",
                   headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ conversationReplyLimit: null }),
+                  body: JSON.stringify({
+                    conversationReplyLimit: null,
+                    conversationReplyWindowHours: null,
+                  }),
                 });
                 const data = await res.json();
                 if (res.ok && data.usage) {
                   setUsage(data.usage);
-                  const el = document.getElementById(
+                  const limitEl = document.getElementById(
                     "ai-reply-limit"
                   ) as HTMLInputElement | null;
-                  if (el) el.value = "";
+                  const windowEl = document.getElementById(
+                    "ai-reply-window"
+                  ) as HTMLSelectElement | null;
+                  if (limitEl) limitEl.value = "";
+                  if (windowEl) windowEl.value = "";
                 }
               }}
               className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-white"
@@ -154,7 +200,18 @@ export function PlanUsageCard({ compact }: { compact?: boolean }) {
           </div>
           {usage.conversationReplyLimit != null && (
             <p className="mt-2 text-xs font-medium text-slate-700">
-              Current limit: {usage.conversationReplyLimit} AI replies / chat
+              Current: {usage.conversationReplyLimit} AI replies / chat
+              {usage.conversationReplyWindowHours != null
+                ? ` every ${usage.conversationReplyWindowHours} hour${
+                    usage.conversationReplyWindowHours === 1 ? "" : "s"
+                  }`
+                : " (whole conversation)"}
+            </p>
+          )}
+          {usage.conversationReplyLimit == null && (
+            <p className="mt-2 text-xs text-slate-500">
+              No per-chat reply cap set — AI can reply freely until monthly
+              quota.
             </p>
           )}
         </div>
