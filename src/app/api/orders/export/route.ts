@@ -29,6 +29,38 @@ export async function GET(request: NextRequest) {
     const dateTo = searchParams.get("dateTo");
 
     const supabase = createAdminClient();
+
+    const { data: store } = await supabase
+      .from("stores")
+      .select("shopify_access_token")
+      .eq("id", storeId)
+      .single();
+    const shopifyConnected = Boolean(store?.shopify_access_token);
+
+    if (!shopifyConnected && source === "shopify") {
+      const headers = [
+        "order_number",
+        "status",
+        "source",
+        "customer_name",
+        "customer_phone",
+        "total",
+        "currency",
+        "shipping_address",
+        "items",
+        "created_at",
+      ];
+      const csv = headers.join(",");
+      const filename = `orders-${new Date().toISOString().slice(0, 10)}.csv`;
+      return new NextResponse(csv, {
+        status: 200,
+        headers: {
+          "Content-Type": "text/csv; charset=utf-8",
+          "Content-Disposition": `attachment; filename="${filename}"`,
+        },
+      });
+    }
+
     let query = supabase
       .from("orders")
       .select(
@@ -40,6 +72,8 @@ export async function GET(request: NextRequest) {
 
     if (source && source !== "all") {
       query = query.eq("source", source as OrderSource);
+    } else if (!shopifyConnected) {
+      query = query.neq("source", "shopify");
     }
     if (status && status !== "all") {
       query = query.eq("status", status as OrderStatus);

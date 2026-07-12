@@ -5,6 +5,14 @@ import { isSalesAgentConfigured } from "@/lib/ai/run-sales-agent";
 import { getStoreOrderTotals } from "@/lib/orders/store-order-totals";
 import { countStoreProducts } from "@/lib/products/products-service";
 
+/** Hide leftover Shopify-synced orders when the store is disconnected. */
+function scopeOrdersQuery<T extends { neq: (column: string, value: string) => T }>(
+  query: T,
+  shopifyConnected: boolean
+): T {
+  return shopifyConnected ? query : query.neq("source", "shopify");
+}
+
 export interface DashboardSetupStep {
   id: string;
   label: string;
@@ -251,26 +259,38 @@ export async function getResellerDashboardStats(
     chartOrdersRes,
     topOrdersRes,
   ] = await Promise.all([
-    supabase
-      .from("orders")
-      .select("*", { count: "exact", head: true })
-      .eq("store_id", storeId)
-      .eq("status", "pending"),
-    supabase
-      .from("orders")
-      .select("*", { count: "exact", head: true })
-      .eq("store_id", storeId)
-      .eq("status", "confirmed"),
-    supabase
-      .from("orders")
-      .select("*", { count: "exact", head: true })
-      .eq("store_id", storeId)
-      .eq("status", "cancelled"),
-    supabase
-      .from("orders")
-      .select("*", { count: "exact", head: true })
-      .eq("store_id", storeId)
-      .not("tracking_number", "is", null),
+    scopeOrdersQuery(
+      supabase
+        .from("orders")
+        .select("*", { count: "exact", head: true })
+        .eq("store_id", storeId)
+        .eq("status", "pending"),
+      shopifyConnected
+    ),
+    scopeOrdersQuery(
+      supabase
+        .from("orders")
+        .select("*", { count: "exact", head: true })
+        .eq("store_id", storeId)
+        .eq("status", "confirmed"),
+      shopifyConnected
+    ),
+    scopeOrdersQuery(
+      supabase
+        .from("orders")
+        .select("*", { count: "exact", head: true })
+        .eq("store_id", storeId)
+        .eq("status", "cancelled"),
+      shopifyConnected
+    ),
+    scopeOrdersQuery(
+      supabase
+        .from("orders")
+        .select("*", { count: "exact", head: true })
+        .eq("store_id", storeId)
+        .not("tracking_number", "is", null),
+      shopifyConnected
+    ),
     supabase
       .from("whatsapp_conversations")
       .select("*", { count: "exact", head: true })
@@ -295,12 +315,17 @@ export async function getResellerDashboardStats(
       .select("id", { count: "exact", head: true })
       .eq("store_id", storeId)
       .limit(1),
-    supabase
-      .from("orders")
-      .select("id, order_number, status, total, currency, created_at, customers(name)")
-      .eq("store_id", storeId)
-      .order("created_at", { ascending: false })
-      .limit(5),
+    scopeOrdersQuery(
+      supabase
+        .from("orders")
+        .select(
+          "id, order_number, status, total, currency, created_at, customers(name)"
+        )
+        .eq("store_id", storeId)
+        .order("created_at", { ascending: false })
+        .limit(5),
+      shopifyConnected
+    ),
     supabase
       .from("whatsapp_conversations")
       .select("id, customer_phone, status, updated_at")
@@ -325,60 +350,84 @@ export async function getResellerDashboardStats(
       .eq("store_id", storeId)
       .gte("created_at", previousStartIso)
       .lt("created_at", previousEndIso),
-    supabase
-      .from("orders")
-      .select("*", { count: "exact", head: true })
-      .eq("store_id", storeId)
-      .gte("created_at", currentStartIso),
-    supabase
-      .from("orders")
-      .select("*", { count: "exact", head: true })
-      .eq("store_id", storeId)
-      .gte("created_at", previousStartIso)
-      .lt("created_at", previousEndIso),
-    supabase
-      .from("orders")
-      .select("*", { count: "exact", head: true })
-      .eq("store_id", storeId)
-      .eq("status", "confirmed")
-      .gte("created_at", currentStartIso),
-    supabase
-      .from("orders")
-      .select("*", { count: "exact", head: true })
-      .eq("store_id", storeId)
-      .eq("status", "confirmed")
-      .gte("created_at", previousStartIso)
-      .lt("created_at", previousEndIso),
-    supabase
-      .from("orders")
-      .select("total, currency")
-      .eq("store_id", storeId)
-      .eq("status", "confirmed")
-      .gte("created_at", currentStartIso),
-    supabase
-      .from("orders")
-      .select("total, currency")
-      .eq("store_id", storeId)
-      .eq("status", "confirmed")
-      .gte("created_at", previousStartIso)
-      .lt("created_at", previousEndIso),
+    scopeOrdersQuery(
+      supabase
+        .from("orders")
+        .select("*", { count: "exact", head: true })
+        .eq("store_id", storeId)
+        .gte("created_at", currentStartIso),
+      shopifyConnected
+    ),
+    scopeOrdersQuery(
+      supabase
+        .from("orders")
+        .select("*", { count: "exact", head: true })
+        .eq("store_id", storeId)
+        .gte("created_at", previousStartIso)
+        .lt("created_at", previousEndIso),
+      shopifyConnected
+    ),
+    scopeOrdersQuery(
+      supabase
+        .from("orders")
+        .select("*", { count: "exact", head: true })
+        .eq("store_id", storeId)
+        .eq("status", "confirmed")
+        .gte("created_at", currentStartIso),
+      shopifyConnected
+    ),
+    scopeOrdersQuery(
+      supabase
+        .from("orders")
+        .select("*", { count: "exact", head: true })
+        .eq("store_id", storeId)
+        .eq("status", "confirmed")
+        .gte("created_at", previousStartIso)
+        .lt("created_at", previousEndIso),
+      shopifyConnected
+    ),
+    scopeOrdersQuery(
+      supabase
+        .from("orders")
+        .select("total, currency")
+        .eq("store_id", storeId)
+        .eq("status", "confirmed")
+        .gte("created_at", currentStartIso),
+      shopifyConnected
+    ),
+    scopeOrdersQuery(
+      supabase
+        .from("orders")
+        .select("total, currency")
+        .eq("store_id", storeId)
+        .eq("status", "confirmed")
+        .gte("created_at", previousStartIso)
+        .lt("created_at", previousEndIso),
+      shopifyConnected
+    ),
     supabase
       .from("whatsapp_conversations")
       .select("created_at")
       .eq("store_id", storeId)
       .gte("created_at", currentStartIso),
-    supabase
-      .from("orders")
-      .select("created_at")
-      .eq("store_id", storeId)
-      .gte("created_at", currentStartIso),
-    supabase
-      .from("orders")
-      .select("items, total, currency, status")
-      .eq("store_id", storeId)
-      .in("status", ["confirmed", "pending"])
-      .order("created_at", { ascending: false })
-      .limit(200),
+    scopeOrdersQuery(
+      supabase
+        .from("orders")
+        .select("created_at")
+        .eq("store_id", storeId)
+        .gte("created_at", currentStartIso),
+      shopifyConnected
+    ),
+    scopeOrdersQuery(
+      supabase
+        .from("orders")
+        .select("items, total, currency, status")
+        .eq("store_id", storeId)
+        .in("status", ["confirmed", "pending"])
+        .order("created_at", { ascending: false })
+        .limit(200),
+      shopifyConnected
+    ),
   ]);
 
   const aiConfigured = Boolean(

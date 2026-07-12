@@ -43,6 +43,35 @@ export async function GET(request: NextRequest) {
 
     const supabase = createAdminClient();
 
+    const { data: store } = await supabase
+      .from("stores")
+      .select("shopify_access_token")
+      .eq("id", storeId)
+      .single();
+    const shopifyConnected = Boolean(store?.shopify_access_token);
+
+    // When Shopify is disconnected, never surface leftover synced Shopify orders
+    if (!shopifyConnected && source === "shopify") {
+      return NextResponse.json({
+        orders: [],
+        page,
+        limit,
+        total: 0,
+        totalPages: 1,
+        ...(includeCounts
+          ? {
+              pendingCount: 0,
+              statusCounts: {
+                all: 0,
+                pending: 0,
+                confirmed: 0,
+                cancelled: 0,
+              },
+            }
+          : {}),
+      });
+    }
+
     let query = supabase
       .from("orders")
       .select("*, customers(phone, name)", { count: "exact" })
@@ -55,6 +84,8 @@ export async function GET(request: NextRequest) {
     }
     if (source && source !== "all") {
       query = query.eq("source", source as OrderSource);
+    } else if (!shopifyConnected) {
+      query = query.neq("source", "shopify");
     }
     query = applyDateFilters(query, dateFrom, dateTo);
 
@@ -65,6 +96,8 @@ export async function GET(request: NextRequest) {
         .eq("store_id", storeId);
       if (source && source !== "all") {
         q = q.eq("source", source as OrderSource);
+      } else if (!shopifyConnected) {
+        q = q.neq("source", "shopify");
       }
       q = applyDateFilters(q, dateFrom, dateTo);
       return q;

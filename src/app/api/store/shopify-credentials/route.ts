@@ -97,6 +97,17 @@ export async function DELETE() {
     const { storeId } = await requireResellerStore();
     const supabase = createAdminClient();
 
+    // Drop synced Shopify orders so a previous shop's orders do not linger
+    const { error: ordersError } = await supabase
+      .from("orders")
+      .delete()
+      .eq("store_id", storeId)
+      .eq("source", "shopify");
+
+    if (ordersError) {
+      return NextResponse.json({ error: ordersError.message }, { status: 500 });
+    }
+
     const { error } = await supabase
       .from("stores")
       .update({

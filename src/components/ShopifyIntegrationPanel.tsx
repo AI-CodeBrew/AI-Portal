@@ -9,6 +9,7 @@ import {
 } from "@/components/ConnectionStatus";
 import { BrandIconBox } from "@/components/BrandIcons";
 import { useStoreStatus } from "@/hooks/useStoreStatus";
+import { clearOrdersListCache } from "@/lib/orders-list-cache";
 
 const ERROR_MESSAGES: Record<string, string> = {
   missing_credentials:
@@ -124,7 +125,7 @@ export function ShopifyIntegrationPanel({ appUrl }: { appUrl: string }) {
     if (disconnecting) return;
     if (
       !confirm(
-        "Disconnect Shopify from this store? Order sync will stop until you connect again. You can then link a different Shopify store."
+        "Disconnect Shopify from this store? Synced Shopify orders will be removed from this portal until you connect again. WhatsApp orders are kept."
       )
     ) {
       return;
@@ -140,13 +141,14 @@ export function ShopifyIntegrationPanel({ appUrl }: { appUrl: string }) {
       if (!res.ok) {
         throw new Error(data.error ?? "Failed to disconnect");
       }
+      clearOrdersListCache();
       setShopDomain("");
       setApiKey("");
       setApiSecret("");
       setScopes(DEFAULT_SHOPIFY_SCOPES);
       setMessage({
         type: "success",
-        text: "Shopify disconnected. Enter a new shop domain and connect again anytime.",
+        text: "Shopify disconnected. Previous Shopify orders were removed from this portal. Connect a store again anytime.",
       });
       await refreshStore();
     } catch (err) {
