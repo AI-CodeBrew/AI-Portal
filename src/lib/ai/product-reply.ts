@@ -50,10 +50,16 @@ export function formatProductsReply(products: SearchProduct[]): string {
     const defaultVariant = (p.variants ?? []).find(
       (v) => !v.title || v.title === "Default"
     );
-    const basePrice =
+    const basePriceRaw =
       realVariants[0]?.price_formatted ||
       defaultVariant?.price_formatted ||
       p.variants?.[0]?.price_formatted;
+    const basePrice =
+      basePriceRaw &&
+      !/see store for price/i.test(basePriceRaw) &&
+      basePriceRaw !== "0"
+        ? basePriceRaw
+        : null;
 
     const optionsLines = (p.options ?? [])
       .filter((o) => o.name && (o.values?.length ?? 0) > 0)

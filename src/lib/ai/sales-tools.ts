@@ -630,6 +630,37 @@ export async function executeSalesTool(
             ) {
               continue;
             }
+
+            const variantId = String(row.shopify_variant_id || "").trim();
+            let price = "0";
+            let priceFormatted = "See store for price";
+            let inStock = true;
+            let variantTitle = "Default";
+
+            if (variantId) {
+              try {
+                const stock = await checkStock(
+                  shopDomain,
+                  shopifyToken,
+                  variantId
+                );
+                price = stock.price;
+                priceFormatted = formatVariantPrice(
+                  stock.price,
+                  currency ?? "USD"
+                );
+                inStock = stock.in_stock;
+                if (stock.title && stock.title !== "Default Title") {
+                  variantTitle = stock.title;
+                }
+              } catch (err) {
+                console.error(
+                  `[search_products] SKU registry price fetch failed for ${variantId}:`,
+                  err
+                );
+              }
+            }
+
             shopifyMapped.unshift({
               id: pid,
               title: row.product_title || row.sku,
@@ -639,15 +670,14 @@ export async function executeSalesTool(
               currency,
               variants: [
                 {
-                  id: String(row.shopify_variant_id || pid),
-                  title: "Default",
-                  price: "0",
+                  id: variantId || pid,
+                  title: variantTitle,
+                  price,
                   currency,
-                  price_formatted: "See store for price",
-                  in_stock: true,
+                  price_formatted: priceFormatted,
+                  in_stock: inStock,
                 },
               ],
-              note: "Matched by SKU — call check_stock with variant_id for live price/stock, or search by product title for full variants.",
             });
           }
         }
