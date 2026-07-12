@@ -3,6 +3,7 @@ import {
   extractProductSearchQuery,
 } from "@/lib/products/products-service";
 import { executeSalesTool, type AgentContext } from "./sales-tools";
+import { orderDetailsTemplate } from "./order-details-template";
 
 export type SearchProduct = {
   title?: string;
@@ -122,11 +123,13 @@ export function formatProductsReply(products: SearchProduct[]): string {
       ? `\n\nI found ${Math.min(products.length, 3)} matching products. Tell me which one you want.`
       : "";
 
-  return `${blocks.join("\n\n")}${multi}\n\nWould you like to order this? Please share your full name, phone, and delivery address${
-    products.some((p) => (p.variants ?? []).some((v) => v.title && v.title !== "Default"))
-      ? " — and which variant (size/color) you want"
-      : ""
-  }.`;
+  const hasVariants = products.some((p) =>
+    (p.variants ?? []).some((v) => v.title && v.title !== "Default")
+  );
+
+  return `${blocks.join("\n\n")}${multi}\n\nWould you like to order this?\n\n${orderDetailsTemplate(
+    { includeVariantHint: hasVariants }
+  )}`;
 }
 
 function shouldTryDirectProductLookup(message: string): boolean {

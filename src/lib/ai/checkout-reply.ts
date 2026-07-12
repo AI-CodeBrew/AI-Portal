@@ -1,155 +1,75 @@
-import { extractSkuFromText } from "@/lib/products/products-service";
-import { normalizePhone } from "@/lib/whatsapp";
 import { executeSalesTool, type AgentContext } from "./sales-tools";
 import {
   getPendingRecoveryOffer,
   parseOrderQuantity,
 } from "./sales-recovery";
+import {
+  findProductRefFromHistory,
+  looksLikeCheckoutMessage,
+  parseCheckoutDetails,
+} from "./checkout-parse";
+import { orderDetailsTemplate } from "./order-details-template";
 
-const CHECKOUT_INTENT =
-  /\b(place\s+(an\s+)?order|want\s+to\s+(order|buy)|order\s+(this|it|now)|buy\s+(this|it|now)|checkout|confirm\s+(my\s+)?order|i('m| am)?\s+(ready|ordering))\b/i;
+export {
+  looksLikeCheckoutMessage,
+  parseCheckoutDetails,
+} from "./checkout-parse";
 
-const HAS_CONTACT_HINT =
-  /\b(name|naam|phone|ph|mobile|whatsapp|address|addr|city|deliver)\b/i;
-
-export function looksLikeCheckoutMessage(text: string): boolean {
-  const t = text.trim();
-  if (t.length < 8) return false;
-  const digits = t.replace(/\D/g, "");
-  const hasPhone = digits.length >= 10;
-  if (CHECKOUT_INTENT.test(t) && (hasPhone || HAS_CONTACT_HINT.test(t))) {
-    return true;
-  }
-  // Name + phone + address style without explicit "order"
-  if (hasPhone && HAS_CONTACT_HINT.test(t) && t.length >= 25) {
-    return true;
-  }
-  return false;
-}
-
-export function parseCheckoutDetails(text: string): {
-  customer_name: string;
+function formatOrderSuccess(params: {
+  order_number?: string;
+  total_formatted?: string;
+  whatsapp_sent?: boolean;
   phone: string;
-  address1: string;
-  city: string;
-  address2?: string;
-} | null {
-  const t = text.replace(/\r/g, "\n").trim();
-  const digitsAll = t.replace(/\D/g, "");
-  if (digitsAll.length < 10) return null;
-
-  const phoneMatch =
-    t.match(
-      /(?:phone|ph|mobile|whatsapp|number|cell)[:\s\-]*([+\d][\d\s\-()]{8,}\d)/i
-    ) || t.match(/([+]?\d[\d\s\-()]{8,}\d)/);
-
-  const phoneRaw = phoneMatch?.[1]?.trim() ?? "";
-  const phone = normalizePhone(phoneRaw || digitsAll.slice(-12));
-  if (phone.length < 10) return null;
-
-  const nameMatch = t.match(
-    /(?:name|naam|customer)[:\s\-]*([A-Za-z][A-Za-z\s.'-]{1,60})/i
-  );
-  let customer_name = nameMatch?.[1]?.trim() ?? "";
-  if (!customer_name) {
-    // First non-empty line that isn't phone/address labeled
-    const firstLine = t
-      .split("\n")
-      .map((l) => l.trim())
-      .find(
-        (l) =>
-          l &&
-          !/^(phone|ph|address|city|sku|order)/i.test(l) &&
-          !/\d{8,}/.test(l)
-      );
-    if (firstLine && firstLine.length <= 60) {
-      customer_name = firstLine.replace(/^(i am|i'm|my name is)\s+/i, "").trim();
-    }
-  }
-  if (!customer_name || customer_name.length < 2) return null;
-
-  const addressMatch = t.match(
-    /(?:address|addr|delivery(?:\s+address)?|shipping)[:\s\-]*([^\n]+)/i
-  );
-  let address1 = addressMatch?.[1]?.trim() ?? "";
-  if (!address1) {
-    const lines = t
-      .split("\n")
-      .map((l) => l.trim())
-      .filter(Boolean)
-      .filter(
-        (l) =>
-          !normalizePhone(l).includes(phone) &&
-          !new RegExp(customer_name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i").test(
-            l
-          ) &&
-          !/^(name|phone|ph|sku|order|city)\b/i.test(l)
-      );
-    address1 = lines.sort((a, b) => b.length - a.length)[0] ?? "";
-  }
-  if (!address1 || address1.length < 5) return null;
-
-  const cityMatch = t.match(/(?:city|district)[:\s\-]*([A-Za-z][A-Za-z\s-]{1,40})/i);
-  let city = cityMatch?.[1]?.trim() ?? "";
-  if (!city) {
-    // Heuristic: last comma segment of address
-    const parts = address1.split(",").map((p) => p.trim()).filter(Boolean);
-    if (parts.length >= 2) {
-      city = parts[parts.length - 1];
-      address1 = parts.slice(0, -1).join(", ");
-    } else {
-      city = "N/A";
-    }
-  }
-
-  return { customer_name, phone, address1, city };
-}
-
-function findProductRefFromHistory(
-  history: Array<{ role: "user" | "assistant"; content: string }>
-): { sku?: string; variant_id?: string; product_id?: string; source?: string } | null {
-  const combined = [...history].reverse();
-
-  for (const msg of combined) {
-    const sku = extractSkuFromText(msg.content);
-    if (sku) {
-      return { sku, source: "portal" };
-    }
-  }
-
-  for (const msg of combined) {
-    if (msg.role !== "assistant") continue;
-    const ref =
-      msg.content.match(/\bRef:\s*([0-9a-f-]{36}|\d{5,})\b/i)?.[1] ||
-      msg.content.match(
-        /\b([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/i
-      )?.[1] ||
-      msg.content.match(/\bvariant[_ ]?id[:\s]*([0-9a-f-]{36}|\d{5,})\b/i)?.[1];
-    if (ref) {
-      return {
-        variant_id: ref,
-        source: /^\d+$/.test(ref) ? "shopify" : "portal",
-      };
-    }
-  }
-
-  return null;
+  customer_name: string;
+  quantity: number;
+  discountPercent?: number;
+}): string {
+  return [
+    `✅ Order *${params.order_number}* confirmed!`,
+    params.quantity > 1 ? `Qty: ${params.quantity}` : null,
+    params.discountPercent != null
+      ? `Discount applied: ${params.discountPercent}%`
+      : null,
+    params.total_formatted ? `Total: ${params.total_formatted}` : null,
+    `We'll prepare it for dispatch.`,
+    params.whatsapp_sent
+      ? `A confirmation was also sent to ${params.phone}.`
+      : `Confirmation will be sent to ${params.phone} shortly.`,
+    `Thank you, ${params.customer_name}!`,
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 /**
  * When the customer shares name/phone/address to place an order, create + confirm
- * without depending on the LLM calling tools.
+ * on the portal (with recovery discount/qty when applicable).
  */
 export async function tryDirectCheckoutReply(
   ctx: AgentContext,
   latestUserMessage: string,
   history: Array<{ role: "user" | "assistant"; content: string }>
 ): Promise<string | null> {
-  if (!looksLikeCheckoutMessage(latestUserMessage)) return null;
+  const pendingOffer = getPendingRecoveryOffer(history);
+  const shouldTry =
+    looksLikeCheckoutMessage(latestUserMessage, history) ||
+    (pendingOffer != null &&
+      parseCheckoutDetails(latestUserMessage) != null);
+
+  if (!shouldTry) return null;
 
   const details = parseCheckoutDetails(latestUserMessage);
   if (!details) {
-    return "I can place that order — please share your full name, phone number, and complete delivery address (with city).";
+    // Only nudge if they clearly tried to check out / accept an offer
+    if (
+      looksLikeCheckoutMessage(latestUserMessage, history) ||
+      pendingOffer
+    ) {
+      return `I can place that order — please send your details like this:\n\n${orderDetailsTemplate(
+        { defaultQty: pendingOffer?.defaultQty }
+      )}`;
+    }
+    return null;
   }
 
   const productRef =
@@ -162,12 +82,15 @@ export async function tryDirectCheckoutReply(
     return "I have your details. Which product should I order? Please send the product name or SKU again.";
   }
 
-  const pendingOffer = getPendingRecoveryOffer(history);
   const quantity = parseOrderQuantity(
     latestUserMessage,
     pendingOffer?.defaultQty ?? 1
   );
   const discountPercent = pendingOffer?.percent;
+
+  console.log(
+    `[checkout] placing order store=${ctx.store.id} sku=${productRef.sku ?? ""} variant=${productRef.variant_id ?? ""} qty=${quantity} discount=${discountPercent ?? 0} phone=${details.phone}`
+  );
 
   const { result } = await executeSalesTool(
     "create_draft_order",
@@ -205,19 +128,14 @@ export async function tryDirectCheckoutReply(
       order_number?: string;
       total_formatted?: string;
       whatsapp_sent?: boolean;
-      message?: string;
     };
-    return [
-      `✅ Order *${r.order_number}* confirmed!`,
-      r.total_formatted ? `Total: ${r.total_formatted}` : null,
-      `We'll prepare it for dispatch.`,
-      r.whatsapp_sent
-        ? `A confirmation was also sent to ${details.phone}.`
-        : `Confirmation will be sent to ${details.phone} shortly.`,
-      `Thank you, ${details.customer_name}!`,
-    ]
-      .filter(Boolean)
-      .join("\n");
+    return formatOrderSuccess({
+      ...r,
+      phone: details.phone,
+      customer_name: details.customer_name,
+      quantity,
+      discountPercent,
+    });
   }
 
   const err =

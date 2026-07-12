@@ -19,6 +19,7 @@ import {
   resolveAdLinkBySlug,
 } from "@/lib/ads/ad-links-service";
 import { parseAdRefFromMessage } from "@/lib/ads/whatsapp-ad-links";
+import { stripInternalAiMarkers } from "@/lib/ai/sales-recovery";
 import {
   getStoreWhatsAppCredentials,
   resolveMetaSecret,
@@ -388,12 +389,18 @@ export async function handleWhatsAppWebhookMessage(
               "Thanks for your message! Our team will get back to you shortly.";
           }
 
-          const sent = await sendReply(activeStore, customerPhone, replyText);
+          const customerFacingText = stripInternalAiMarkers(replyText);
+          const sent = await sendReply(
+            activeStore,
+            customerPhone,
+            customerFacingText
+          );
 
           if (sent.ok) {
             await supabase.from("whatsapp_messages").insert({
               conversation_id: conversation.id,
               direction: "out",
+              // Keep internal markers in stored history so recovery stage still works
               content: replyText,
             });
 
@@ -428,7 +435,7 @@ export async function handleWhatsAppWebhookMessage(
             await supabase.from("whatsapp_messages").insert({
               conversation_id: conversation.id,
               direction: "out",
-              content: `[Not delivered to WhatsApp] ${replyText}\n\nError: ${sent.error}`,
+              content: `[Not delivered to WhatsApp] ${customerFacingText}\n\nError: ${sent.error}`,
             });
           }
         } catch (err) {

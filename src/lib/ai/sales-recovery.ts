@@ -5,7 +5,11 @@ import {
 } from "@/lib/products/products-service";
 import { AI_SETTING_DEFAULTS } from "./ai-settings-types";
 import type { AgentContext } from "./sales-tools";
-import { looksLikeCheckoutMessage } from "./checkout-reply";
+import {
+  looksLikeCheckoutMessage,
+  parseCheckoutDetails,
+} from "./checkout-parse";
+import { orderDetailsTemplate } from "./order-details-template";
 
 const DECLINE_PATTERN =
   /\b(don'?t\s+want|do\s+not\s+want|not\s+(interested|now|today|ordering|buying)|no\s+thanks|no\s+thank\s+you|nah+|nope|not\s+for\s+me|maybe\s+later|later|skip|cancel|i'?ll\s+pass|no\s+order|won'?t\s+(order|buy)|expensive|too\s+(much|pricey|costly)|can'?t\s+afford)\b/i;
@@ -28,6 +32,15 @@ function bundleMarker(percent: number) {
 }
 
 const MARKER_CLOSED = "[Deal closed]";
+
+/** Strip internal recovery markers before sending to the customer on WhatsApp. */
+export function stripInternalAiMarkers(text: string): string {
+  return text
+    .replace(/^\s*\[Deal\s+[^\]]+\]\s*\n?/gim, "")
+    .replace(/^\s*\[Deal closed\]\s*\n?/gim, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
 
 function lastAssistantMessages(
   history: Array<{ role: "user" | "assistant"; content: string }>,
@@ -190,9 +203,11 @@ export function looksLikeOrderDecline(text: string): boolean {
 
 export function looksLikeOfferAcceptance(text: string): boolean {
   const t = text.trim();
+  // If contact details are already in the message, checkout places the order
+  if (parseCheckoutDetails(t)) return false;
   if (looksLikeCheckoutMessage(t)) return false;
   if (looksLikeOrderDecline(t)) return false;
-  return ACCEPT_OFFER_PATTERN.test(t) && t.length <= 80;
+  return ACCEPT_OFFER_PATTERN.test(t) && t.length <= 120;
 }
 
 export async function tryDirectSalesRecoveryReply(
@@ -209,6 +224,7 @@ export async function tryDirectSalesRecoveryReply(
   const productLabel = product.title || "this product";
   const { discount, bundle } = recoveryPercents(ctx);
 
+  // Soft accept without details yet → ask for name / phone / address
   if (looksLikeOfferAcceptance(latestUserMessage)) {
     const pending = getPendingRecoveryOffer(history);
     if (!pending) return null;
@@ -216,12 +232,12 @@ export async function tryDirectSalesRecoveryReply(
     if (pending.type === "bundle") {
       return `Great choice! I'll lock in the 2-pack deal (*${pending.percent}% off*) for ${productLabel}${
         product.sku ? ` (${product.sku})` : ""
-      }.\n\nPlease share:\n1) Full name\n2) Phone (for confirmation)\n3) Full delivery address (with city)\n4) Quantity if not 2\n\nI'll place the order with the bundle discount.`;
+      }.\n\n${orderDetailsTemplate({ defaultQty: 2 })}\n\nI'll place the order with the bundle discount as soon as you send this.`;
     }
 
     return `Awesome — I'll apply *${pending.percent}% off* on ${productLabel}${
       product.sku ? ` (${product.sku})` : ""
-    }.\n\nPlease share:\n1) Full name\n2) Phone (for confirmation)\n3) Full delivery address (with city)\n4) Quantity (optional, default 1)\n\nOnce I have that, I'll confirm your order at the discounted price.`;
+    }.\n\n${orderDetailsTemplate()}\n\nOnce you send this, I'll confirm your order at the discounted price.`;
   }
 
   if (!looksLikeOrderDecline(latestUserMessage)) return null;
@@ -270,7 +286,9 @@ export async function tryDirectSalesRecoveryReply(
       }.`,
       ``,
       `It's a limited WhatsApp deal. Want me to reserve it?`,
-      `Reply YES and share your name, phone, delivery address, and quantity — I'll place it with the discount.`,
+      `Reply YES — then send your details like this:`,
+      ``,
+      orderDetailsTemplate(),
     ].join("\n");
   }
 
@@ -299,7 +317,9 @@ export async function tryDirectSalesRecoveryReply(
       }.`,
       ``,
       `Great value if you want a spare or to share. Interested?`,
-      `Reply YES with your name, phone, and address and I'll confirm the bundle order.`,
+      `Reply YES — then send your details like this:`,
+      ``,
+      orderDetailsTemplate({ defaultQty: 2 }),
     ].join("\n");
   }
 
