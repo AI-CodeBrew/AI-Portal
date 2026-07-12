@@ -3,6 +3,7 @@ import { executeSalesTool, type AgentContext } from "./sales-tools";
 import { buildSalesSystemPrompt } from "./build-system-prompt";
 import { CHAT_HISTORY_LIMIT } from "./chat-history";
 import { tryDirectProductReply } from "./product-reply";
+import { tryDirectCheckoutReply } from "./checkout-reply";
 import {
   extractSkuFromText,
   extractProductSearchQuery,
@@ -40,7 +41,7 @@ const ANTHROPIC_TOOLS: Anthropic.Tool[] = [
   {
     name: "create_draft_order",
     description:
-      "Create and confirm an order when ready. Requires name + address. Optional discount_percent.",
+      "Create and confirm an order (portal catalog or Shopify). Requires name + phone + address. For portal products pass sku and/or UUID variant_id/product_id from search_products. For Shopify pass numeric variant_id.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -50,13 +51,19 @@ const ANTHROPIC_TOOLS: Anthropic.Tool[] = [
             type: "object",
             properties: {
               variant_id: { type: "string" },
+              product_id: { type: "string" },
+              sku: { type: "string" },
+              source: { type: "string" },
               quantity: { type: "number" },
             },
-            required: ["variant_id", "quantity"],
+            required: ["quantity"],
           },
         },
         customer_name: { type: "string" },
-        phone: { type: "string" },
+        phone: {
+          type: "string",
+          description: "Phone to receive confirmation (number customer shared)",
+        },
         address1: { type: "string" },
         address2: { type: "string" },
         city: { type: "string" },
@@ -65,7 +72,7 @@ const ANTHROPIC_TOOLS: Anthropic.Tool[] = [
         zip: { type: "string" },
         discount_percent: { type: "number" },
       },
-      required: ["line_items", "customer_name", "address1", "city"],
+      required: ["line_items", "customer_name", "address1", "city", "phone"],
     },
   },
   {
@@ -136,6 +143,11 @@ export async function runSalesAgentWithAnthropic(
   const latestUser =
     [...history].reverse().find((m) => m.role === "user")?.content ?? "";
 
+  const checkoutReply = await tryDirectCheckoutReply(ctx, latestUser, history);
+  if (checkoutReply) {
+    return checkoutReply;
+  }
+
   const directProduct = await tryDirectProductReply(ctx, latestUser);
   if (directProduct) {
     return directProduct.reply;
@@ -144,7 +156,7 @@ export async function runSalesAgentWithAnthropic(
   const skuHint = extractSkuFromText(latestUser);
   const searchHint = skuHint || extractProductSearchQuery(latestUser);
   const productHint = searchHint
-    ? `\n\nCustomer is asking about a product. Call search_products with query "${searchHint}" and share full details including options and every variant with prices.`
+    ? `\n\nCustomer is asking about a product. Call search_products with query "${searchHint}" and share full details including options and every variant with prices. When they share name/phone/address to buy, call create_draft_order with sku/variant_id and their phone for confirmation.`
     : "";
 
   const messages: Anthropic.MessageParam[] = history

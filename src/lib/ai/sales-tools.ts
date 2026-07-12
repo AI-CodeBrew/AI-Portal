@@ -1,13 +1,13 @@
 import {
   searchProducts,
   checkStock,
-  createDraftOrder,
   getOrderStatus,
   getShopCurrency,
 } from "@/lib/shopify";
 import { formatMoney } from "@/lib/currency";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { confirmPortalOrder } from "@/lib/orders/confirm";
+import { createWhatsAppAiOrder } from "@/lib/orders/whatsapp-create";
 import type { Store } from "@/lib/types";
 import type { ResolvedStoreAiConfig } from "./ai-settings-types";
 import type { AdProductContext } from "@/lib/ads/types";
@@ -54,8 +54,10 @@ CRITICAL — always try to close the deal:
 - When they are ready, call create_draft_order (requires name + address).
 
 CRITICAL — WhatsApp purchases:
-- Before create_draft_order you MUST have: full name, phone (confirm WhatsApp number), and full delivery address.
-- Pass customer_name, address1, city (and address2/province/zip/country when known), and optional discount_percent.
+- Before create_draft_order you MUST have: full name, phone (the number they shared for confirmation), and full delivery address.
+- Pass customer_name, phone, address1, city (and address2/province/zip/country when known), and optional discount_percent.
+- For portal products (source=portal / UUID ids / AA- SKUs): pass sku and/or variant_id from search_products — orders are created in the portal and confirmed with WhatsApp to the customer phone.
+- For Shopify products: pass the numeric Shopify variant_id.
 
 CRITICAL — Shopify pending orders:
 - Use confirm_order when the customer confirms a pending Shopify order.
@@ -124,7 +126,7 @@ export const OPENAI_SALES_TOOLS = [
     function: {
       name: "create_draft_order",
       description:
-        "Create and confirm an order when the customer is ready to buy. Requires name + full delivery address. Optional discount_percent for retention offers.",
+        "Create and confirm an order when the customer is ready to buy (portal catalog OR Shopify). Requires name + phone + full delivery address. For portal products use the product/variant id or sku from search_products (source=portal). For Shopify use numeric variant_id. Optional discount_percent for retention offers.",
       parameters: {
         type: "object",
         properties: {
@@ -133,16 +135,33 @@ export const OPENAI_SALES_TOOLS = [
             items: {
               type: "object",
               properties: {
-                variant_id: { type: "string" },
+                variant_id: {
+                  type: "string",
+                  description:
+                    "Portal product/variant UUID or Shopify numeric variant id",
+                },
+                product_id: {
+                  type: "string",
+                  description: "Portal product id when known",
+                },
+                sku: {
+                  type: "string",
+                  description: "Portal product SKU (e.g. AA-…)",
+                },
+                source: {
+                  type: "string",
+                  description: "portal or shopify",
+                },
                 quantity: { type: "number" },
               },
-              required: ["variant_id", "quantity"],
+              required: ["quantity"],
             },
           },
           customer_name: { type: "string" },
           phone: {
             type: "string",
-            description: "Customer phone if different from WhatsApp number",
+            description:
+              "Customer phone to receive order confirmation (use the number they shared)",
           },
           address1: { type: "string", description: "Street / house address" },
           address2: { type: "string" },
@@ -155,7 +174,7 @@ export const OPENAI_SALES_TOOLS = [
             description: "Optional percentage discount (e.g. 15 or 25)",
           },
         },
-        required: ["line_items", "customer_name", "address1", "city"],
+        required: ["line_items", "customer_name", "address1", "city", "phone"],
       },
     },
   },
@@ -423,6 +442,7 @@ export async function executeSalesTool(
     name !== "cancel_order" &&
     name !== "lookup_customer_orders" &&
     name !== "get_order_status" &&
+    name !== "create_draft_order" &&
     !shopifyConnected
   ) {
     return {
@@ -861,114 +881,79 @@ export async function executeSalesTool(
       case "create_draft_order": {
         const customerName = String(input.customer_name ?? "").trim();
         const address1 = String(input.address1 ?? "").trim();
-        const city = String(input.city ?? "").trim();
-        if (!customerName || !address1 || !city) {
+        const city = String(input.city ?? "").trim() || "N/A";
+        const phoneForOrder = String(input.phone ?? customerPhone).trim();
+        if (!customerName || !address1) {
           return {
             result: {
               error:
-                "customer_name, address1, and city are required before creating an order.",
+                "customer_name and address1 are required before creating an order.",
+            },
+          };
+        }
+        if (!phoneForOrder) {
+          return {
+            result: {
+              error:
+                "phone is required — use the number the customer shared so we can send confirmation.",
             },
           };
         }
 
-        const phoneForOrder = String(input.phone ?? customerPhone).trim();
         const discountPercent =
           input.discount_percent != null
             ? Number(input.discount_percent)
             : undefined;
 
-        const shippingAddress = {
-          address1,
-          address2: String(input.address2 ?? "").trim() || undefined,
-          city,
-          province: String(input.province ?? "").trim() || undefined,
-          country: String(input.country ?? "").trim() || undefined,
-          zip: String(input.zip ?? "").trim() || undefined,
-        };
+        const rawLines = Array.isArray(input.line_items)
+          ? (input.line_items as Array<Record<string, unknown>>)
+          : [];
 
-        const draft = await createDraftOrder(shopDomain, shopifyToken, {
-          phone: phoneForOrder,
-          name: customerName,
-          lineItems: input.line_items as Array<{
-            variant_id: string;
-            quantity: number;
-          }>,
+        const created = await createWhatsAppAiOrder({
+          store,
+          conversationCustomerId: customerId,
+          lineItems: rawLines.map((li) => ({
+            variant_id:
+              li.variant_id != null ? String(li.variant_id) : undefined,
+            product_id:
+              li.product_id != null ? String(li.product_id) : undefined,
+            sku: li.sku != null ? String(li.sku) : undefined,
+            source: li.source != null ? String(li.source) : undefined,
+            quantity: Number(li.quantity) || 1,
+          })),
+          shipping: {
+            customer_name: customerName,
+            phone: phoneForOrder,
+            address1,
+            address2: String(input.address2 ?? "").trim() || undefined,
+            city,
+            province: String(input.province ?? "").trim() || undefined,
+            country: String(input.country ?? "").trim() || undefined,
+            zip: String(input.zip ?? "").trim() || undefined,
+          },
           discountPercent,
-          shippingAddress,
+          storeCurrency: currency ?? ctx.storeCurrency,
         });
 
-        let custId = customerId;
-        if (!custId) {
-          const { data: cust } = await supabase
-            .from("customers")
-            .upsert(
-              {
-                store_id: store.id,
-                phone: phoneForOrder,
-                name: customerName,
-              },
-              { onConflict: "store_id,phone" }
-            )
-            .select("id")
-            .single();
-          custId = cust?.id ?? null;
-        }
-
-        const portalShipping = {
-          name: customerName,
-          phone: phoneForOrder,
-          ...shippingAddress,
-        };
-
-        const { data: order } = await supabase
-          .from("orders")
-          .insert({
-            store_id: store.id,
-            customer_id: custId,
-            shopify_draft_order_id: draft.draft_order_id,
-            order_number: draft.order_number,
-            items: draft.items,
-            total: draft.total,
-            currency: draft.currency,
-            status: "pending",
-            source: "whatsapp_ai",
-            shipping_address: portalShipping,
-          })
-          .select("id")
-          .single();
-
-        let confirmed = false;
-        let confirmError: string | undefined;
-        if (order?.id) {
-          const confirmResult = await confirmPortalOrder(order.id, {
-            email: "whatsapp-ai@system",
-            role: "system",
-            storeId: store.id,
-          });
-          if ("error" in confirmResult) {
-            confirmError = confirmResult.error;
-          } else {
-            confirmed = true;
-          }
+        if (!created.ok) {
+          return { result: { error: created.error } };
         }
 
         return {
           result: {
             success: true,
-            order_number: draft.order_number,
-            total: draft.total,
-            currency: draft.currency ?? currency,
-            total_formatted: formatMoney(
-              draft.total,
-              draft.currency ?? currency ?? "USD"
-            ),
-            confirmed,
-            confirm_error: confirmError,
-            message: confirmed
-              ? "Order punched in portal and Shopify, confirmation + dispatch WhatsApp sent. Tell the customer their order is confirmed and being prepared for dispatch."
-              : "Draft order created in portal. Confirmation step had an issue — tell the customer a team member will finalize shortly.",
+            order_number: created.order_number,
+            total: created.total,
+            currency: created.currency,
+            total_formatted: created.total_formatted,
+            confirmed: created.confirmed,
+            confirm_error: created.confirm_error,
+            whatsapp_sent: created.whatsapp_sent,
+            whatsapp_error: created.whatsapp_error,
+            source: created.source,
+            message: created.message,
           },
-          orderCreated: order?.id,
+          orderCreated: created.order_id,
         };
       }
 

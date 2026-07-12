@@ -9,6 +9,7 @@ import {
   formatProductsReply,
   tryDirectProductReply,
 } from "./product-reply";
+import { tryDirectCheckoutReply, looksLikeCheckoutMessage } from "./checkout-reply";
 import {
   extractSkuFromText,
   extractProductSearchQuery,
@@ -43,7 +44,10 @@ function looksLikeProductQuery(text: string): boolean {
 }
 
 function looksLikeOrderQuery(text: string): boolean {
-  return ORDER_QUERY_PATTERN.test(text.trim());
+  const t = text.trim();
+  if (looksLikeCheckoutMessage(t)) return false;
+  if (/\bplace\s+(an\s+)?order\b/i.test(t)) return false;
+  return ORDER_QUERY_PATTERN.test(t);
 }
 
 type ChatMessage =
@@ -119,6 +123,12 @@ export async function runSalesAgentWithGroq(
   const storeLabel = ctx.store.store_name || ctx.store.shop_domain || "our store";
   const latestUser = lastUserMessage(history);
 
+  // Place order with contact details → confirm before LLM
+  const checkoutReply = await tryDirectCheckoutReply(ctx, latestUser, history);
+  if (checkoutReply) {
+    return checkoutReply;
+  }
+
   // SKU or product name → answer from catalog first (don't rely on the model)
   const directProduct = await tryDirectProductReply(ctx, latestUser);
   if (directProduct) {
@@ -130,7 +140,9 @@ export async function runSalesAgentWithGroq(
   const searchHint = skuHint || nameHint;
   const productHint = ctx.adProductContext
     ? `\n\nThe customer clicked an ad for "${ctx.adProductContext.productTitle}". Use the ad product context below — do not ask what product they want unless they change topic.`
-    : looksLikeOrderQuery(latestUser)
+    : looksLikeCheckoutMessage(latestUser)
+      ? `\n\nThe customer wants to PLACE AN ORDER and shared details. You MUST call create_draft_order with their name, phone, address, and the product/sku from this chat (portal SKU or variant id from search_products). Do not only say thanks.`
+      : looksLikeOrderQuery(latestUser)
       ? `\n\nThe customer is asking about their order ("${latestUser.slice(0, 120).replace(/\n/g, " ")}"). You MUST call lookup_customer_orders (or get_order_status if they gave an order number) and share clear order details.`
       : looksLikeProductQuery(latestUser)
         ? `\n\nThe customer's latest message appears to be about a product ("${latestUser.slice(0, 120).replace(/\n/g, " ")}"${searchHint ? `; search query: ${searchHint}` : ""}). You MUST call search_products first${searchHint ? ` with query "${searchHint}"` : ""}, share full details (name, price_formatted, stock, description, options, and all variants), then ask if they want to buy and collect name, phone, and address to close the sale.`

@@ -119,8 +119,20 @@ export async function confirmPortalOrder(
     name: string | null;
   } | null;
 
-  let customerPhone = customer?.phone ?? null;
-  let customerName = customer?.name ?? null;
+  const shipping = order.shipping_address as {
+    phone?: string | null;
+    name?: string | null;
+  } | null;
+
+  // Prefer phone the customer shared on the order (shipping), then linked customer
+  let customerPhone =
+    (shipping?.phone && String(shipping.phone).trim()) ||
+    customer?.phone ||
+    null;
+  let customerName =
+    (shipping?.name && String(shipping.name).trim()) ||
+    customer?.name ||
+    null;
 
   if (
     !customerPhone &&

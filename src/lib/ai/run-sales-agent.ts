@@ -7,6 +7,7 @@ import {
   type AgentContext,
 } from "./sales-tools";
 import { tryDirectProductReply } from "./product-reply";
+import { tryDirectCheckoutReply } from "./checkout-reply";
 
 export type { AgentContext } from "./sales-tools";
 
@@ -60,6 +61,18 @@ export async function runSalesAgent(
   const enrichedCtx = await enrichAgentContext(ctx);
   const latestUser =
     [...history].reverse().find((m) => m.role === "user")?.content ?? "";
+
+  // Place-order + name/phone/address → create & confirm before the LLM
+  try {
+    const checkout = await tryDirectCheckoutReply(
+      enrichedCtx,
+      latestUser,
+      history
+    );
+    if (checkout) return checkout;
+  } catch (err) {
+    console.error("[run-sales-agent] checkout failed:", err);
+  }
 
   // Catalog lookup by SKU or product name (incl. variants) before the LLM
   try {

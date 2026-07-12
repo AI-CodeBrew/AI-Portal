@@ -33,6 +33,9 @@ const PRODUCT_ASK_PATTERN =
 const GREETING_ONLY =
   /^(hi|hello|hey|thanks|thank you|ok|okay|yes|no|assalam|salam)[\s!.]*$/i;
 
+const CHECKOUT_HIJACK =
+  /\b(place\s+(an\s+)?order|want\s+to\s+(order|buy)|my name|address|phone|checkout|deliver)\b/i;
+
 /** Format catalog hits into a WhatsApp-ready product answer (incl. variants). */
 export function formatProductsReply(products: SearchProduct[]): string {
   if (!products.length) {
@@ -97,6 +100,9 @@ export function formatProductsReply(products: SearchProduct[]): string {
     return [
       p.title || "Product",
       p.sku ? `SKU: ${p.sku}` : null,
+      (realVariants[0]?.id || defaultVariant?.id || p.variants?.[0]?.id)
+        ? `Ref: ${realVariants[0]?.id || defaultVariant?.id || p.variants?.[0]?.id}`
+        : null,
       basePrice && realVariants.length === 0 ? `Price: ${basePrice}` : null,
       basePrice && realVariants.length > 0
         ? `From: ${basePrice}`
@@ -127,13 +133,22 @@ function shouldTryDirectProductLookup(message: string): boolean {
   const t = message.trim();
   if (t.length < 2) return false;
   if (GREETING_ONLY.test(t)) return false;
+  // Never treat checkout / place-order messages as product search
+  if (CHECKOUT_HIJACK.test(t) && /\d{8,}/.test(t.replace(/\D/g, ""))) {
+    return false;
+  }
+  if (CHECKOUT_HIJACK.test(t) && /\b(name|address|phone)\b/i.test(t)) {
+    return false;
+  }
   if (ORDER_ONLY_PATTERN.test(t) && !PRODUCT_ASK_PATTERN.test(t)) return false;
-  if (extractSkuFromText(t)) return true;
-  if (PRODUCT_ASK_PATTERN.test(t)) return true;
+  if (extractSkuFromText(t) && !CHECKOUT_HIJACK.test(t)) return true;
+  if (PRODUCT_ASK_PATTERN.test(t) && !CHECKOUT_HIJACK.test(t)) return true;
   // Short name-only messages: "nike shoes", "red dress M"
   const query = extractProductSearchQuery(t);
   if (!query) return false;
-  if (t.length <= 80 && !ORDER_ONLY_PATTERN.test(t)) return true;
+  if (t.length <= 80 && !ORDER_ONLY_PATTERN.test(t) && !CHECKOUT_HIJACK.test(t)) {
+    return true;
+  }
   return false;
 }
 
