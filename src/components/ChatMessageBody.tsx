@@ -1,4 +1,4 @@
-import { extractOutboundMedia } from "@/lib/ai/sales-recovery";
+import { extractOutboundMedia } from "@/lib/ai/message-markers";
 
 export function ChatMessageBody({ content }: { content: string }) {
   const { text, imageUrls } = extractOutboundMedia(content);

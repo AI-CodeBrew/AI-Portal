@@ -13,6 +13,11 @@ import {
 } from "./checkout-parse";
 import { orderDetailsTemplate } from "./order-details-template";
 
+export {
+  extractOutboundMedia,
+  stripInternalAiMarkers,
+} from "./message-markers";
+
 const DECLINE_PATTERN =
   /\b(don'?t\s+want|do\s+not\s+want|not\s+(interested|now|today|ordering|buying)|no\s+thanks|no\s+thank\s+you|nah+|nope|not\s+for\s+me|maybe\s+later|later|skip|cancel|i'?ll\s+pass|no\s+order|won'?t\s+(order|buy)|expensive|too\s+(much|pricey|costly)|can'?t\s+afford)\b/i;
 
@@ -34,40 +39,6 @@ function bundleMarker(percent: number) {
 }
 
 const MARKER_CLOSED = "[Deal closed]";
-
-/** Strip internal recovery markers before sending to the customer on WhatsApp. */
-export function stripInternalAiMarkers(text: string): string {
-  return text
-    .replace(/^\s*\[Deal\s+[^\]]+\]\s*\n?/gim, "")
-    .replace(/^\s*\[Deal closed\]\s*\n?/gim, "")
-    .replace(/^\s*\[Ref:\s*[^\]]+\]\s*\n?/gim, "")
-    .replace(/^\s*\[Image:\s*https?:\/\/[^\]]+\]\s*\n?/gim, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
-/** Pull image URLs embedded as [Image: https://...] and return clean customer text. */
-export function extractOutboundMedia(text: string): {
-  text: string;
-  imageUrls: string[];
-} {
-  const imageUrls: string[] = [];
-  // Match anywhere (not only line-start) so markers are always pulled out first
-  const withoutImages = text.replace(
-    /\[Image:\s*(https?:\/\/[^\]]+)\]\s*/gi,
-    (_, url: string) => {
-      const cleaned = String(url).trim();
-      if (/^https:\/\//i.test(cleaned) && !imageUrls.includes(cleaned)) {
-        imageUrls.push(cleaned);
-      }
-      return "";
-    }
-  );
-  return {
-    text: stripInternalAiMarkers(withoutImages),
-    imageUrls: imageUrls.slice(0, 3),
-  };
-}
 
 function lastAssistantMessages(
   history: Array<{ role: "user" | "assistant"; content: string }>,

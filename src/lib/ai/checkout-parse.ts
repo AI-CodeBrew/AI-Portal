@@ -1,4 +1,4 @@
-import { normalizePhone } from "@/lib/whatsapp";
+import { normalizePhone } from "@/lib/phone";
 import { extractSkuFromText } from "@/lib/products/products-service";
 
 const CHECKOUT_INTENT =

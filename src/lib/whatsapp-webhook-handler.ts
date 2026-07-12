@@ -19,7 +19,7 @@ import {
   resolveAdLinkBySlug,
 } from "@/lib/ads/ad-links-service";
 import { parseAdRefFromMessage } from "@/lib/ads/whatsapp-ad-links";
-import { extractOutboundMedia } from "@/lib/ai/sales-recovery";
+import { extractOutboundMedia } from "@/lib/ai/message-markers";
 import {
   getStoreWhatsAppCredentials,
   resolveMetaSecret,
