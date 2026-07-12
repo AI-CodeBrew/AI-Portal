@@ -3,6 +3,8 @@ import {
   extractSkuFromText,
   getStoreProductBySku,
 } from "@/lib/products/products-service";
+import { checkStock, getShopCurrency } from "@/lib/shopify";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { AI_SETTING_DEFAULTS } from "./ai-settings-types";
 import type { AgentContext } from "./sales-tools";
 import {
@@ -21,7 +23,7 @@ const ACCEPT_OFFER_PATTERN =
   /\b(yes|yeah|yep|ok|okay|sure|deal|fine|alright|i('ll| will)\s+take|interested|accept|go\s+ahead|order\s+(it|now|this)|book\s+it|let'?s\s+do\s+it)\b/i;
 
 const PRODUCT_OFFERED_PATTERN =
-  /\b(would you like to order|want to order|place the order|share your full name|SKU:|Price:|From:|Deal 1\/2|Deal 2\/2)\b/i;
+  /\b(would you like to order|want to order|place the order|reply like this|share your full name|SKU:|Price:|From:|Deal 1\/2|Deal 2\/2)\b/i;
 
 function discountMarker(percent: number) {
   return `[Deal 1/2 — ${percent}% off]`;
@@ -38,6 +40,7 @@ export function stripInternalAiMarkers(text: string): string {
   return text
     .replace(/^\s*\[Deal\s+[^\]]+\]\s*\n?/gim, "")
     .replace(/^\s*\[Deal closed\]\s*\n?/gim, "")
+    .replace(/^\s*\[Ref:\s*[^\]]+\]\s*\n?/gim, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
@@ -52,34 +55,69 @@ function lastAssistantMessages(
     .map((m) => m.content);
 }
 
+function extractRefFromAssistant(content: string): string | null {
+  return (
+    content.match(/\[Ref:\s*([0-9a-f-]{36}|\d{5,})\]/i)?.[1] ||
+    content.match(/\bRef:\s*([0-9a-f-]{36}|\d{5,})\b/i)?.[1] ||
+    null
+  );
+}
+
+/** Parse amounts like "AED 299.00", "Rs 1,200", "299" from Price: lines. */
+function parsePriceAmount(text: string | null | undefined): number | null {
+  if (!text || /see store for price/i.test(text)) return null;
+  const cleaned = text.replace(/,/g, "");
+  const m = cleaned.match(/(\d+(?:\.\d+)?)/);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
 function findProductContext(
   history: Array<{ role: "user" | "assistant"; content: string }>
-): { sku: string | null; title: string | null; priceText: string | null } {
+): {
+  sku: string | null;
+  title: string | null;
+  priceText: string | null;
+  variantRef: string | null;
+} {
   const assistants = lastAssistantMessages(history, 12);
   let sku: string | null = null;
   let title: string | null = null;
   let priceText: string | null = null;
+  let variantRef: string | null = null;
 
   for (const content of [...assistants].reverse()) {
     if (!sku) sku = extractSkuFromText(content);
+    if (!variantRef) variantRef = extractRefFromAssistant(content);
     if (!priceText) {
       const m = content.match(/(?:Price|From):\s*([^\n]+)/i);
-      if (m?.[1]) priceText = m[1].trim();
+      if (m?.[1] && !/see store for price/i.test(m[1])) {
+        priceText = m[1].trim();
+      }
     }
     if (!title) {
-      const first = content
-        .split("\n")
-        .map((l) => l.trim())
-        .find(
-          (l) =>
-            l &&
-            !/^(SKU:|Ref:|Price:|From:|Stock:|Options:|Variants|Bundles:|Would you|\[Deal)/i.test(
-              l
-            )
-        );
-      if (first && first.length <= 80) title = first;
+      const bold = content.match(/^\*([^*]+)\*/m);
+      if (bold?.[1] && bold[1].trim().length <= 80) {
+        title = bold[1].trim();
+      } else {
+        const first = content
+          .split("\n")
+          .map((l) => l.trim())
+          .find(
+            (l) =>
+              l &&
+              !/^(SKU:|Ref:|\[Ref:|Price:|From:|Stock:|Options:|Variants|Bundles:|Would you|Want to|Reply like|Name:|Phone:|Address:|Qty:|\[Deal)/i.test(
+                l
+              ) &&
+              !l.startsWith("•")
+          );
+        if (first && first.length <= 80) {
+          title = first.replace(/^\*|\*$/g, "").trim();
+        }
+      }
     }
-    if (sku && title) break;
+    if (sku && title && (priceText || variantRef)) break;
   }
 
   if (!sku) {
@@ -92,7 +130,96 @@ function findProductContext(
     }
   }
 
-  return { sku, title, priceText };
+  return { sku, title, priceText, variantRef };
+}
+
+async function resolveUnitPrice(
+  ctx: AgentContext,
+  product: {
+    sku: string | null;
+    priceText: string | null;
+    variantRef: string | null;
+  }
+): Promise<{ unitPrice: number | null; currency: string }> {
+  let unitPrice: number | null = null;
+  let currency = ctx.storeCurrency || "PKR";
+
+  if (product.sku) {
+    try {
+      const portal = await getStoreProductBySku(ctx.store.id, product.sku);
+      if (portal) {
+        const p = Number(portal.variants?.[0]?.price ?? portal.price);
+        if (Number.isFinite(p) && p > 0) {
+          return { unitPrice: p, currency: portal.currency || currency };
+        }
+      }
+    } catch (err) {
+      console.error("[sales-recovery] portal lookup failed:", err);
+    }
+  }
+
+  const shopDomain = ctx.store.shop_domain;
+  const shopifyToken = ctx.store.shopify_access_token;
+  if (shopDomain && shopifyToken) {
+    try {
+      currency =
+        (await getShopCurrency(shopDomain, shopifyToken)) || currency;
+    } catch {
+      // keep fallback currency
+    }
+
+    let variantId = product.variantRef?.trim() || "";
+    if (!/^\d{5,}$/.test(variantId) && product.sku) {
+      try {
+        const supabase = createAdminClient();
+        const { data } = await supabase
+          .from("shopify_product_skus")
+          .select("shopify_variant_id")
+          .eq("store_id", ctx.store.id)
+          .ilike("sku", product.sku)
+          .maybeSingle();
+        variantId = String(data?.shopify_variant_id ?? "").trim();
+      } catch (err) {
+        console.error("[sales-recovery] SKU registry lookup failed:", err);
+      }
+    }
+
+    if (/^\d{5,}$/.test(variantId)) {
+      try {
+        const stock = await checkStock(shopDomain, shopifyToken, variantId);
+        const p = Number(stock.price);
+        if (Number.isFinite(p) && p > 0) {
+          return { unitPrice: p, currency };
+        }
+      } catch (err) {
+        console.error("[sales-recovery] Shopify price fetch failed:", err);
+      }
+    }
+  }
+
+  const fromText = parsePriceAmount(product.priceText);
+  if (fromText != null) {
+    unitPrice = fromText;
+  }
+
+  return { unitPrice, currency };
+}
+
+function priceCompareLine(
+  unitPrice: number | null,
+  percent: number,
+  currency: string,
+  qty = 1
+): string | null {
+  if (unitPrice == null || !Number.isFinite(unitPrice) || unitPrice <= 0) {
+    return null;
+  }
+  const was = formatMoney(unitPrice * qty, currency);
+  const now = formatMoney(
+    Math.round(unitPrice * qty * (1 - percent / 100) * 100) / 100,
+    currency
+  );
+  return `Was: ${was} → Now: *${now}*`;
 }
 
 function recoveryPercents(ctx: AgentContext): {
@@ -242,108 +369,82 @@ export async function tryDirectSalesRecoveryReply(
   const product = findProductContext(history);
   const productLabel = product.title || "this product";
   const { discount, bundle } = recoveryPercents(ctx);
+  const { unitPrice, currency } = await resolveUnitPrice(ctx, product);
 
   // Soft accept without details yet → ask for name / phone / address
   if (looksLikeOfferAcceptance(latestUserMessage)) {
     const pending = getPendingRecoveryOffer(history, { discount, bundle });
     if (!pending) return null;
 
+    const compare = priceCompareLine(
+      unitPrice,
+      pending.percent,
+      currency,
+      pending.type === "bundle" ? 2 : 1
+    );
+
     if (pending.type === "bundle") {
-      return `Great choice! I'll lock in the 2-pack deal (*${pending.percent}% off*) for ${productLabel}${
-        product.sku ? ` (${product.sku})` : ""
-      }.\n\n${orderDetailsTemplate({ defaultQty: 2 })}\n\nI'll place the order with the bundle discount as soon as you send this.`;
+      return [
+        `*${pending.percent}% off* 2-pack on ${productLabel}${
+          product.sku ? ` (${product.sku})` : ""
+        }.`,
+        compare,
+        orderDetailsTemplate({ defaultQty: 2 }),
+      ]
+        .filter(Boolean)
+        .join("\n");
     }
 
-    return `Awesome — I'll apply *${pending.percent}% off* on ${productLabel}${
-      product.sku ? ` (${product.sku})` : ""
-    }.\n\n${orderDetailsTemplate()}\n\nOnce you send this, I'll confirm your order at the discounted price.`;
+    return [
+      `*${pending.percent}% off* on ${productLabel}${
+        product.sku ? ` (${product.sku})` : ""
+      }.`,
+      compare,
+      orderDetailsTemplate(),
+    ]
+      .filter(Boolean)
+      .join("\n");
   }
 
   if (!looksLikeOrderDecline(latestUserMessage)) return null;
 
   if (HARD_STOP_PATTERN.test(latestUserMessage)) {
-    return `${MARKER_CLOSED}\nUnderstood — I won't push further. If you need anything later, just message us. Have a great day!`;
+    return `${MARKER_CLOSED}\nOkay — I won't push. Message anytime if you need help.`;
   }
 
   const action = nextRecoveryAction(history);
   if (!action) return null;
 
-  let unitPrice: number | null = null;
-  let currency = ctx.storeCurrency || "PKR";
-
-  if (product.sku) {
-    try {
-      const portal = await getStoreProductBySku(ctx.store.id, product.sku);
-      if (portal) {
-        unitPrice = Number(portal.variants?.[0]?.price ?? portal.price);
-        currency = portal.currency || currency;
-      }
-    } catch (err) {
-      console.error("[sales-recovery] product lookup failed:", err);
-    }
-  }
-
   if (action === "discount") {
-    const factor = 1 - discount / 100;
-    const discounted =
-      unitPrice != null && Number.isFinite(unitPrice)
-        ? formatMoney(Math.round(unitPrice * factor * 100) / 100, currency)
-        : null;
-    const was =
-      unitPrice != null && Number.isFinite(unitPrice)
-        ? formatMoney(unitPrice, currency)
-        : product.priceText;
+    const compare = priceCompareLine(unitPrice, discount, currency, 1);
 
     return [
       discountMarker(discount),
-      `No worries at all! Before you go — I can offer you ${productLabel} at *${discount}% off* just for you${
-        was && discounted
-          ? ` (${was} → ${discounted})`
-          : discounted
-            ? ` (${discounted})`
-            : ""
-      }.`,
-      ``,
-      `It's a limited WhatsApp deal. Want me to reserve it?`,
-      `Reply YES — then send your details like this:`,
-      ``,
+      `Special offer: *${discount}% off* ${productLabel}`,
+      compare,
+      `Reply YES to take it, then:`,
       orderDetailsTemplate(),
-    ].join("\n");
+    ]
+      .filter(Boolean)
+      .join("\n");
   }
 
   if (action === "bundle") {
-    const factor = 1 - bundle / 100;
-    const bundleTotal =
-      unitPrice != null && Number.isFinite(unitPrice)
-        ? formatMoney(
-            Math.round(unitPrice * 2 * factor * 100) / 100,
-            currency
-          )
-        : null;
-    const twoFull =
-      unitPrice != null && Number.isFinite(unitPrice)
-        ? formatMoney(unitPrice * 2, currency)
-        : null;
+    const compare = priceCompareLine(unitPrice, bundle, currency, 2);
 
     return [
       bundleMarker(bundle),
-      `Totally fine — last offer: a *2-pack bundle* of ${productLabel} with *${bundle}% off* the 2-unit total${
-        twoFull && bundleTotal
-          ? ` (${twoFull} → ${bundleTotal})`
-          : bundleTotal
-            ? ` (${bundleTotal})`
-            : ""
-      }.`,
-      ``,
-      `Great value if you want a spare or to share. Interested?`,
-      `Reply YES — then send your details like this:`,
-      ``,
+      `Last offer: *2-pack* at *${bundle}% off*`,
+      compare,
+      `Reply YES, then:`,
       orderDetailsTemplate({ defaultQty: 2 }),
-    ].join("\n");
+    ]
+      .filter(Boolean)
+      .join("\n");
   }
 
   return [
     MARKER_CLOSED,
-    `I understand — thank you for considering ${productLabel}. If you change your mind or need help with another product or an existing order, just message anytime. Have a wonderful day!`,
+    `No problem — thanks for checking ${productLabel}. Message anytime if you need anything.`,
   ].join("\n");
 }

@@ -4,14 +4,11 @@ export function orderDetailsTemplate(opts?: {
   defaultQty?: number;
 }): string {
   const qty = opts?.defaultQty && opts.defaultQty > 1 ? String(opts.defaultQty) : "1";
-  const variantLine = opts?.includeVariantHint
-    ? "\nVariant: (size/color if any)"
-    : "";
+  const variantLine = opts?.includeVariantHint ? "\nVariant: size/color" : "";
 
-  return `To place your order, reply in this format:
-
-Name: Your full name
-Phone: 03XXXXXXXXX
-Address: House/street, area, city
+  return `Reply like this to order:
+Name:
+Phone:
+Address:
 Qty: ${qty}${variantLine}`;
 }

@@ -8,7 +8,7 @@ const HAS_CONTACT_HINT =
   /\b(name|naam|phone|ph|mobile|whatsapp|address|addr|city|deliver)\b/i;
 
 const ASKED_FOR_DETAILS =
-  /\b(full name|share your|delivery address|phone \(for confirmation\)|please share|i'll place the order|i'll confirm your order|discounted price)\b/i;
+  /\b(full name|share your|delivery address|reply like this|phone \(for confirmation\)|please share|i'll place the order|i'll confirm your order|discounted price|want to order)\b/i;
 
 export type CheckoutDetails = {
   customer_name: string;
@@ -170,6 +170,7 @@ export function parseCheckoutDetails(text: string): CheckoutDetails | null {
 
 function extractRefFromContent(content: string): string | null {
   return (
+    content.match(/\[Ref:\s*([0-9a-f-]{36}|\d{5,})\]/i)?.[1] ||
     content.match(/\bRef:\s*([0-9a-f-]{36}|\d{5,})\b/i)?.[1] ||
     content.match(
       /\b([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/i

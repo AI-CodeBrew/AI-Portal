@@ -25,22 +25,15 @@ function formatOrderSuccess(params: {
   quantity: number;
   discountPercent?: number;
 }): string {
-  const confirmLine = params.whatsapp_sent
-    ? `A confirmation was also sent to ${params.phone}.`
-    : params.whatsapp_error
-      ? `Order is confirmed here. We couldn't deliver a separate WhatsApp confirmation to ${params.phone} yet (${params.whatsapp_error}).`
-      : `Confirmation details are above. If you need them resent to ${params.phone}, reply here.`;
-
   return [
-    `✅ Order *${params.order_number}* confirmed!`,
+    `✅ Order *${params.order_number}* confirmed`,
     params.quantity > 1 ? `Qty: ${params.quantity}` : null,
-    params.discountPercent != null
-      ? `Discount applied: ${params.discountPercent}%`
-      : null,
+    params.discountPercent != null ? `${params.discountPercent}% off applied` : null,
     params.total_formatted ? `Total: ${params.total_formatted}` : null,
-    `We'll prepare it for dispatch.`,
-    confirmLine,
-    `Thank you, ${params.customer_name}!`,
+    params.whatsapp_sent
+      ? `Confirmation sent to ${params.phone}`
+      : null,
+    `Thanks, ${params.customer_name}!`,
   ]
     .filter(Boolean)
     .join("\n");

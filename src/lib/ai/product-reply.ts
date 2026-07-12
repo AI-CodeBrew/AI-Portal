@@ -37,13 +37,13 @@ const GREETING_ONLY =
 const CHECKOUT_HIJACK =
   /\b(place\s+(an\s+)?order|want\s+to\s+(order|buy)|my name|address|phone|checkout|deliver)\b/i;
 
-/** Format catalog hits into a WhatsApp-ready product answer (incl. variants). */
+/** Format catalog hits into a short WhatsApp product answer. */
 export function formatProductsReply(products: SearchProduct[]): string {
   if (!products.length) {
-    return "I couldn't find that product in our catalog. Could you share the product name or another SKU?";
+    return "Couldn't find that product. Send the name or SKU again?";
   }
 
-  const blocks = products.slice(0, 3).map((p) => {
+  const blocks = products.slice(0, 2).map((p) => {
     const realVariants = (p.variants ?? []).filter(
       (v) => v.title && v.title !== "Default"
     );
@@ -61,62 +61,45 @@ export function formatProductsReply(products: SearchProduct[]): string {
         ? basePriceRaw
         : null;
 
-    const optionsLines = (p.options ?? [])
+    const refId =
+      realVariants[0]?.id || defaultVariant?.id || p.variants?.[0]?.id || null;
+
+    const optionsLine = (p.options ?? [])
       .filter((o) => o.name && (o.values?.length ?? 0) > 0)
-      .map((o) => `${o.name}: ${(o.values ?? []).join(", ")}`);
+      .slice(0, 3)
+      .map((o) => `${o.name}: ${(o.values ?? []).slice(0, 6).join(", ")}`)
+      .join(" · ");
 
     const variantLines =
       realVariants.length > 0
-        ? [
-            `Variants (${realVariants.length}):`,
-            ...realVariants.slice(0, 12).map((v) => {
-              const opts = v.option_values
-                ? Object.entries(v.option_values)
-                    .map(([k, val]) => `${k}: ${val}`)
-                    .join(", ")
-                : "";
-              const label = v.title || opts || "Variant";
-              const price = v.price_formatted
-                ? ` — ${v.price_formatted}`
-                : "";
-              const sku = v.sku ? ` [${v.sku}]` : "";
-              const stock =
-                v.in_stock === false ? " (out of stock)" : "";
-              return `• ${label}${sku}${price}${stock}`;
-            }),
-          ]
+        ? realVariants.slice(0, 6).map((v) => {
+            const label = v.title || "Variant";
+            const price = v.price_formatted ? ` — ${v.price_formatted}` : "";
+            const stock = v.in_stock === false ? " (out of stock)" : "";
+            return `• ${label}${price}${stock}`;
+          })
         : [];
 
     const bundleLines = (p.bundles ?? [])
       .filter((b) => b.quantity && b.price_formatted)
+      .slice(0, 3)
       .map((b) => {
         const label = b.label?.trim() || `${b.quantity}-pack`;
         return `• ${label}: ${b.price_formatted}`;
       });
 
-    const desc = p.description?.trim()
-      ? p.description.trim().slice(0, 400)
-      : null;
-
-    const stockLine =
-      realVariants.some((v) => v.in_stock === false) &&
-      realVariants.every((v) => v.in_stock === false)
-        ? "Stock: currently out of stock"
-        : "Stock: available";
+    const outOfStock =
+      realVariants.length > 0 &&
+      realVariants.every((v) => v.in_stock === false);
 
     return [
-      p.title || "Product",
+      // Keep Ref internal for order placement; stripped before WhatsApp send
+      refId ? `[Ref: ${refId}]` : null,
+      `*${p.title || "Product"}*`,
       p.sku ? `SKU: ${p.sku}` : null,
-      (realVariants[0]?.id || defaultVariant?.id || p.variants?.[0]?.id)
-        ? `Ref: ${realVariants[0]?.id || defaultVariant?.id || p.variants?.[0]?.id}`
-        : null,
-      basePrice && realVariants.length === 0 ? `Price: ${basePrice}` : null,
-      basePrice && realVariants.length > 0
-        ? `From: ${basePrice}`
-        : null,
-      stockLine,
-      desc,
-      optionsLines.length ? `Options:\n${optionsLines.join("\n")}` : null,
+      basePrice ? `Price: ${basePrice}` : null,
+      outOfStock ? `Stock: out of stock` : `Stock: available`,
+      optionsLine ? optionsLine : null,
       variantLines.length ? variantLines.join("\n") : null,
       bundleLines.length ? `Bundles:\n${bundleLines.join("\n")}` : null,
     ]
@@ -126,14 +109,14 @@ export function formatProductsReply(products: SearchProduct[]): string {
 
   const multi =
     products.length > 1
-      ? `\n\nI found ${Math.min(products.length, 3)} matching products. Tell me which one you want.`
+      ? `\n\nFound ${Math.min(products.length, 2)} matches — which one?`
       : "";
 
   const hasVariants = products.some((p) =>
     (p.variants ?? []).some((v) => v.title && v.title !== "Default")
   );
 
-  return `${blocks.join("\n\n")}${multi}\n\nWould you like to order this?\n\n${orderDetailsTemplate(
+  return `${blocks.join("\n\n")}${multi}\n\nWant to order?\n${orderDetailsTemplate(
     { includeVariantHint: hasVariants }
   )}`;
 }
