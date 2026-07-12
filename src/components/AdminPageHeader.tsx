@@ -1,5 +1,6 @@
-import { ArabiaAILogo } from "@/components/ArabiaAILogo";
-import { AdminMobileNav } from "@/components/AdminMobileNav";
+"use client";
+
+import { MobileMenuButton } from "@/components/MobileNavContext";
 import { AdminUserMenu } from "@/components/AdminUserMenu";
 
 export function AdminPageHeader({
@@ -12,30 +13,26 @@ export function AdminPageHeader({
   children?: React.ReactNode;
 }) {
   return (
-    <div className="mb-6 sm:mb-8">
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-3">
-            <div className="shrink-0 lg:hidden">
-              <ArabiaAILogo size="sm" variant="light" />
-            </div>
-            <div className="min-w-0">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-violet-600">
-                Arabia AI · Admin
-              </p>
-              <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-                {title}
-              </h1>
-              {description && (
-                <p className="mt-1 text-sm text-slate-600">{description}</p>
-              )}
-            </div>
+    <div className="mb-5 md:mb-6 lg:mb-8">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-1 items-start gap-2.5 sm:gap-3">
+          <MobileMenuButton className="mt-0.5" />
+          <div className="min-w-0">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-violet-600">
+              Arabia AI · Admin
+            </p>
+            <h1 className="text-xl font-bold tracking-tight text-slate-900 sm:text-2xl">
+              {title}
+            </h1>
+            {description && (
+              <p className="mt-1 text-sm text-slate-600">{description}</p>
+            )}
           </div>
         </div>
-        <AdminUserMenu />
+        <div className="shrink-0">
+          <AdminUserMenu />
+        </div>
       </div>
-
-      <AdminMobileNav />
 
       {children ? <div className="mt-4">{children}</div> : null}
     </div>

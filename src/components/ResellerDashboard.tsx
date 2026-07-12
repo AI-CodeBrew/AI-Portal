@@ -46,12 +46,12 @@ function StatCard({
 
   const inner = (
     <div
-      className={`rounded-xl border border-slate-200 border-l-4 bg-white p-5 shadow-sm ${accentBorder} ${
+      className={`rounded-xl border border-slate-200 border-l-4 bg-white p-4 shadow-sm md:p-5 ${accentBorder} ${
         href ? "transition-shadow hover:shadow-md" : ""
       }`}
     >
       <p className="text-sm font-medium text-slate-600">{label}</p>
-      <p className="mt-1 text-3xl font-bold text-slate-900">{value}</p>
+      <p className="mt-1 text-2xl font-bold text-slate-900 lg:text-3xl">{value}</p>
       {metric && (
         <p className={`mt-1 text-xs font-medium ${deltaColor(metric)}`}>
           {formatDelta(metric)}
@@ -138,19 +138,19 @@ function MiniBarChart({
 
   return (
     <div className="mt-4">
-      <div className="flex h-40 items-end gap-2">
+      <div className="flex h-28 items-end gap-1.5 md:h-36 md:gap-2 lg:h-40">
         {points.map((p) => (
-          <div key={p.date} className="flex flex-1 flex-col items-center gap-1">
-            <div className="flex h-32 w-full items-end justify-center gap-0.5">
+          <div key={p.date} className="flex min-w-0 flex-1 flex-col items-center gap-1">
+            <div className="flex h-20 w-full items-end justify-center gap-0.5 md:h-28 lg:h-32">
               <div
-                className="w-2.5 rounded-t bg-blue-400/90"
+                className="w-2 rounded-t bg-blue-400/90 md:w-2.5"
                 style={{
                   height: `${Math.max(4, (p.conversations / max) * 100)}%`,
                 }}
                 title={`${p.conversations} conversations`}
               />
               <div
-                className="w-2.5 rounded-t bg-emerald-500"
+                className="w-2 rounded-t bg-emerald-500 md:w-2.5"
                 style={{ height: `${Math.max(4, (p.orders / max) * 100)}%` }}
                 title={`${p.orders} orders`}
               />
@@ -272,7 +272,7 @@ export function ResellerDashboard() {
   return (
     <div className="space-y-6">
       {/* Welcome */}
-      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
+      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:p-6 lg:p-8">
         <div className="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h2 className="text-xl font-bold text-slate-900">
@@ -345,7 +345,7 @@ export function ResellerDashboard() {
       </div>
 
       {/* 7-day KPIs */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-3 md:grid-cols-2 md:gap-4 lg:grid-cols-5">
         <StatCard
           label="Total Conversations"
           value={stats.period.conversations.current.toLocaleString()}
@@ -384,15 +384,15 @@ export function ResellerDashboard() {
 
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Chart */}
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm lg:col-span-2">
-          <div className="flex items-center justify-between">
-            <div>
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:p-5 lg:col-span-2 lg:p-6">
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0">
               <h3 className="font-bold text-slate-900">Conversations & Orders</h3>
               <p className="text-xs text-slate-500">Last 7 days</p>
             </div>
             <Link
               href="/dashboard/inbox"
-              className="text-xs font-semibold text-blue-600 hover:underline"
+              className="shrink-0 text-xs font-semibold text-blue-600 hover:underline"
             >
               View inbox
             </Link>
@@ -416,7 +416,7 @@ export function ResellerDashboard() {
         </div>
 
         {/* Order status */}
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:p-5 lg:p-6">
           <h3 className="font-bold text-slate-900">Order Status</h3>
           <p className="text-xs text-slate-500">All time</p>
           <OrderStatusBars
@@ -435,7 +435,7 @@ export function ResellerDashboard() {
 
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Top products */}
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:p-5 lg:p-6">
           <div className="flex items-center justify-between">
             <h3 className="font-bold text-slate-900">Top Products</h3>
             <Link
@@ -472,7 +472,7 @@ export function ResellerDashboard() {
         </div>
 
         {/* Recent conversations */}
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:p-5 lg:p-6">
           <div className="flex items-center justify-between">
             <h3 className="font-bold text-slate-900">Recent Conversations</h3>
             <Link
@@ -508,7 +508,7 @@ export function ResellerDashboard() {
         </div>
 
         {/* AI Performance */}
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:p-5 lg:p-6">
           <h3 className="font-bold text-slate-900">AI Performance</h3>
           <p className="text-xs text-slate-500">All conversations</p>
           <div className="mt-4 flex items-end gap-3">
@@ -539,7 +539,7 @@ export function ResellerDashboard() {
 
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Product SKUs */}
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm lg:col-span-2">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:p-5 lg:col-span-2 lg:p-6">
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div>
               <h3 className="font-bold text-slate-900">Product SKUs</h3>
@@ -617,7 +617,7 @@ export function ResellerDashboard() {
         </div>
 
         {/* Onboarding */}
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:p-5 lg:p-6">
           <div className="flex items-center justify-between">
             <h3 className="font-bold text-slate-900">Onboarding Progress</h3>
             <span className="text-xs font-semibold text-slate-500">
@@ -659,7 +659,7 @@ export function ResellerDashboard() {
 
       {/* Recent orders + quick actions */}
       <div className="grid gap-6 lg:grid-cols-2">
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:p-5 lg:p-6">
           <div className="flex items-center justify-between">
             <h3 className="font-bold text-slate-900">Recent orders</h3>
             <Link
@@ -700,7 +700,7 @@ export function ResellerDashboard() {
           )}
         </div>
 
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-3 md:grid-cols-2 md:gap-4">
           <Link
             href="/dashboard/integrations"
             className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:border-emerald-300 hover:shadow-md"

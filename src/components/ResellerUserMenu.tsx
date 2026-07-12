@@ -182,7 +182,7 @@ export function ResellerUserMenu() {
         <button
           type="button"
           onClick={() => setMenuOpen((o) => !o)}
-          className="flex items-center gap-2.5 rounded-xl border border-slate-200 bg-white py-1.5 pl-1.5 pr-2.5 shadow-sm transition-all hover:border-emerald-200 hover:shadow-md sm:gap-3 sm:pr-3"
+          className="flex min-h-11 items-center gap-2.5 rounded-xl border border-slate-200 bg-white py-1.5 pl-1.5 pr-2.5 shadow-sm transition-all hover:border-emerald-200 hover:shadow-md sm:gap-3 sm:pr-3"
         >
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-500 to-emerald-600 text-xs font-bold text-white">
             {initials(account?.fullName ?? null, account?.email ?? "R")}

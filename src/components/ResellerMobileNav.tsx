@@ -12,6 +12,7 @@ const links = [
   { href: "/dashboard/ai", label: "AI" },
   { href: "/dashboard/whatsapp-templates", label: "Templates" },
   { href: "/dashboard/integrations", label: "Setup" },
+  { href: "/dashboard/plan", label: "Plan" },
   { href: "/dashboard/support", label: "Support" },
 ];
 
@@ -19,7 +20,10 @@ export function ResellerMobileNav() {
   const pathname = usePathname();
 
   return (
-    <nav className="-mx-1 mt-4 flex gap-1 overflow-x-auto pb-1 lg:hidden">
+    <nav
+      className="-mx-1 mt-4 flex gap-1 overflow-x-auto pb-1 lg:hidden"
+      aria-label="Reseller mobile navigation"
+    >
       {links.map((link) => {
         const active =
           link.href === "/dashboard"
@@ -29,10 +33,11 @@ export function ResellerMobileNav() {
           <Link
             key={link.href}
             href={link.href}
-            className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-semibold ${
+            aria-current={active ? "page" : undefined}
+            className={`shrink-0 rounded-lg px-3 py-2 text-xs font-semibold ${
               active
-                ? "bg-emerald-500 text-white"
-                : "text-slate-600 hover:bg-slate-100"
+                ? "bg-emerald-600 text-white"
+                : "bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50"
             }`}
           >
             {link.label}

@@ -49,10 +49,10 @@ function StatCard({
 
   const inner = (
     <div
-      className={`rounded-xl border border-slate-200 border-l-4 bg-white p-5 shadow-sm ${border}`}
+      className={`rounded-xl border border-slate-200 border-l-4 bg-white p-4 shadow-sm md:p-5 ${border}`}
     >
       <p className="text-sm font-medium text-slate-600">{label}</p>
-      <p className="mt-1 text-3xl font-bold text-slate-900">{value}</p>
+      <p className="mt-1 text-2xl font-bold text-slate-900 lg:text-3xl">{value}</p>
       {metric ? (
         <p className={`mt-1 text-xs font-medium ${deltaColor(metric)}`}>
           {formatDelta(metric)}
@@ -74,10 +74,10 @@ function MiniBarChart({ points }: { points: AdminPlatformStats["chart"] }) {
 
   return (
     <div className="mt-4">
-      <div className="flex h-36 items-end gap-2">
+      <div className="flex h-28 items-end gap-1.5 md:h-32 md:gap-2 lg:h-36">
         {points.map((p) => (
-          <div key={p.date} className="flex flex-1 flex-col items-center gap-1">
-            <div className="flex h-28 w-full items-end justify-center gap-0.5">
+          <div key={p.date} className="flex min-w-0 flex-1 flex-col items-center gap-1">
+            <div className="flex h-20 w-full items-end justify-center gap-0.5 md:h-24 lg:h-28">
               <div
                 className="w-2 rounded-t bg-blue-400/90"
                 style={{
@@ -135,7 +135,7 @@ export function AdminDashboard() {
 
   return (
     <div className="space-y-6">
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-3 md:grid-cols-2 md:gap-4 lg:grid-cols-5">
         <StatCard
           label="Total Conversations"
           value={stats.period.conversations.current.toLocaleString()}
@@ -172,7 +172,7 @@ export function AdminDashboard() {
         />
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 md:grid-cols-2 md:gap-4 lg:grid-cols-4">
         <StatCard
           label="Resellers"
           value={stats.resellers}
@@ -204,9 +204,9 @@ export function AdminDashboard() {
       </div>
 
       <div className="grid gap-6 lg:grid-cols-3">
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm lg:col-span-2">
-          <div className="flex items-center justify-between">
-            <div>
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:p-5 lg:col-span-2 lg:p-6">
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0">
               <h2 className="font-bold text-slate-900">Conversations & Orders</h2>
               <p className="text-xs text-slate-500">Last 7 days · platform-wide</p>
             </div>
@@ -220,7 +220,7 @@ export function AdminDashboard() {
           )}
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:p-5 lg:p-6">
           <h2 className="font-bold text-slate-900">AI Performance</h2>
           <p className="text-xs text-slate-500">All conversations</p>
           <p className="mt-4 text-4xl font-bold text-slate-900">
@@ -244,7 +244,7 @@ export function AdminDashboard() {
         </div>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 md:grid-cols-2 md:gap-4 lg:grid-cols-4">
         <StatCard
           label="Shopify connected"
           value={stats.integrations.shopify}
@@ -269,7 +269,7 @@ export function AdminDashboard() {
       </div>
 
       <div className="grid gap-6 lg:grid-cols-3">
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:p-5 lg:p-6">
           <div className="flex items-center justify-between">
             <h2 className="font-bold text-slate-900">Recent resellers</h2>
             <Link
@@ -305,7 +305,7 @@ export function AdminDashboard() {
           )}
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:p-5 lg:p-6">
           <div className="flex items-center justify-between">
             <h2 className="font-bold text-slate-900">Recent orders</h2>
             <Link
@@ -343,7 +343,7 @@ export function AdminDashboard() {
           )}
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:p-5 lg:p-6">
           <div className="flex items-center justify-between">
             <h2 className="font-bold text-slate-900">Recent Conversations</h2>
             <Link

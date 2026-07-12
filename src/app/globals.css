@@ -25,6 +25,24 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Prevent accidental horizontal scroll in app shells */
+html {
+  overflow-x: clip;
+}
+
+img,
+video {
+  max-width: 100%;
+  height: auto;
+}
+
+@media (max-width: 767px) {
+  /* Touch-friendly defaults inside dashboard/admin main only via utility classes in components */
+  .touch-target {
+    min-height: 44px;
+  }
+}
+
 input,
 textarea,
 select {

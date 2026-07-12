@@ -118,8 +118,8 @@ export function AdminOrdersPanel({
 
   return (
     <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-      <div className="flex flex-col gap-4 border-b border-slate-200 bg-slate-50 px-4 py-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
+      <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50 px-3 py-3 sm:flex-row sm:items-end sm:justify-between sm:px-4 sm:py-4">
+        <div className="min-w-0">
           <p className="font-semibold text-slate-900">
             {selectedStoreId === "all"
               ? "All orders"
@@ -130,7 +130,7 @@ export function AdminOrdersPanel({
           </p>
         </div>
 
-        <div className="flex flex-col gap-1 sm:min-w-[280px]">
+        <div className="flex w-full flex-col gap-1 sm:min-w-[280px] sm:w-auto">
           <label
             htmlFor="reseller-filter"
             className="text-xs font-semibold uppercase tracking-wide text-slate-500"
@@ -141,7 +141,7 @@ export function AdminOrdersPanel({
             id="reseller-filter"
             value={selectedStoreId}
             onChange={(e) => handleStoreChange(e.target.value)}
-            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-800"
+            className="min-h-11 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-800"
           >
             <option value="all">All resellers</option>
             {resellersWithStore.map((r) => (
@@ -254,17 +254,17 @@ export function AdminOrdersPanel({
       </div>
 
       {totalPages > 0 && (
-        <div className="flex flex-col gap-3 border-t border-slate-200 bg-slate-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-3 border-t border-slate-200 bg-slate-50 px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-4">
           <p className="text-sm text-slate-600">
             Showing {rangeStart}–{rangeEnd} of {total.toLocaleString()} order
             {total === 1 ? "" : "s"}
           </p>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={() => goToPage(page - 1)}
               disabled={page <= 1 || loading}
-              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 disabled:cursor-not-allowed disabled:opacity-50 hover:bg-slate-100"
+              className="min-h-11 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 disabled:cursor-not-allowed disabled:opacity-50 hover:bg-slate-100"
             >
               Previous
             </button>
@@ -275,7 +275,7 @@ export function AdminOrdersPanel({
               type="button"
               onClick={() => goToPage(page + 1)}
               disabled={page >= totalPages || loading}
-              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 disabled:cursor-not-allowed disabled:opacity-50 hover:bg-slate-100"
+              className="min-h-11 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 disabled:cursor-not-allowed disabled:opacity-50 hover:bg-slate-100"
             >
               Next
             </button>
