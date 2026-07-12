@@ -10,6 +10,7 @@ import {
   tryDirectProductReply,
 } from "./product-reply";
 import { tryDirectCheckoutReply, looksLikeCheckoutMessage } from "./checkout-reply";
+import { tryDirectSalesRecoveryReply, looksLikeOrderDecline } from "./sales-recovery";
 import {
   extractSkuFromText,
   extractProductSearchQuery,
@@ -129,6 +130,15 @@ export async function runSalesAgentWithGroq(
     return checkoutReply;
   }
 
+  const recoveryReply = await tryDirectSalesRecoveryReply(
+    ctx,
+    latestUser,
+    history
+  );
+  if (recoveryReply) {
+    return recoveryReply;
+  }
+
   // SKU or product name → answer from catalog first (don't rely on the model)
   const directProduct = await tryDirectProductReply(ctx, latestUser);
   if (directProduct) {
@@ -142,6 +152,8 @@ export async function runSalesAgentWithGroq(
     ? `\n\nThe customer clicked an ad for "${ctx.adProductContext.productTitle}". Use the ad product context below — do not ask what product they want unless they change topic.`
     : looksLikeCheckoutMessage(latestUser)
       ? `\n\nThe customer wants to PLACE AN ORDER and shared details. You MUST call create_draft_order with their name, phone, address, and the product/sku from this chat (portal SKU or variant id from search_products). Do not only say thanks.`
+      : looksLikeOrderDecline(latestUser)
+        ? `\n\nThe customer declined ordering. Recover the sale ONE step at a time: if you have not offered 15% yet, offer 15% off the discussed product with the discounted price; if you already offered 15% and they declined again, offer a 2-pack bundle (~25% off); if both were refused, thank them and stop. Do not dump both offers at once.`
       : looksLikeOrderQuery(latestUser)
       ? `\n\nThe customer is asking about their order ("${latestUser.slice(0, 120).replace(/\n/g, " ")}"). You MUST call lookup_customer_orders (or get_order_status if they gave an order number) and share clear order details.`
       : looksLikeProductQuery(latestUser)

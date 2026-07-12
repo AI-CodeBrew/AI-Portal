@@ -8,6 +8,7 @@ import {
 } from "./sales-tools";
 import { tryDirectProductReply } from "./product-reply";
 import { tryDirectCheckoutReply } from "./checkout-reply";
+import { tryDirectSalesRecoveryReply } from "./sales-recovery";
 
 export type { AgentContext } from "./sales-tools";
 
@@ -72,6 +73,18 @@ export async function runSalesAgent(
     if (checkout) return checkout;
   } catch (err) {
     console.error("[run-sales-agent] checkout failed:", err);
+  }
+
+  // Decline after product pitch → discount, then bundle, then stop
+  try {
+    const recovery = await tryDirectSalesRecoveryReply(
+      enrichedCtx,
+      latestUser,
+      history
+    );
+    if (recovery) return recovery;
+  } catch (err) {
+    console.error("[run-sales-agent] sales recovery failed:", err);
   }
 
   // Catalog lookup by SKU or product name (incl. variants) before the LLM

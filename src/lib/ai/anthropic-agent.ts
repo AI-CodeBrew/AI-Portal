@@ -4,6 +4,7 @@ import { buildSalesSystemPrompt } from "./build-system-prompt";
 import { CHAT_HISTORY_LIMIT } from "./chat-history";
 import { tryDirectProductReply } from "./product-reply";
 import { tryDirectCheckoutReply } from "./checkout-reply";
+import { tryDirectSalesRecoveryReply } from "./sales-recovery";
 import {
   extractSkuFromText,
   extractProductSearchQuery,
@@ -146,6 +147,15 @@ export async function runSalesAgentWithAnthropic(
   const checkoutReply = await tryDirectCheckoutReply(ctx, latestUser, history);
   if (checkoutReply) {
     return checkoutReply;
+  }
+
+  const recoveryReply = await tryDirectSalesRecoveryReply(
+    ctx,
+    latestUser,
+    history
+  );
+  if (recoveryReply) {
+    return recoveryReply;
   }
 
   const directProduct = await tryDirectProductReply(ctx, latestUser);
