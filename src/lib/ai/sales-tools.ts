@@ -17,6 +17,7 @@ import {
   getStoreProductBySku,
   extractSkuFromText,
   extractProductSearchQuery,
+  getPrimaryProductImageUrl,
 } from "@/lib/products/products-service";
 
 export const SALES_SYSTEM_PROMPT = `You are a helpful, professional sales agent for an e-commerce store on WhatsApp.
@@ -517,7 +518,8 @@ export async function executeSalesTool(
                   sku: exactPortal.sku,
                   source: "portal" as const,
                   currency: exactPortal.currency,
-                  imageUrl: exactPortal.image_url,
+                  imageUrl: getPrimaryProductImageUrl(exactPortal),
+                  image_urls: exactPortal.image_urls ?? [],
                   options: (exactPortal.options ?? []).map((o) => ({
                     name: o.name,
                     values: o.values ?? [],
@@ -571,7 +573,8 @@ export async function executeSalesTool(
               sku: p.sku,
               source: "portal" as const,
               currency: p.currency,
-              imageUrl: p.imageUrl,
+              imageUrl: getPrimaryProductImageUrl(p),
+              image_urls: p.image_urls ?? [],
               options: p.options ?? [],
               bundles: (p.bundles ?? []).map((b) => ({
                 quantity: b.quantity,

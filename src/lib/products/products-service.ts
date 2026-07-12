@@ -26,6 +26,34 @@ function normalizeSku(sku: string): string {
     .slice(0, 48);
 }
 
+/** Best public HTTPS image URL for WhatsApp / catalog display. */
+export function getPrimaryProductImageUrl(product: {
+  image_url?: string | null;
+  image_urls?: string[] | null;
+  imageUrl?: string | null;
+}): string | null {
+  const candidates = [
+    product.imageUrl,
+    product.image_url,
+    ...(product.image_urls ?? []),
+  ];
+
+  for (const raw of candidates) {
+    if (typeof raw !== "string") continue;
+    let u = raw.trim();
+    if (!u) continue;
+    if (u.startsWith("//")) u = `https:${u}`;
+    if (u.startsWith("http://")) u = `https://${u.slice(7)}`;
+    if (u.startsWith("https://")) return u;
+    const cdn = process.env.BUNNY_CDN_HOSTNAME?.replace(/^https?:\/\//, "")
+      .replace(/\/$/, "");
+    if (cdn) {
+      return `https://${cdn}/${u.replace(/^\//, "")}`;
+    }
+  }
+  return null;
+}
+
 /** Pull SKU-like codes from free text (e.g. "AA-6CH6DZ33WZ\\ntell me about this"). */
 export function extractSkuFromText(text: string): string | null {
   const t = text.trim();
@@ -245,12 +273,15 @@ export async function listStoreProducts(
 }
 
 function normalizeProductRow(row: Record<string, unknown>): StoreProduct {
-  const image_url = (row.image_url as string | null) ?? null;
+  let image_url = (row.image_url as string | null) ?? null;
   const image_urls = Array.isArray(row.image_urls)
-    ? (row.image_urls as string[])
+    ? (row.image_urls as string[]).filter(Boolean)
     : image_url
       ? [image_url]
       : [];
+  if (!image_url && image_urls.length > 0) {
+    image_url = image_urls[0];
+  }
   return { ...(row as unknown as StoreProduct), image_url, image_urls };
 }
 
@@ -597,6 +628,7 @@ export type PortalProductSearchHit = {
   price: string;
   currency: string;
   imageUrl: string | null;
+  image_urls: string[];
   options: Array<{ name: string; values: string[] }>;
   variants: Array<{
     id: string;
@@ -620,7 +652,8 @@ function mapStoreProductToSearchHit(p: StoreProduct): PortalProductSearchHit {
     sku: p.sku,
     price: String(p.price),
     currency: p.currency,
-    imageUrl: p.image_url,
+    imageUrl: getPrimaryProductImageUrl(p),
+    image_urls: p.image_urls ?? [],
     options: (p.options ?? []).map((o) => ({
       name: o.name,
       values: o.values ?? [],

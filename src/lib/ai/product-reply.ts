@@ -1,6 +1,7 @@
 import {
   extractSkuFromText,
   extractProductSearchQuery,
+  getPrimaryProductImageUrl,
 } from "@/lib/products/products-service";
 import { executeSalesTool, type AgentContext } from "./sales-tools";
 import { orderDetailsTemplate } from "./order-details-template";
@@ -11,6 +12,7 @@ export type SearchProduct = {
   description?: string | null;
   imageUrl?: string | null;
   image_url?: string | null;
+  image_urls?: string[] | null;
   options?: Array<{ name?: string; values?: string[] }>;
   bundles?: Array<{
     quantity?: number;
@@ -48,9 +50,9 @@ export function formatProductsReply(products: SearchProduct[]): string {
   const imageMarkers: string[] = [];
 
   const blocks = products.slice(0, 2).map((p) => {
-    const imageUrl = (p.imageUrl || p.image_url || "").trim();
+    const imageUrl = getPrimaryProductImageUrl(p);
     if (
-      /^https:\/\//i.test(imageUrl) &&
+      imageUrl &&
       imageMarkers.length < 2 &&
       !imageMarkers.some((m) => m.includes(imageUrl))
     ) {
