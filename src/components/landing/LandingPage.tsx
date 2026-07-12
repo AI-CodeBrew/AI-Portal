@@ -459,6 +459,9 @@ export function LandingPage() {
             © {new Date().getFullYear()} Arabia AI · Commerce Portal
           </p>
           <div className="flex gap-4 text-xs font-medium text-slate-600">
+            <Link href="/privacy" className="hover:text-slate-900">
+              Privacy Policy
+            </Link>
             <Link href="/login" className="hover:text-slate-900">
               Sign in
             </Link>
