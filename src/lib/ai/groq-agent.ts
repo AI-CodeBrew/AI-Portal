@@ -10,7 +10,10 @@ const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 const DEFAULT_MODEL = "llama-3.3-70b-versatile";
 
 const PRODUCT_QUERY_PATTERN =
-  /\b(price|cost|how much|do you have|available|in stock|product|buy|sell|show me|looking for|details|about)\b/i;
+  /\b(price|cost|how much|do you have|available|in stock|product|buy|sell|show me|looking for|details|about|sku|want this)\b/i;
+
+const ORDER_QUERY_PATTERN =
+  /\b(order|tracking|delivery|shipped|where is my|my order|order status|dispatch)\b/i;
 
 function lastUserMessage(
   history: Array<{ role: "user" | "assistant"; content: string }>
@@ -24,9 +27,14 @@ function lastUserMessage(
 function looksLikeProductQuery(text: string): boolean {
   const t = text.trim();
   if (t.length < 2) return false;
+  if (ORDER_QUERY_PATTERN.test(t)) return false;
   if (PRODUCT_QUERY_PATTERN.test(t)) return true;
-  // Short messages that are likely a product name (e.g. "Classic T-Shirt")
+  if (/^[A-Z0-9][A-Z0-9_-]{3,47}$/i.test(t)) return true;
   return t.length <= 80 && !/^(hi|hello|hey|thanks|thank you|ok|yes|no)\b/i.test(t);
+}
+
+function looksLikeOrderQuery(text: string): boolean {
+  return ORDER_QUERY_PATTERN.test(text.trim());
 }
 
 type ChatMessage =
@@ -98,9 +106,13 @@ export async function runSalesAgentWithGroq(
   const latestUser = lastUserMessage(history);
   const productHint = ctx.adProductContext
     ? `\n\nThe customer clicked an ad for "${ctx.adProductContext.productTitle}". Use the ad product context below — do not ask what product they want unless they change topic.`
-    : looksLikeProductQuery(latestUser)
-      ? `\n\nThe customer's latest message appears to be about a product ("${latestUser.slice(0, 120)}"). You MUST call search_products with a relevant keyword before replying.`
-      : "";
+    : looksLikeOrderQuery(latestUser)
+      ? `\n\nThe customer is asking about their order ("${latestUser.slice(0, 120)}"). You MUST call lookup_customer_orders (or get_order_status if they gave an order number) and share clear order details.`
+      : looksLikeProductQuery(latestUser)
+      ? `\n\nThe customer's latest message appears to be about a product or SKU ("${latestUser.slice(0, 120)}"). You MUST call search_products first, share full details (name, price_formatted, stock, description), then ask if they want to buy and collect name, phone, and address to close the sale.`
+      : history.length === 0
+        ? `\n\nNo messages in the current 2-hour AI session — greet briefly as a fresh chat, then help with products or orders.`
+        : "";
 
   const messages: ChatMessage[] = [
     {

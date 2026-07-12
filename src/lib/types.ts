@@ -92,10 +92,13 @@ export interface WhatsappConversation {
   store_id: string;
   customer_id: string | null;
   customer_phone: string;
+  /** Resolved from customers table when available */
+  customer_name?: string | null;
   status: ConversationStatus;
   created_at: string;
   updated_at: string;
   admin_read_at?: string | null;
+  ai_exhausted?: boolean | null;
 }
 
 export interface WhatsappMessage {

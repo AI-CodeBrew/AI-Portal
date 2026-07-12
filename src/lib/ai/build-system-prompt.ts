@@ -1,5 +1,5 @@
 import { SALES_SYSTEM_PROMPT } from "./sales-tools";
-import { CHAT_HISTORY_LIMIT } from "./chat-history";
+import { AI_SESSION_WINDOW_HOURS, CHAT_HISTORY_LIMIT } from "./chat-history";
 import {
   REPLY_LENGTH_OPTIONS,
   type AiReplyLength,
@@ -88,7 +88,7 @@ Mode selection: Use WhatsApp sales mode for WhatsApp leads and new purchases. Us
     : "";
 
   const pendingBlock = pendingOrdersHint?.trim()
-    ? `\n\n--- Pending orders context ---\n${pendingOrdersHint.trim()}`
+    ? `\n\n--- Customer orders context ---\n${pendingOrdersHint.trim()}`
     : "";
 
   return `${SALES_SYSTEM_PROMPT}
@@ -99,5 +99,5 @@ Your name is ${agentName}. When introducing yourself, use this name.${currencyNo
 Tone: ${toneInstruction}
 Reply length: ${replyInstruction}${templateBlock}${agentModesBlock}
 
-You receive the last ${CHAT_HISTORY_LIMIT} messages of this chat (oldest to newest).`;
+You receive up to the last ${CHAT_HISTORY_LIMIT} messages from the current ${AI_SESSION_WINDOW_HOURS}-hour session only (oldest to newest). Messages older than ${AI_SESSION_WINDOW_HOURS} hours are not in your context — treat that as a fresh session for conversation continuity, but still look up orders with tools. The reseller inbox keeps the full chat history separately.`;
 }

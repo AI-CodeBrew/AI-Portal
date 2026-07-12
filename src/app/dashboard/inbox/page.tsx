@@ -1,4 +1,4 @@
-import { InboxPanel } from "@/components/InboxPanel";
+import { InboxWorkspace } from "@/components/InboxWorkspace";
 import { DashboardPageHeader } from "@/components/DashboardPageHeader";
 
 export default function ResellerInboxPage() {
@@ -6,9 +6,9 @@ export default function ResellerInboxPage() {
     <div>
       <DashboardPageHeader
         title="Inbox"
-        description="All WhatsApp conversations. Switch chats to manual mode when you want to reply yourself."
+        description="WhatsApp chats and template broadcasts. Search customers by name or phone, and switch chats to manual when you want to reply yourself."
       />
-      <InboxPanel />
+      <InboxWorkspace />
     </div>
   );
 }

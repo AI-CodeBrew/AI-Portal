@@ -161,6 +161,8 @@ export function OrdersList() {
     useState<StatusFilter>(initialStatus);
   const [sourceFilter, setSourceFilter] =
     useState<SourceFilter>(initialSource);
+  const [customerSearch, setCustomerSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [datePreset, setDatePreset] = useState<DatePreset>(initialDatePreset);
   const [customFrom, setCustomFrom] = useState(
     existing?.lastDateFrom?.slice(0, 10) ?? ""
@@ -260,7 +262,12 @@ export function OrdersList() {
     setSelectedIds(new Set());
     setShowBulkFollowUp(false);
     setBulkFollowUpResults(null);
-  }, [page, statusFilter, sourceFilter, datePreset, customFrom, customTo]);
+  }, [page, statusFilter, sourceFilter, datePreset, customFrom, customTo, debouncedSearch]);
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(customerSearch.trim()), 300);
+    return () => clearTimeout(t);
+  }, [customerSearch]);
 
   const applyPage = useCallback(
     (
@@ -335,13 +342,14 @@ export function OrdersList() {
       if (source !== "all") params.set("source", source);
       if (range.dateFrom) params.set("dateFrom", range.dateFrom);
       if (range.dateTo) params.set("dateTo", range.dateTo);
+      if (debouncedSearch) params.set("search", debouncedSearch);
       return {
         params,
         range,
         preset: rangeOverride?.preset ?? (customFrom || customTo ? "custom" as DatePreset : datePreset),
       };
     },
-    [customFrom, customTo, datePreset]
+    [customFrom, customTo, datePreset, debouncedSearch]
   );
 
   /** Background: refresh Shopify total count (does not block UI). */
@@ -472,7 +480,7 @@ export function OrdersList() {
         options?.rangeOverride
       );
 
-      if (!force) {
+      if (!force && !debouncedSearch) {
         const hit = getCachedPage(
           source,
           status,
@@ -627,6 +635,17 @@ export function OrdersList() {
     }, AUTO_REFRESH_MS);
     return () => clearInterval(interval);
   }, [store, page, statusFilter, sourceFilter, loadPage]);
+
+  useEffect(() => {
+    if (!store) return;
+    setPage(1);
+    void loadPage(1, sourceFilter, statusFilter, {
+      force: true,
+      showLoading: true,
+      backgroundSync: false,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedSearch]);
 
   async function confirmOrder(id: string) {
     setConfirming(id);
@@ -1047,6 +1066,16 @@ export function OrdersList() {
             </button>
           );
         })}
+        <div className="ml-auto w-full sm:w-64">
+          <input
+            type="search"
+            value={customerSearch}
+            onChange={(e) => setCustomerSearch(e.target.value)}
+            placeholder="Search by name or phone..."
+            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100"
+            aria-label="Search orders by customer name or phone"
+          />
+        </div>
       </div>
 
       <div className="flex flex-wrap items-end gap-2">

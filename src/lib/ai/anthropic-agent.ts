@@ -1,17 +1,22 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { executeSalesTool, type AgentContext } from "./sales-tools";
 import { buildSalesSystemPrompt } from "./build-system-prompt";
+import { CHAT_HISTORY_LIMIT } from "./chat-history";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const ANTHROPIC_TOOLS: Anthropic.Tool[] = [
   {
     name: "search_products",
-    description: "Search the store catalog by product name or keyword",
+    description:
+      "Search BOTH portal catalog and Shopify by name, keyword, or SKU. Always use for product questions.",
     input_schema: {
       type: "object" as const,
       properties: {
-        query: { type: "string", description: "Search query" },
+        query: {
+          type: "string",
+          description: "Product name, keyword, or SKU/ref",
+        },
       },
       required: ["query"],
     },
@@ -83,8 +88,20 @@ const ANTHROPIC_TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: "lookup_customer_orders",
+    description:
+      "List this customer's recent orders by WhatsApp phone. Use when they ask about their order/status/tracking.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        limit: { type: "number" },
+      },
+    },
+  },
+  {
     name: "get_order_status",
-    description: "Look up order status by order number (e.g. #1001)",
+    description:
+      "Look up one order by order number (portal and/or Shopify)",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -112,10 +129,12 @@ export async function runSalesAgentWithAnthropic(
 ): Promise<string> {
   const storeLabel = ctx.store.store_name || ctx.store.shop_domain || "our store";
 
-  const messages: Anthropic.MessageParam[] = history.map((m) => ({
-    role: m.role,
-    content: m.content,
-  }));
+  const messages: Anthropic.MessageParam[] = history
+    .slice(-CHAT_HISTORY_LIMIT)
+    .map((m) => ({
+      role: m.role,
+      content: m.content,
+    }));
 
   const systemBlocks: Anthropic.TextBlockParam[] = [
     {

@@ -16,12 +16,59 @@ function applyDateFilters<T extends { gte: (c: string, v: string) => T; lte: (c:
     q = q.gte("created_at", dateFrom);
   }
   if (dateTo) {
-    // Inclusive end-of-day if date-only (YYYY-MM-DD)
     const end =
       dateTo.length <= 10 ? `${dateTo}T23:59:59.999Z` : dateTo;
     q = q.lte("created_at", end);
   }
   return q;
+}
+
+async function customerIdsMatchingSearch(
+  storeId: string,
+  search: string
+): Promise<string[]> {
+  const supabase = createAdminClient();
+  const term = search.trim();
+  if (!term) return [];
+
+  const digits = term.replace(/\D/g, "");
+  const parts = [`name.ilike.%${term}%`];
+  if (digits.length >= 3) {
+    parts.push(`phone.ilike.%${digits}%`);
+  } else {
+    parts.push(`phone.ilike.%${term}%`);
+  }
+
+  const { data } = await supabase
+    .from("customers")
+    .select("id")
+    .eq("store_id", storeId)
+    .or(parts.join(","))
+    .limit(200);
+
+  return (data ?? []).map((c) => c.id as string);
+}
+
+function applySearchFilter<
+  T extends { or: (filters: string) => T; eq: (c: string, v: string) => T },
+>(query: T, search: string, customerIds: string[]): T {
+  const term = search.trim();
+  if (!term) return query;
+
+  const digits = term.replace(/\D/g, "");
+  const clauses: string[] = [`order_number.ilike.%${term}%`];
+
+  if (customerIds.length > 0) {
+    clauses.push(`customer_id.in.(${customerIds.join(",")})`);
+  }
+
+  // shipping_address JSON fields (PostgREST)
+  clauses.push(`shipping_address->>name.ilike.%${term}%`);
+  if (digits.length >= 3) {
+    clauses.push(`shipping_address->>phone.ilike.%${digits}%`);
+  }
+
+  return query.or(clauses.join(","));
 }
 
 export async function GET(request: NextRequest) {
@@ -38,6 +85,7 @@ export async function GET(request: NextRequest) {
     const source = searchParams.get("source");
     const dateFrom = searchParams.get("dateFrom");
     const dateTo = searchParams.get("dateTo");
+    const search = (searchParams.get("search") ?? searchParams.get("q") ?? "").trim();
     const offset = (page - 1) * limit;
     const includeCounts = searchParams.get("counts") !== "0";
 
@@ -50,7 +98,6 @@ export async function GET(request: NextRequest) {
       .single();
     const shopifyConnected = Boolean(store?.shopify_access_token);
 
-    // When Shopify is disconnected, never surface leftover synced Shopify orders
     if (!shopifyConnected && source === "shopify") {
       return NextResponse.json({
         orders: [],
@@ -72,6 +119,10 @@ export async function GET(request: NextRequest) {
       });
     }
 
+    const customerIds = search
+      ? await customerIdsMatchingSearch(storeId, search)
+      : [];
+
     let query = supabase
       .from("orders")
       .select("*, customers(phone, name)", { count: "exact" })
@@ -88,6 +139,9 @@ export async function GET(request: NextRequest) {
       query = query.neq("source", "shopify");
     }
     query = applyDateFilters(query, dateFrom, dateTo);
+    if (search) {
+      query = applySearchFilter(query, search, customerIds);
+    }
 
     const countBase = () => {
       let q = supabase
@@ -100,6 +154,9 @@ export async function GET(request: NextRequest) {
         q = q.neq("source", "shopify");
       }
       q = applyDateFilters(q, dateFrom, dateTo);
+      if (search) {
+        q = applySearchFilter(q, search, customerIds);
+      }
       return q;
     };
 

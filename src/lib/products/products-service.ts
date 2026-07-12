@@ -258,11 +258,12 @@ export async function getStoreProductBySku(
   sku: string
 ): Promise<StoreProduct | null> {
   const supabase = createAdminClient();
+  const normalized = normalizeSku(sku);
   const { data } = await supabase
     .from("store_products")
     .select("*")
     .eq("store_id", storeId)
-    .eq("sku", normalizeSku(sku))
+    .ilike("sku", normalized)
     .maybeSingle();
 
   if (!data) return null;

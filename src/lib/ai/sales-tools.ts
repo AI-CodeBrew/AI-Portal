@@ -11,11 +11,20 @@ import { confirmPortalOrder } from "@/lib/orders/confirm";
 import type { Store } from "@/lib/types";
 import type { ResolvedStoreAiConfig } from "./ai-settings-types";
 import type { AdProductContext } from "@/lib/ads/types";
-import { searchPortalProducts } from "@/lib/products/products-service";
+import { searchPortalProducts, getStoreProductBySku } from "@/lib/products/products-service";
 
 export const SALES_SYSTEM_PROMPT = `You are a helpful, professional sales agent for an e-commerce store on WhatsApp.
 
-Your goal is to help customers find products, answer questions about prices and details, and close sales — and to confirm or recover Shopify orders when that mode applies.
+Your goal is to help customers find products (portal catalog AND Shopify catalog), answer questions about prices and details, and ACTIVELY close sales — and to confirm or recover Shopify orders when that mode applies.
+
+CRITICAL — conversation memory:
+- You receive up to the last 10 messages from the current 2-hour session only. Older chat is not in your context — greet briefly as a fresh session if history is empty, but still help with orders via tools.
+- Short follow-ups like "what about large?", "how much?", "yes", or "that one" refer to products already discussed in this session.
+
+CRITICAL — customer order questions:
+- If the customer asks about their order, status, tracking, delivery, or "where is my order" — call lookup_customer_orders (and get_order_status if they give an order number).
+- Share clear details: order number, status, items, total (price_formatted), and tracking if available.
+- Do not invent order details.
 
 CRITICAL — currency and prices:
 - The store has ONE currency (provided in your context as store_currency, e.g. PKR, USD).
@@ -23,13 +32,20 @@ CRITICAL — currency and prices:
 - NEVER use $ or say "dollars" unless store_currency is USD.
 - For PKR use Rs / PKR formatting from price_formatted. Never convert to another currency.
 
-CRITICAL — product questions:
-- If the customer mentions a product name, asks for a price, or asks "do you have X" — you MUST call search_products first with the product name or keyword.
+CRITICAL — product questions (portal + Shopify):
+- search_products searches BOTH the portal catalog and Shopify products. Always use it for product name, SKU/ref, price, or "do you have X".
+- If the customer gives a SKU or product code, call search_products with that exact SKU — then share full details (name, price_formatted, stock, description, variants).
 - Never say you don't have a product without calling search_products.
 - Never invent product names, prices, or stock. Only use data returned by tools.
-- When search_products returns results, tell the customer: product name, price_formatted, in-stock status, and a short description if available.
-- For the most accurate price/stock on a specific size or color, call check_stock with that variant_id.
-- If multiple variants exist (sizes/colors), list the options briefly and ask which they want.
+- When search_products returns results, tell the customer: product name, price_formatted, in-stock status, short description, and key variants (size/color) if any.
+- Prefer portal catalog matches when SKU/ref is known; still mention Shopify matches when relevant.
+- For the most accurate price/stock on a specific size or color, call check_stock with that variant_id (Shopify variants).
+
+CRITICAL — always try to close the deal:
+- Whenever the customer asks about a product (details, price, availability, SKU), after sharing details, warmly nudge toward purchase.
+- Ask if they want to buy / place the order, then collect: full name, phone (confirm WhatsApp number), and full delivery address.
+- Do not be pushy after a clear "no" — but do make a clear offer to buy on every product interest.
+- When they are ready, call create_draft_order (requires name + address).
 
 CRITICAL — WhatsApp purchases:
 - Before create_draft_order you MUST have: full name, phone (confirm WhatsApp number), and full delivery address.
@@ -38,10 +54,9 @@ CRITICAL — WhatsApp purchases:
 CRITICAL — Shopify pending orders:
 - Use confirm_order when the customer confirms a pending Shopify order.
 - Use cancel_order when they cancel, then follow recovery offers in Shopify confirmation mode instructions.
-- Use get_order_status or pending order context when discussing existing orders.
+- Use lookup_customer_orders / get_order_status when discussing existing orders.
 
 Other rules:
-- Use the full recent conversation history — short follow-ups like "what about large?" or "how much?" refer to products mentioned earlier.
 - Be friendly, concise, and persuasive. Use short messages suitable for WhatsApp.
 - If you cannot help (complaints, refunds, custom requests, or they ask for a human), call escalate_to_human.`;
 
@@ -71,11 +86,14 @@ export const OPENAI_SALES_TOOLS = [
     function: {
       name: "search_products",
       description:
-        "Search the store catalog by product name or keyword. ALWAYS use this when the customer asks about a product, price, or availability.",
+        "Search BOTH portal catalog and Shopify products by name, keyword, or SKU/ref. ALWAYS use this when the customer asks about a product, price, availability, or gives a SKU. Returns full details including price_formatted.",
       parameters: {
         type: "object",
         properties: {
-          query: { type: "string", description: "Search query" },
+          query: {
+            type: "string",
+            description: "Product name, keyword, or exact SKU/ref code",
+          },
         },
         required: ["query"],
       },
@@ -172,8 +190,26 @@ export const OPENAI_SALES_TOOLS = [
   {
     type: "function" as const,
     function: {
+      name: "lookup_customer_orders",
+      description:
+        "List this customer's recent orders (by their WhatsApp phone). ALWAYS use when they ask about their order, status, delivery, or tracking without giving a number — or to find their orders before confirming/cancelling.",
+      parameters: {
+        type: "object",
+        properties: {
+          limit: {
+            type: "number",
+            description: "Max orders to return (default 5)",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
       name: "get_order_status",
-      description: "Look up order status by order number (e.g. #1001)",
+      description:
+        "Look up one order by order number (portal and/or Shopify). Use when the customer provides an order number like #1001.",
       parameters: {
         type: "object",
         properties: {
@@ -212,17 +248,20 @@ async function findStoreOrderByNumber(
   for (const candidate of candidates) {
     const { data } = await supabase
       .from("orders")
-      .select("id, status, order_number, source, total, currency, items")
+      .select(
+        "id, status, order_number, source, total, currency, items, tracking_number, tracking_company, created_at, shipping_address"
+      )
       .eq("store_id", storeId)
       .eq("order_number", candidate)
       .maybeSingle();
     if (data) return data as Record<string, unknown>;
   }
 
-  // Fallback: match without leading #
   const { data: rows } = await supabase
     .from("orders")
-    .select("id, status, order_number, source, total, currency, items")
+    .select(
+      "id, status, order_number, source, total, currency, items, tracking_number, tracking_company, created_at, shipping_address"
+    )
     .eq("store_id", storeId)
     .ilike("order_number", `%${raw}%`)
     .order("created_at", { ascending: false })
@@ -233,6 +272,130 @@ async function findStoreOrderByNumber(
     return n === raw || n.endsWith(raw);
   });
   return (match as Record<string, unknown> | undefined) ?? null;
+}
+
+function formatOrderItems(
+  items: unknown
+): Array<{ title: string; quantity: number; price?: number }> {
+  if (!Array.isArray(items)) return [];
+  return items.map((raw) => {
+    const i = raw as { title?: string; name?: string; quantity?: number; price?: number };
+    return {
+      title: i.title || i.name || "item",
+      quantity: Math.max(1, Number(i.quantity) || 1),
+      price: i.price != null ? Number(i.price) : undefined,
+    };
+  });
+}
+
+async function findCustomerIdsForPhone(
+  storeId: string,
+  customerPhone: string
+): Promise<string[]> {
+  const supabase = createAdminClient();
+  const phone = customerPhone.replace(/\D/g, "").trim();
+  if (!phone) return [];
+
+  const { data: customers } = await supabase
+    .from("customers")
+    .select("id, phone")
+    .eq("store_id", storeId)
+    .or(`phone.eq.${phone},phone.ilike.%${phone.slice(-10)}`)
+    .limit(10);
+
+  return (customers ?? []).map((c) => c.id as string);
+}
+
+export async function lookupOrdersForCustomerPhone(
+  storeId: string,
+  customerPhone: string,
+  limit = 5
+): Promise<
+  Array<{
+    order_number: string | null;
+    status: string;
+    source: string | null;
+    total: number | null;
+    currency: string | null;
+    total_formatted: string;
+    items: Array<{ title: string; quantity: number }>;
+    tracking_number: string | null;
+    tracking_company: string | null;
+    created_at: string;
+  }>
+> {
+  const supabase = createAdminClient();
+  const phone = customerPhone.replace(/\D/g, "").trim();
+  const customerIds = await findCustomerIdsForPhone(storeId, customerPhone);
+
+  let query = supabase
+    .from("orders")
+    .select(
+      "order_number, status, source, total, currency, items, tracking_number, tracking_company, created_at, shipping_address, customer_id"
+    )
+    .eq("store_id", storeId)
+    .order("created_at", { ascending: false })
+    .limit(40);
+
+  if (customerIds.length > 0) {
+    query = query.in("customer_id", customerIds);
+  }
+
+  const { data: byCustomer } = customerIds.length
+    ? await query
+    : { data: [] as Record<string, unknown>[] };
+
+  // Also match shipping_address phone when customer_id is missing
+  const { data: recent } = await supabase
+    .from("orders")
+    .select(
+      "order_number, status, source, total, currency, items, tracking_number, tracking_company, created_at, shipping_address, customer_id"
+    )
+    .eq("store_id", storeId)
+    .order("created_at", { ascending: false })
+    .limit(80);
+
+  const matched = new Map<string, Record<string, unknown>>();
+  for (const o of byCustomer ?? []) {
+    const id = String((o as { order_number?: string }).order_number ?? Math.random());
+    matched.set(id, o as Record<string, unknown>);
+  }
+  for (const o of recent ?? []) {
+    const addr = o.shipping_address as { phone?: string } | null;
+    const addrPhone = String(addr?.phone ?? "").replace(/\D/g, "");
+    if (
+      phone &&
+      addrPhone &&
+      (addrPhone === phone ||
+        addrPhone.endsWith(phone.slice(-10)) ||
+        phone.endsWith(addrPhone.slice(-10)))
+    ) {
+      const key = String(o.order_number ?? o.created_at);
+      matched.set(key, o as Record<string, unknown>);
+    }
+  }
+
+  return Array.from(matched.values())
+    .slice(0, limit)
+    .map((o) => {
+      const currency = (o.currency as string | null) ?? null;
+      const total = o.total != null ? Number(o.total) : null;
+      return {
+        order_number: (o.order_number as string | null) ?? null,
+        status: String(o.status ?? "unknown"),
+        source: (o.source as string | null) ?? null,
+        total,
+        currency,
+        total_formatted:
+          currency != null && total != null
+            ? formatMoney(total, currency)
+            : String(total ?? ""),
+        items: formatOrderItems(o.items),
+        tracking_number: (o.tracking_number as string | null) ?? null,
+        tracking_company: (o.tracking_company as string | null) ?? null,
+        created_at: String(o.created_at ?? ""),
+      };
+    });
 }
 
 export async function executeSalesTool(
@@ -252,6 +415,8 @@ export async function executeSalesTool(
     name !== "search_products" &&
     name !== "confirm_order" &&
     name !== "cancel_order" &&
+    name !== "lookup_customer_orders" &&
+    name !== "get_order_status" &&
     !shopifyConnected
   ) {
     return {
@@ -282,26 +447,68 @@ export async function executeSalesTool(
           return { result: { error: "Search query is required", products: [] } };
         }
 
+        const exactPortal = await getStoreProductBySku(store.id, query);
         const portalProducts = await searchPortalProducts(store.id, query);
-        const portalMapped = portalProducts.map((p) => ({
-          id: p.id,
-          title: p.title,
-          description: p.description,
-          sku: p.sku,
-          source: "portal" as const,
-          currency: p.currency,
-          imageUrl: p.imageUrl,
-          variants: [
-            {
+
+        // Also match Shopify products registered with a portal SKU for this store
+        const supabaseSku = createAdminClient();
+        const { data: skuRows } = await supabaseSku
+          .from("shopify_product_skus")
+          .select("sku, product_title, shopify_product_id, shopify_variant_id")
+          .eq("store_id", store.id)
+          .ilike("sku", `%${query}%`)
+          .limit(10);
+
+        const portalMapped = [
+          ...(exactPortal
+            ? [
+                {
+                  id: exactPortal.id,
+                  title: exactPortal.name,
+                  description:
+                    exactPortal.description || exactPortal.tagline || null,
+                  sku: exactPortal.sku,
+                  source: "portal" as const,
+                  currency: exactPortal.currency,
+                  imageUrl: exactPortal.image_url,
+                  variants: [
+                    {
+                      id: exactPortal.id,
+                      title: "Default",
+                      price: String(exactPortal.price),
+                      currency: exactPortal.currency,
+                      price_formatted: formatVariantPrice(
+                        String(exactPortal.price),
+                        exactPortal.currency
+                      ),
+                      in_stock: true,
+                    },
+                  ],
+                },
+              ]
+            : []),
+          ...portalProducts
+            .filter((p) => !exactPortal || p.id !== exactPortal.id)
+            .map((p) => ({
               id: p.id,
-              title: "Default",
-              price: p.price,
+              title: p.title,
+              description: p.description,
+              sku: p.sku,
+              source: "portal" as const,
               currency: p.currency,
-              price_formatted: formatVariantPrice(p.price, p.currency),
-              in_stock: true,
-            },
-          ],
-        }));
+              imageUrl: p.imageUrl,
+              variants: [
+                {
+                  id: p.id,
+                  title: "Default",
+                  price: p.price,
+                  currency: p.currency,
+                  price_formatted: formatVariantPrice(p.price, p.currency),
+                  in_stock: true,
+                },
+              ],
+            })),
+        ];
 
         let shopifyMapped: Array<Record<string, unknown>> = [];
         if (shopifyConnected) {
@@ -320,6 +527,38 @@ export async function executeSalesTool(
               price_formatted: formatVariantPrice(v.price, currency ?? "USD"),
             })),
           }));
+
+          // Surface SKU registry hits that title search may have missed
+          for (const row of skuRows ?? []) {
+            const pid = String(row.shopify_product_id ?? "");
+            if (!pid) continue;
+            if (
+              shopifyMapped.some(
+                (p) => String((p as { id?: string }).id ?? "") === pid
+              )
+            ) {
+              continue;
+            }
+            shopifyMapped.unshift({
+              id: pid,
+              title: row.product_title || row.sku,
+              description: `SKU ${row.sku}`,
+              sku: row.sku,
+              source: "shopify",
+              currency,
+              variants: [
+                {
+                  id: String(row.shopify_variant_id || pid),
+                  title: "Default",
+                  price: "0",
+                  currency,
+                  price_formatted: "See store for price",
+                  in_stock: true,
+                },
+              ],
+              note: "Matched by SKU — call check_stock with variant_id for live price/stock, or search by product title for full variants.",
+            });
+          }
         }
 
         const combined = [...portalMapped, ...shopifyMapped];
@@ -328,14 +567,13 @@ export async function executeSalesTool(
 
         return {
           result: {
-            query,
-            currency: displayCurrency,
-            count: combined.length,
             products: combined,
+            count: combined.length,
+            currency: displayCurrency,
             message:
               combined.length === 0
-                ? `No products found matching "${query}". Try a shorter keyword or the product SKU.`
-                : `Found ${combined.length} product(s). Prefer portal catalog matches when SKU/ref is known.`,
+                ? "No matching products in portal or Shopify catalog."
+                : "Share name, price_formatted, stock, and details. Then ask if they want to buy and collect name, phone, and full address to close the order. Prefer portal matches when SKU/ref is known.",
           },
         };
       }
@@ -358,25 +596,100 @@ export async function executeSalesTool(
         };
       }
 
-      case "get_order_status": {
-        const status = await getOrderStatus(
-          shopDomain,
-          shopifyToken,
-          input.order_number as string
+      case "lookup_customer_orders": {
+        const limit = Math.min(10, Math.max(1, Number(input.limit) || 5));
+        const orders = await lookupOrdersForCustomerPhone(
+          store.id,
+          customerPhone,
+          limit
         );
-        if (status.found && status.total) {
+        return {
+          result: {
+            count: orders.length,
+            orders,
+            message:
+              orders.length === 0
+                ? "No orders found for this customer phone. Ask for an order number if they have one."
+                : "Share order_number, status, items, total_formatted, and tracking_number if present.",
+          },
+        };
+      }
+
+      case "get_order_status": {
+        const orderNumber = String(input.order_number ?? "").trim();
+        if (!orderNumber) {
+          const orders = await lookupOrdersForCustomerPhone(
+            store.id,
+            customerPhone,
+            5
+          );
           return {
             result: {
-              ...status,
-              currency,
-              total_formatted: formatMoney(
-                parseFloat(status.total),
-                currency ?? "USD"
-              ),
+              found: orders.length > 0,
+              orders,
+              message:
+                orders.length === 0
+                  ? "No order number given and no orders found for this phone."
+                  : "No order number given — here are this customer's recent orders.",
             },
           };
         }
-        return { result: { ...status, currency } };
+
+        const portalOrder = await findStoreOrderByNumber(store.id, orderNumber);
+        if (portalOrder) {
+          const orderCurrency =
+            (portalOrder.currency as string | null) ?? currency ?? "USD";
+          const total =
+            portalOrder.total != null ? Number(portalOrder.total) : null;
+          const items = formatOrderItems(portalOrder.items);
+          return {
+            result: {
+              found: true,
+              source: "portal",
+              order_number: portalOrder.order_number,
+              status: portalOrder.status,
+              items,
+              total,
+              currency: orderCurrency,
+              total_formatted:
+                total != null ? formatMoney(total, orderCurrency) : undefined,
+              tracking_number: portalOrder.tracking_number ?? null,
+              tracking_company: portalOrder.tracking_company ?? null,
+              created_at: portalOrder.created_at,
+              message:
+                "Share these details clearly with the customer. Include tracking if present.",
+            },
+          };
+        }
+
+        if (shopifyConnected) {
+          const status = await getOrderStatus(
+            shopDomain,
+            shopifyToken,
+            orderNumber
+          );
+          if (status.found && status.total) {
+            return {
+              result: {
+                ...status,
+                source: "shopify",
+                currency,
+                total_formatted: formatMoney(
+                  parseFloat(status.total),
+                  currency ?? "USD"
+                ),
+              },
+            };
+          }
+          return { result: { ...status, currency } };
+        }
+
+        return {
+          result: {
+            found: false,
+            error: `Order ${orderNumber} not found in the portal.`,
+          },
+        };
       }
 
       case "confirm_order": {
@@ -616,48 +929,23 @@ export async function executeSalesTool(
   }
 }
 
-/** Load pending Shopify orders for this customer phone to inject into the prompt. */
+/** Load pending + recent orders for this customer phone to inject into the prompt. */
 export async function getPendingOrdersHintForPhone(
   storeId: string,
   customerPhone: string
 ): Promise<string | null> {
-  const supabase = createAdminClient();
-  const phone = customerPhone.replace(/\D/g, "").trim();
-  if (!phone) return null;
-
-  const { data: customers } = await supabase
-    .from("customers")
-    .select("id, phone")
-    .eq("store_id", storeId)
-    .or(`phone.eq.${phone},phone.ilike.%${phone.slice(-10)}`)
-    .limit(10);
-
-  const customerIds = (customers ?? []).map((c) => c.id as string);
-  if (customerIds.length === 0) return null;
-
-  const { data: orders } = await supabase
-    .from("orders")
-    .select("order_number, total, currency, items, source, status")
-    .eq("store_id", storeId)
-    .eq("status", "pending")
-    .in("customer_id", customerIds)
-    .order("created_at", { ascending: false })
-    .limit(5);
-
-  if (!orders?.length) return null;
+  const orders = await lookupOrdersForCustomerPhone(storeId, customerPhone, 5);
+  if (!orders.length) return null;
 
   const lines = orders.map((o) => {
-    const items = (
-      (o.items as Array<{ title?: string; quantity?: number }>) ?? []
-    )
-      .map((i) => `${i.quantity ?? 1}x ${i.title ?? "item"}`)
+    const items = o.items
+      .map((i) => `${i.quantity}x ${i.title}`)
       .join(", ");
-    const total =
-      o.currency != null
-        ? formatMoney(Number(o.total ?? 0), String(o.currency))
-        : String(o.total ?? "");
-    return `- ${o.order_number ?? "?"} (${o.source}): ${items || "items"} · ${total} · status pending`;
+    const tracking = o.tracking_number
+      ? ` · tracking ${o.tracking_company ? `${o.tracking_company} ` : ""}${o.tracking_number}`
+      : "";
+    return `- ${o.order_number ?? "?"} (${o.source ?? "order"}): ${items || "items"} · ${o.total_formatted} · status ${o.status}${tracking}`;
   });
 
-  return `Pending orders for this customer (use confirm_order / cancel_order):\n${lines.join("\n")}`;
+  return `Orders for this customer (use lookup_customer_orders / get_order_status / confirm_order / cancel_order as needed):\n${lines.join("\n")}`;
 }
