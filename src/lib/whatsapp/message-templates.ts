@@ -76,6 +76,18 @@ function normalizeMetaStatus(metaStatus: string | null | undefined): WaTemplateS
   return "pending";
 }
 
+/** Meta often returns en_US while the portal stores en — normalize for matching. */
+function normalizeTemplateLanguage(lang: string | null | undefined): string {
+  const raw = (lang || "en").trim().toLowerCase().replace(/-/g, "_");
+  if (raw === "en" || raw.startsWith("en_")) return "en";
+  if (raw.includes("_")) return raw.split("_")[0] || raw;
+  return raw;
+}
+
+function templateMatchKey(name: string, language: string | null | undefined): string {
+  return `${name.trim().toLowerCase()}::${normalizeTemplateLanguage(language)}`;
+}
+
 async function getStoreWaContext(storeId: string): Promise<
   | { wabaId: string; accessToken: string }
   | { error: string }
@@ -450,14 +462,13 @@ export async function syncWhatsAppTemplatesFromMeta(
   // Only sync status for templates the reseller created in the portal —
   // do not import Meta's sample / other account templates.
   const byKey = new Map(
-    local.map((t) => [`${t.name}::${t.language}`, t])
+    local.map((t) => [templateMatchKey(t.name, t.language), t])
   );
 
   let synced = 0;
   for (const remote of parsed.data ?? []) {
     if (!remote.name) continue;
-    const lang = remote.language || "en";
-    const key = `${remote.name}::${lang}`;
+    const key = templateMatchKey(remote.name, remote.language || "en");
     const localRow = byKey.get(key);
     if (!localRow) continue;
 
