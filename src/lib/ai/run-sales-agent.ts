@@ -6,6 +6,7 @@ import {
   getPendingOrdersHintForPhone,
   type AgentContext,
 } from "./sales-tools";
+import { tryDirectProductReply } from "./product-reply";
 
 export type { AgentContext } from "./sales-tools";
 
@@ -57,6 +58,16 @@ export async function runSalesAgent(
   history: Array<{ role: "user" | "assistant"; content: string }>
 ): Promise<string> {
   const enrichedCtx = await enrichAgentContext(ctx);
+  const latestUser =
+    [...history].reverse().find((m) => m.role === "user")?.content ?? "";
+
+  // Catalog lookup by SKU or product name (incl. variants) before the LLM
+  try {
+    const direct = await tryDirectProductReply(enrichedCtx, latestUser);
+    if (direct) return direct.reply;
+  } catch (err) {
+    console.error("[run-sales-agent] product prefetch failed:", err);
+  }
 
   if (process.env.GROQ_API_KEY) {
     return runSalesAgentWithGroq(enrichedCtx, history);

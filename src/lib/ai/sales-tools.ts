@@ -11,7 +11,12 @@ import { confirmPortalOrder } from "@/lib/orders/confirm";
 import type { Store } from "@/lib/types";
 import type { ResolvedStoreAiConfig } from "./ai-settings-types";
 import type { AdProductContext } from "@/lib/ads/types";
-import { searchPortalProducts, getStoreProductBySku } from "@/lib/products/products-service";
+import {
+  searchPortalProducts,
+  getStoreProductBySku,
+  extractSkuFromText,
+  extractProductSearchQuery,
+} from "@/lib/products/products-service";
 
 export const SALES_SYSTEM_PROMPT = `You are a helpful, professional sales agent for an e-commerce store on WhatsApp.
 
@@ -37,7 +42,8 @@ CRITICAL — product questions (portal + Shopify):
 - If the customer gives a SKU or product code, call search_products with that exact SKU — then share full details (name, price_formatted, stock, description, variants).
 - Never say you don't have a product without calling search_products.
 - Never invent product names, prices, or stock. Only use data returned by tools.
-- When search_products returns results, tell the customer: product name, price_formatted, in-stock status, short description, and key variants (size/color) if any.
+- When search_products returns results, tell the customer: product name, price_formatted, in-stock status, short description, options (e.g. size/color), and list variants with their prices when present.
+- If the customer asks about variants, sizes, or colors, read options + variants from the tool result and explain them clearly — do not invent options.
 - Prefer portal catalog matches when SKU/ref is known; still mention Shopify matches when relevant.
 - For the most accurate price/stock on a specific size or color, call check_stock with that variant_id (Shopify variants).
 
@@ -442,22 +448,32 @@ export async function executeSalesTool(
   try {
     switch (name) {
       case "search_products": {
-        const query = String(input.query ?? "").trim();
-        if (!query) {
+        const rawQuery = String(input.query ?? "").trim();
+        if (!rawQuery) {
           return { result: { error: "Search query is required", products: [] } };
         }
+
+        // Prefer an embedded SKU, else cleaned product-name tokens
+        const skuFromText = extractSkuFromText(rawQuery);
+        const query =
+          skuFromText ||
+          extractProductSearchQuery(rawQuery) ||
+          rawQuery.split(/\s+/).slice(0, 8).join(" ").trim();
 
         const exactPortal = await getStoreProductBySku(store.id, query);
         const portalProducts = await searchPortalProducts(store.id, query);
 
         // Also match Shopify products registered with a portal SKU for this store
         const supabaseSku = createAdminClient();
-        const { data: skuRows } = await supabaseSku
-          .from("shopify_product_skus")
-          .select("sku, product_title, shopify_product_id, shopify_variant_id")
-          .eq("store_id", store.id)
-          .ilike("sku", `%${query}%`)
-          .limit(10);
+        const skuFilter = (skuFromText || query).replace(/[%_,()]/g, "").slice(0, 48);
+        const { data: skuRows } = skuFilter
+          ? await supabaseSku
+              .from("shopify_product_skus")
+              .select("sku, product_title, shopify_product_id, shopify_variant_id")
+              .eq("store_id", store.id)
+              .ilike("sku", `%${skuFilter}%`)
+              .limit(10)
+          : { data: null };
 
         const portalMapped = [
           ...(exactPortal
@@ -471,19 +487,47 @@ export async function executeSalesTool(
                   source: "portal" as const,
                   currency: exactPortal.currency,
                   imageUrl: exactPortal.image_url,
-                  variants: [
-                    {
-                      id: exactPortal.id,
-                      title: "Default",
-                      price: String(exactPortal.price),
-                      currency: exactPortal.currency,
-                      price_formatted: formatVariantPrice(
-                        String(exactPortal.price),
-                        exactPortal.currency
-                      ),
-                      in_stock: true,
-                    },
-                  ],
+                  options: (exactPortal.options ?? []).map((o) => ({
+                    name: o.name,
+                    values: o.values ?? [],
+                  })),
+                  bundles: (exactPortal.bundles ?? []).map((b) => ({
+                    quantity: b.quantity,
+                    price: String(b.price),
+                    price_formatted: formatVariantPrice(
+                      String(b.price),
+                      exactPortal.currency
+                    ),
+                    label: b.label,
+                  })),
+                  variants:
+                    (exactPortal.variants?.length ?? 0) > 0
+                      ? exactPortal.variants!.map((v) => ({
+                          id: v.id,
+                          title: v.title,
+                          sku: v.sku,
+                          price: String(v.price ?? exactPortal.price),
+                          currency: exactPortal.currency,
+                          price_formatted: formatVariantPrice(
+                            String(v.price ?? exactPortal.price),
+                            exactPortal.currency
+                          ),
+                          option_values: v.option_values ?? {},
+                          in_stock: true,
+                        }))
+                      : [
+                          {
+                            id: exactPortal.id,
+                            title: "Default",
+                            price: String(exactPortal.price),
+                            currency: exactPortal.currency,
+                            price_formatted: formatVariantPrice(
+                              String(exactPortal.price),
+                              exactPortal.currency
+                            ),
+                            in_stock: true,
+                          },
+                        ],
                 },
               ]
             : []),
@@ -497,16 +541,35 @@ export async function executeSalesTool(
               source: "portal" as const,
               currency: p.currency,
               imageUrl: p.imageUrl,
-              variants: [
-                {
-                  id: p.id,
-                  title: "Default",
-                  price: p.price,
-                  currency: p.currency,
-                  price_formatted: formatVariantPrice(p.price, p.currency),
-                  in_stock: true,
-                },
-              ],
+              options: p.options ?? [],
+              bundles: (p.bundles ?? []).map((b) => ({
+                quantity: b.quantity,
+                price: b.price,
+                price_formatted: formatVariantPrice(b.price, p.currency),
+                label: b.label,
+              })),
+              variants:
+                (p.variants?.length ?? 0) > 0
+                  ? p.variants.map((v) => ({
+                      id: v.id,
+                      title: v.title,
+                      sku: v.sku,
+                      price: v.price,
+                      currency: p.currency,
+                      price_formatted: formatVariantPrice(v.price, p.currency),
+                      option_values: v.option_values ?? {},
+                      in_stock: true,
+                    }))
+                  : [
+                      {
+                        id: p.id,
+                        title: "Default",
+                        price: p.price,
+                        currency: p.currency,
+                        price_formatted: formatVariantPrice(p.price, p.currency),
+                        in_stock: true,
+                      },
+                    ],
             })),
         ];
 
@@ -573,7 +636,7 @@ export async function executeSalesTool(
             message:
               combined.length === 0
                 ? "No matching products in portal or Shopify catalog."
-                : "Share name, price_formatted, stock, and details. Then ask if they want to buy and collect name, phone, and full address to close the order. Prefer portal matches when SKU/ref is known.",
+                : "Share name, price_formatted, stock, description, options (size/color), and EVERY variant with its price_formatted when variants exist. Then ask if they want to buy and collect name, phone, and full address. Prefer portal matches when SKU/name is known.",
           },
         };
       }

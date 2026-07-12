@@ -26,6 +26,26 @@ function normalizeSku(sku: string): string {
     .slice(0, 48);
 }
 
+/** Pull SKU-like codes from free text (e.g. "AA-6CH6DZ33WZ\\ntell me about this"). */
+export function extractSkuFromText(text: string): string | null {
+  const t = text.trim();
+  if (!t) return null;
+  const portal = t.match(/\b(AA-[A-Z0-9]{6,})\b/i);
+  if (portal?.[1]) return normalizeSku(portal[1]);
+  const generic = t.match(/\b([A-Z]{1,5}-[A-Z0-9]{4,32})\b/i);
+  if (generic?.[1]) return normalizeSku(generic[1]);
+  if (/^[A-Z0-9][A-Z0-9_-]{3,47}$/i.test(t)) return normalizeSku(t);
+  return null;
+}
+
+function escapeIlike(value: string): string {
+  return value
+    .replace(/[%_,()]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80);
+}
+
 function normalizeImages(input: ProductInput): {
   image_url: string | null;
   image_urls: string[];
@@ -258,19 +278,37 @@ export async function getStoreProductBySku(
   sku: string
 ): Promise<StoreProduct | null> {
   const supabase = createAdminClient();
-  const normalized = normalizeSku(sku);
-  const { data } = await supabase
-    .from("store_products")
-    .select("*")
-    .eq("store_id", storeId)
-    .ilike("sku", normalized)
-    .maybeSingle();
+  const candidates = Array.from(
+    new Set(
+      [
+        extractSkuFromText(sku),
+        normalizeSku(sku),
+        sku.trim().toUpperCase(),
+      ].filter((s): s is string => Boolean(s && s.length >= 4))
+    )
+  );
 
-  if (!data) return null;
-  const [product] = await attachRelations(storeId, [
-    normalizeProductRow(data as Record<string, unknown>),
-  ]);
-  return product ?? null;
+  for (const candidate of candidates) {
+    const { data, error } = await supabase
+      .from("store_products")
+      .select("*")
+      .eq("store_id", storeId)
+      .ilike("sku", candidate)
+      .maybeSingle();
+
+    if (error) {
+      console.error("[getStoreProductBySku]", error.message);
+      continue;
+    }
+    if (!data) continue;
+
+    const [product] = await attachRelations(storeId, [
+      normalizeProductRow(data as Record<string, unknown>),
+    ]);
+    if (product) return product;
+  }
+
+  return null;
 }
 
 async function replaceChildren(
@@ -551,44 +589,239 @@ export async function countStoreProducts(storeId: string): Promise<number> {
   return count ?? 0;
 }
 
-export async function searchPortalProducts(
-  storeId: string,
-  query: string
-): Promise<
-  Array<{
+export type PortalProductSearchHit = {
+  id: string;
+  title: string;
+  description: string | null;
+  sku: string;
+  price: string;
+  currency: string;
+  imageUrl: string | null;
+  options: Array<{ name: string; values: string[] }>;
+  variants: Array<{
     id: string;
     title: string;
-    description: string | null;
-    sku: string;
+    sku: string | null;
     price: string;
-    currency: string;
-    imageUrl: string | null;
-  }>
-> {
-  const supabase = createAdminClient();
-  const q = query.trim();
-  let builder = supabase
-    .from("store_products")
-    .select("id, name, description, tagline, sku, price, currency, image_url")
-    .eq("store_id", storeId)
-    .eq("status", "active")
-    .order("created_at", { ascending: false })
-    .limit(20);
+    option_values: Record<string, string>;
+  }>;
+  bundles: Array<{
+    quantity: number;
+    price: string;
+    label: string | null;
+  }>;
+};
 
-  if (q) {
-    builder = builder.or(
-      `name.ilike.%${q}%,sku.ilike.%${q}%,tagline.ilike.%${q}%`
-    );
-  }
-
-  const { data } = await builder;
-  return (data ?? []).map((p) => ({
+function mapStoreProductToSearchHit(p: StoreProduct): PortalProductSearchHit {
+  return {
     id: p.id,
     title: p.name,
-    description: p.description || p.tagline,
+    description: p.description || p.tagline || null,
     sku: p.sku,
     price: String(p.price),
     currency: p.currency,
     imageUrl: p.image_url,
-  }));
+    options: (p.options ?? []).map((o) => ({
+      name: o.name,
+      values: o.values ?? [],
+    })),
+    variants: (p.variants ?? []).map((v) => ({
+      id: v.id,
+      title: v.title,
+      sku: v.sku,
+      price: String(v.price ?? p.price),
+      option_values: v.option_values ?? {},
+    })),
+    bundles: (p.bundles ?? []).map((b) => ({
+      quantity: b.quantity,
+      price: String(b.price),
+      label: b.label,
+    })),
+  };
+}
+
+async function fetchActiveProductRows(
+  storeId: string,
+  filterOr: string | null,
+  limit = 20
+): Promise<StoreProduct[]> {
+  const supabase = createAdminClient();
+  let builder = supabase
+    .from("store_products")
+    .select("*")
+    .eq("store_id", storeId)
+    .eq("status", "active")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (filterOr) {
+    builder = builder.or(filterOr);
+  }
+
+  const { data, error } = await builder;
+  if (error) {
+    console.error("[searchPortalProducts]", error.message);
+    return [];
+  }
+
+  return attachRelations(
+    storeId,
+    (data ?? []).map((row) => normalizeProductRow(row as Record<string, unknown>))
+  );
+}
+
+/** Significant tokens for partial product-name matching. */
+export function productSearchTokens(query: string): string[] {
+  const stop = new Set([
+    "a",
+    "an",
+    "the",
+    "me",
+    "my",
+    "your",
+    "you",
+    "do",
+    "does",
+    "did",
+    "have",
+    "has",
+    "any",
+    "please",
+    "tell",
+    "about",
+    "this",
+    "that",
+    "product",
+    "products",
+    "item",
+    "items",
+    "want",
+    "looking",
+    "for",
+    "show",
+    "details",
+    "detail",
+    "what",
+    "is",
+    "are",
+    "of",
+    "can",
+    "i",
+    "get",
+    "buy",
+    "how",
+    "much",
+    "price",
+    "cost",
+    "variant",
+    "variants",
+    "option",
+    "options",
+    "size",
+    "sizes",
+    "color",
+    "colors",
+    "colour",
+    "colours",
+    "stock",
+    "available",
+    "availability",
+    "in",
+    "and",
+    "or",
+    "with",
+    "from",
+    "store",
+  ]);
+
+  return Array.from(
+    new Set(
+      query
+        .replace(/[^\p{L}\p{N}\s\-]/gu, " ")
+        .split(/\s+/)
+        .map((t) => escapeIlike(t))
+        .filter((t) => t.length >= 2 && !stop.has(t.toLowerCase()))
+    )
+  ).slice(0, 6);
+}
+
+/**
+ * Extract a catalog search string from free text (SKU preferred, else name words).
+ */
+export function extractProductSearchQuery(text: string): string | null {
+  const sku = extractSkuFromText(text);
+  if (sku) return sku;
+  const tokens = productSearchTokens(text);
+  if (!tokens.length) return null;
+  return tokens.join(" ").slice(0, 80);
+}
+
+export async function searchPortalProducts(
+  storeId: string,
+  query: string
+): Promise<PortalProductSearchHit[]> {
+  const skuHint = extractSkuFromText(query);
+  const phrase = escapeIlike(skuHint || query);
+  const tokens = productSearchTokens(skuHint || query);
+
+  // Exact SKU path first
+  if (skuHint) {
+    const supabase = createAdminClient();
+    const { data } = await supabase
+      .from("store_products")
+      .select("*")
+      .eq("store_id", storeId)
+      .eq("status", "active")
+      .ilike("sku", skuHint)
+      .limit(5);
+    if (data?.length) {
+      const products = await attachRelations(
+        storeId,
+        data.map((row) => normalizeProductRow(row as Record<string, unknown>))
+      );
+      return products.map(mapStoreProductToSearchHit);
+    }
+  }
+
+  const seen = new Map<string, StoreProduct>();
+
+  const merge = (rows: StoreProduct[]) => {
+    for (const p of rows) {
+      if (!seen.has(p.id)) seen.set(p.id, p);
+    }
+  };
+
+  // Full phrase match on name / sku / tagline / description
+  if (phrase) {
+    merge(
+      await fetchActiveProductRows(
+        storeId,
+        `name.ilike.%${phrase}%,sku.ilike.%${phrase}%,tagline.ilike.%${phrase}%,description.ilike.%${phrase}%`
+      )
+    );
+  }
+
+  // Partial / half-name: match any significant token
+  if (seen.size === 0 && tokens.length > 0) {
+    const orParts = tokens.flatMap((t) => [
+      `name.ilike.%${t}%`,
+      `sku.ilike.%${t}%`,
+      `tagline.ilike.%${t}%`,
+    ]);
+    merge(await fetchActiveProductRows(storeId, orParts.join(","), 20));
+  }
+
+  // Rank: more token hits in the title first
+  const ranked = Array.from(seen.values()).sort((a, b) => {
+    const score = (p: StoreProduct) => {
+      const hay = `${p.name} ${p.tagline ?? ""} ${p.sku}`.toLowerCase();
+      return tokens.reduce(
+        (n, t) => n + (hay.includes(t.toLowerCase()) ? 1 : 0),
+        0
+      );
+    };
+    return score(b) - score(a);
+  });
+
+  return ranked.slice(0, 10).map(mapStoreProductToSearchHit);
 }

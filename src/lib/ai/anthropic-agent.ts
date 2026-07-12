@@ -2,6 +2,11 @@ import Anthropic from "@anthropic-ai/sdk";
 import { executeSalesTool, type AgentContext } from "./sales-tools";
 import { buildSalesSystemPrompt } from "./build-system-prompt";
 import { CHAT_HISTORY_LIMIT } from "./chat-history";
+import { tryDirectProductReply } from "./product-reply";
+import {
+  extractSkuFromText,
+  extractProductSearchQuery,
+} from "@/lib/products/products-service";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -9,7 +14,7 @@ const ANTHROPIC_TOOLS: Anthropic.Tool[] = [
   {
     name: "search_products",
     description:
-      "Search BOTH portal catalog and Shopify by name, keyword, or SKU. Always use for product questions.",
+      "Search BOTH portal catalog and Shopify by name, keyword, or SKU. Always use for product questions. If the customer pasted a SKU (e.g. AA-…), pass that SKU as query.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -128,6 +133,19 @@ export async function runSalesAgentWithAnthropic(
   history: Array<{ role: "user" | "assistant"; content: string }>
 ): Promise<string> {
   const storeLabel = ctx.store.store_name || ctx.store.shop_domain || "our store";
+  const latestUser =
+    [...history].reverse().find((m) => m.role === "user")?.content ?? "";
+
+  const directProduct = await tryDirectProductReply(ctx, latestUser);
+  if (directProduct) {
+    return directProduct.reply;
+  }
+
+  const skuHint = extractSkuFromText(latestUser);
+  const searchHint = skuHint || extractProductSearchQuery(latestUser);
+  const productHint = searchHint
+    ? `\n\nCustomer is asking about a product. Call search_products with query "${searchHint}" and share full details including options and every variant with prices.`
+    : "";
 
   const messages: Anthropic.MessageParam[] = history
     .slice(-CHAT_HISTORY_LIMIT)
@@ -139,13 +157,14 @@ export async function runSalesAgentWithAnthropic(
   const systemBlocks: Anthropic.TextBlockParam[] = [
     {
       type: "text",
-      text: buildSalesSystemPrompt({
-        storeLabel,
-        storeCurrency: ctx.storeCurrency,
-        aiConfig: ctx.aiConfig,
-        adProductContext: ctx.adProductContext,
-        pendingOrdersHint: ctx.pendingOrdersHint,
-      }),
+      text:
+        buildSalesSystemPrompt({
+          storeLabel,
+          storeCurrency: ctx.storeCurrency,
+          aiConfig: ctx.aiConfig,
+          adProductContext: ctx.adProductContext,
+          pendingOrdersHint: ctx.pendingOrdersHint,
+        }) + productHint,
       cache_control: { type: "ephemeral" },
     },
   ];
@@ -168,6 +187,9 @@ export async function runSalesAgentWithAnthropic(
       system: systemBlocks,
       tools: toolDefs,
       messages,
+      ...(searchHint && iterations === 1
+        ? { tool_choice: { type: "tool" as const, name: "search_products" } }
+        : {}),
     });
 
     if (response.stop_reason === "end_turn") {
@@ -196,11 +218,17 @@ export async function runSalesAgentWithAnthropic(
 
     const toolResults: Anthropic.ToolResultBlockParam[] = [];
     for (const tool of toolUses) {
-      const executed = await executeSalesTool(
-        tool.name,
-        tool.input as Record<string, unknown>,
-        ctx
-      );
+      let input = tool.input as Record<string, unknown>;
+      if (
+        tool.name === "search_products" &&
+        searchHint &&
+        (!input.query ||
+          String(input.query).includes("\n") ||
+          String(input.query).length > 80)
+      ) {
+        input = { ...input, query: searchHint };
+      }
+      const executed = await executeSalesTool(tool.name, input, ctx);
       toolResults.push({
         type: "tool_result",
         tool_use_id: tool.id,
