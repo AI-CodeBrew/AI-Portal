@@ -6,11 +6,12 @@ import { getStoreOrderTotals } from "@/lib/orders/store-order-totals";
 import { countStoreProducts } from "@/lib/products/products-service";
 
 /** Hide leftover Shopify-synced orders when the store is disconnected. */
-function scopeOrdersQuery<T extends { neq: (column: string, value: string) => T }>(
-  query: T,
-  shopifyConnected: boolean
-): T {
-  return shopifyConnected ? query : query.neq("source", "shopify");
+function scopeOrdersQuery<T>(query: T, shopifyConnected: boolean): T {
+  if (shopifyConnected) return query;
+  return (query as { neq: (column: string, value: string) => T }).neq(
+    "source",
+    "shopify"
+  );
 }
 
 export interface DashboardSetupStep {
