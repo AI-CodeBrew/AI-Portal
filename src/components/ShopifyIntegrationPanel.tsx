@@ -32,6 +32,7 @@ export function ShopifyIntegrationPanel({ appUrl }: { appUrl: string }) {
   const [scopes, setScopes] = useState(DEFAULT_SHOPIFY_SCOPES);
   const [saving, setSaving] = useState(false);
   const [connecting, setConnecting] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
   const [message, setMessage] = useState<{
     type: "info" | "error" | "success";
     text: string;
@@ -105,6 +106,46 @@ export function ShopifyIntegrationPanel({ appUrl }: { appUrl: string }) {
     }
     setMessage({ type: "info", text: "Redirecting to Shopify..." });
     window.location.href = "/auth/shopify/start";
+  }
+
+  async function disconnectShopify() {
+    if (disconnecting) return;
+    if (
+      !confirm(
+        "Disconnect Shopify from this store? Order sync will stop until you connect again. You can then link a different Shopify store."
+      )
+    ) {
+      return;
+    }
+
+    setDisconnecting(true);
+    setMessage(null);
+    try {
+      const res = await fetch("/api/store/shopify-credentials", {
+        method: "DELETE",
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error ?? "Failed to disconnect");
+      }
+      setShopDomain("");
+      setApiKey("");
+      setApiSecret("");
+      setScopes(DEFAULT_SHOPIFY_SCOPES);
+      setMessage({
+        type: "success",
+        text: "Shopify disconnected. Enter a new shop domain and connect again anytime.",
+      });
+      await refreshStore();
+    } catch (err) {
+      setMessage({
+        type: "error",
+        text:
+          err instanceof Error ? err.message : "Failed to disconnect Shopify",
+      });
+    } finally {
+      setDisconnecting(false);
+    }
   }
 
   const msgStyles = {
@@ -205,19 +246,35 @@ export function ShopifyIntegrationPanel({ appUrl }: { appUrl: string }) {
 
         <div className="flex flex-wrap gap-2">
           <button
+            type="button"
             onClick={() => saveCredentials()}
-            disabled={saving || connecting}
-            className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold hover:bg-slate-50 disabled:opacity-50"
+            disabled={saving || connecting || disconnecting}
+            className="min-h-11 rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold hover:bg-slate-50 disabled:opacity-50"
           >
             {saving ? "Saving..." : "Save credentials"}
           </button>
           <button
+            type="button"
             onClick={connectShopify}
-            disabled={saving || connecting}
-            className="rounded-lg bg-[#96BF48] px-4 py-2 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-50"
+            disabled={saving || connecting || disconnecting}
+            className="min-h-11 rounded-lg bg-[#96BF48] px-4 py-2 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-50"
           >
-            {connecting ? "Redirecting..." : store?.shopify_connected ? "Reconnect" : "Connect Shopify"}
+            {connecting
+              ? "Redirecting..."
+              : store?.shopify_connected
+                ? "Reconnect"
+                : "Connect Shopify"}
           </button>
+          {(store?.shopify_connected || store?.has_shopify_credentials) && (
+            <button
+              type="button"
+              onClick={disconnectShopify}
+              disabled={saving || connecting || disconnecting}
+              className="min-h-11 rounded-lg border border-red-200 bg-white px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"
+            >
+              {disconnecting ? "Disconnecting..." : "Disconnect"}
+            </button>
+          )}
         </div>
 
         <div className="rounded-lg bg-slate-50 p-4 text-xs text-slate-600 space-y-2">

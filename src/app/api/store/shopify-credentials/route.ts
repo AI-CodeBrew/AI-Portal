@@ -90,3 +90,30 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 }
+
+/** Disconnect Shopify so the reseller can connect a different store. */
+export async function DELETE() {
+  try {
+    const { storeId } = await requireResellerStore();
+    const supabase = createAdminClient();
+
+    const { error } = await supabase
+      .from("stores")
+      .update({
+        shop_domain: null,
+        shopify_api_key: null,
+        shopify_api_secret: null,
+        shopify_access_token: null,
+        shopify_scopes: null,
+      })
+      .eq("id", storeId);
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    return NextResponse.json({ ok: true });
+  } catch {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+}
