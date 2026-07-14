@@ -7,6 +7,7 @@ import {
   type AgentContext,
 } from "./sales-tools";
 import { tryDirectProductReply } from "./product-reply";
+import { tryDirectProductComparisonReply } from "./comparison-reply";
 import { tryDirectCheckoutReply } from "./checkout-reply";
 import { tryDirectSalesRecoveryReply } from "./sales-recovery";
 
@@ -85,6 +86,18 @@ export async function runSalesAgent(
     if (recovery) return recovery;
   } catch (err) {
     console.error("[run-sales-agent] sales recovery failed:", err);
+  }
+
+  // Product comparison (2+ items) before single-product lookup
+  try {
+    const comparison = await tryDirectProductComparisonReply(
+      enrichedCtx,
+      latestUser,
+      history
+    );
+    if (comparison) return comparison.reply;
+  } catch (err) {
+    console.error("[run-sales-agent] product comparison failed:", err);
   }
 
   // Catalog lookup by SKU or product name (incl. variants) before the LLM

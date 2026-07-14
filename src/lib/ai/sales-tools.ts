@@ -19,6 +19,12 @@ import {
   extractProductSearchQuery,
   getPrimaryProductImageUrl,
 } from "@/lib/products/products-service";
+import {
+  checkReturnPolicyForOrder,
+  getOrderDetailsForSupport,
+  initiateOrderRefund,
+  recordOrderComplaint,
+} from "@/lib/orders/return-policy";
 
 export const SALES_SYSTEM_PROMPT = `You are a helpful, professional sales agent for an e-commerce store on WhatsApp.
 
@@ -49,6 +55,21 @@ CRITICAL — product questions (portal + Shopify):
 - Prefer portal catalog matches when SKU/ref is known; still mention Shopify matches when relevant.
 - For the most accurate price/stock on a specific size or color, call check_stock with that variant_id (Shopify variants).
 
+CRITICAL — out of stock:
+- If the requested product (or all its variants) is out of stock, say so warmly — do NOT push them to order it.
+- Offer ONE similar in-stock product from search_products results when available, OR offer to notify them when it is back.
+- Example tone: "That one's out of stock right now, sorry! We have [similar] in a similar style — or I can let you know when it's back. Which would you prefer?"
+- If they choose similar, show that product's details. If they choose notify/back-in-stock, confirm you'll WhatsApp them when it returns.
+- Never invent stock status — use in_stock from search_products / check_stock.
+
+CRITICAL — product comparison:
+- When the customer compares two or more products (vs, versus, "which is better", "difference between X and Y"), call get_product_details (or search_products) once per item — never compare from memory; prices and stock change.
+- Lead with the 1–2 differences most likely to matter for their use case (price, durability, size, stock) — not a full spec list.
+- If their priority or use case is unclear, ask ONE short clarifying question before recommending.
+- Once you have enough context, give a clear recommendation — help them decide; do not stay neutral or paste spec sheets.
+- Mention stock if one option is low — useful info, not manufactured pressure.
+- Keep comparisons short and scannable for WhatsApp (2–5 lines), not long paragraphs or bullet-heavy dumps.
+
 CRITICAL — always try to close the deal:
 - Whenever the customer asks about a product (details, price, availability, SKU), after sharing details, warmly nudge toward purchase.
 - Ask if they want to buy / place the order, then collect: full name, phone (confirm WhatsApp number), and full delivery address.
@@ -74,10 +95,21 @@ CRITICAL — Shopify pending orders:
 - Use cancel_order when they cancel, then follow recovery offers in Shopify confirmation mode instructions.
 - Use lookup_customer_orders / get_order_status when discussing existing orders.
 
+CRITICAL — damaged, broken, or wrong product:
+- Lead with empathy first — acknowledge how they feel before process or policy talk.
+- Use get_order_details to confirm their order (items, total_formatted, customer name, status).
+- ALWAYS call check_return_policy for that order before offering replacement or refund — never promise amounts from memory.
+- Ask for a photo of the damage/issue if they have not sent one, and a brief description of what went wrong.
+- If policy allows replacement: use create_draft_order with is_replacement=true and replacement_for_order_number set; ship to the same address unless they give a new one.
+- If policy allows refund: use initiate_refund — only quote refund_amount_formatted returned by the tool.
+- If the customer is very upset, the order is outside policy, you are unsure, or tools say escalate — call escalate_to_human immediately. Do not argue whether damage is "real" or blame the customer.
+- Never negotiate policy exceptions yourself.
+
 Other rules:
 - Keep replies SHORT for WhatsApp (2–6 short lines). Lead with the answer; skip filler, long intros, and repeated instructions.
 - Product replies: name, price, stock, key options/variants only — no long descriptions unless asked.
 - Be friendly and persuasive, but never wordy.
+- LANGUAGE: Many customers write in English, Roman Urdu (Urdu in Latin letters, e.g. "kitna hai", "batao"), or Arabic. Always detect their language from recent messages and reply in the SAME language and style. Keep product names, SKUs, and price_formatted from tools unchanged.
 - If you cannot help (complaints, refunds, custom requests, or they ask for a human), call escalate_to_human.`;
 
 export interface AgentContext {
@@ -107,6 +139,24 @@ export const OPENAI_SALES_TOOLS = [
       name: "search_products",
       description:
         "Search BOTH portal catalog and Shopify products by name, keyword, or SKU/ref. ALWAYS use this when the customer asks about a product, price, availability, or gives a SKU. Returns full details including price_formatted.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "Product name, keyword, or exact SKU/ref code",
+          },
+        },
+        required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "get_product_details",
+      description:
+        "Look up ONE product by name, keyword, or exact SKU/ref. Use when comparing products — call once per item (never compare from memory). Returns price_formatted, stock, variants, and options for the best match.",
       parameters: {
         type: "object",
         properties: {
@@ -185,6 +235,25 @@ export const OPENAI_SALES_TOOLS = [
             type: "number",
             description: "Optional percentage discount (e.g. 15 or 25)",
           },
+          is_replacement: {
+            type: "boolean",
+            description:
+              "True when shipping a free replacement for a damaged/wrong item (uses 100% discount)",
+          },
+          replacement_for_order_number: {
+            type: "string",
+            description:
+              "Original order number this replacement is for (required when is_replacement=true)",
+          },
+          issue_type: {
+            type: "string",
+            description:
+              "Optional: damaged, broken, wrong_item, missing — logged on the original order",
+          },
+          issue_description: {
+            type: "string",
+            description: "Brief customer description of the issue",
+          },
         },
         required: ["line_items", "customer_name", "address1", "city", "phone"],
       },
@@ -251,6 +320,61 @@ export const OPENAI_SALES_TOOLS = [
         type: "object",
         properties: {
           order_number: { type: "string" },
+        },
+        required: ["order_number"],
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "get_order_details",
+      description:
+        "Get full order details for support (items, customer name, phone, total_formatted, status, tracking, days since order). Use when a customer reports damage, wrong item, or any order issue — before offering refund/replacement.",
+      parameters: {
+        type: "object",
+        properties: {
+          order_number: {
+            type: "string",
+            description: "Order number e.g. #1001 — omit to search by customer phone",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "check_return_policy",
+      description:
+        "Check whether an order qualifies for replacement or refund under store policy. ALWAYS call before initiate_refund or a replacement create_draft_order. Returns allowed_actions and exact refund_amount_if_approved — never guess amounts.",
+      parameters: {
+        type: "object",
+        properties: {
+          order_number: { type: "string", description: "Order number to check" },
+        },
+        required: ["order_number"],
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "initiate_refund",
+      description:
+        "Start a refund for a qualifying order. Only after check_return_policy says refund is allowed. Uses the order total from the system — do not pass a custom amount.",
+      parameters: {
+        type: "object",
+        properties: {
+          order_number: { type: "string" },
+          issue_type: {
+            type: "string",
+            description: "damaged, broken, wrong_item, etc.",
+          },
+          reason: {
+            type: "string",
+            description: "Brief summary of the customer's issue",
+          },
         },
         required: ["order_number"],
       },
@@ -450,10 +574,14 @@ export async function executeSalesTool(
   if (
     name !== "escalate_to_human" &&
     name !== "search_products" &&
+    name !== "get_product_details" &&
     name !== "confirm_order" &&
     name !== "cancel_order" &&
     name !== "lookup_customer_orders" &&
     name !== "get_order_status" &&
+    name !== "get_order_details" &&
+    name !== "check_return_policy" &&
+    name !== "initiate_refund" &&
     name !== "create_draft_order" &&
     !shopifyConnected
   ) {
@@ -724,6 +852,57 @@ export async function executeSalesTool(
         };
       }
 
+      case "get_product_details": {
+        const rawQuery = String(input.query ?? "").trim();
+        if (!rawQuery) {
+          return { result: { error: "Query is required", product: null } };
+        }
+
+        const { result: searchResult } = await executeSalesTool(
+          "search_products",
+          { query: rawQuery },
+          ctx
+        );
+        const products = (
+          searchResult &&
+          typeof searchResult === "object" &&
+          "products" in searchResult
+            ? (searchResult as { products?: Array<Record<string, unknown>> })
+                .products
+            : []
+        ) as Array<Record<string, unknown>>;
+
+        if (!products.length) {
+          return {
+            result: {
+              product: null,
+              message: "No matching product found.",
+            },
+          };
+        }
+
+        const skuFromText = extractSkuFromText(rawQuery)?.toUpperCase();
+        const product =
+          (skuFromText
+            ? products.find(
+                (p) =>
+                  String(p.sku ?? "")
+                    .toUpperCase()
+                    .trim() === skuFromText
+              )
+            : null) ??
+          products.find((p) => p.source === "portal") ??
+          products[0]!;
+
+        return {
+          result: {
+            product,
+            message:
+              "Use this product's price_formatted, in_stock/variants, and options. For comparisons, call get_product_details once per item.",
+          },
+        };
+      }
+
       case "check_stock": {
         const stock = await checkStock(
           shopDomain,
@@ -836,6 +1015,64 @@ export async function executeSalesTool(
             error: `Order ${orderNumber} not found in the portal.`,
           },
         };
+      }
+
+      case "get_order_details": {
+        const orderNumber = String(input.order_number ?? "").trim();
+        const details = await getOrderDetailsForSupport(store.id, {
+          orderNumber: orderNumber || undefined,
+          customerPhone,
+        });
+        if (!details.found) {
+          return {
+            result: {
+              ...details,
+              message: details.message,
+            },
+          };
+        }
+        return {
+          result: {
+            ...details,
+            message:
+              "Confirm order with the customer. For damage/wrong-item issues, call check_return_policy next before offering resolution.",
+          },
+        };
+      }
+
+      case "check_return_policy": {
+        const orderNumber = String(input.order_number ?? "").trim();
+        if (!orderNumber) {
+          return {
+            result: {
+              error: "order_number is required for check_return_policy",
+            },
+          };
+        }
+        const check = await checkReturnPolicyForOrder(store.id, {
+          orderNumber,
+          customerPhone,
+        });
+        return { result: check };
+      }
+
+      case "initiate_refund": {
+        const orderNumber = String(input.order_number ?? "").trim();
+        if (!orderNumber) {
+          return { result: { error: "order_number is required" } };
+        }
+        const refund = await initiateOrderRefund(store.id, {
+          orderNumber,
+          customerPhone,
+          issue_type: String(input.issue_type ?? "damaged").trim(),
+          reason: String(input.reason ?? "").trim() || undefined,
+        });
+        if (!refund.success && refund.requires_human) {
+          return {
+            result: { ...refund, escalate_recommended: true },
+          };
+        }
+        return { result: refund };
       }
 
       case "confirm_order": {
@@ -967,6 +1204,48 @@ export async function executeSalesTool(
           input.discount_percent != null
             ? Number(input.discount_percent)
             : undefined;
+        const isReplacement = Boolean(input.is_replacement);
+        const replacementForOrderNumber = String(
+          input.replacement_for_order_number ?? ""
+        ).trim();
+        const issueType = String(input.issue_type ?? "").trim();
+        const issueDescription = String(input.issue_description ?? "").trim();
+
+        if (isReplacement && !replacementForOrderNumber) {
+          return {
+            result: {
+              error:
+                "replacement_for_order_number is required when is_replacement=true",
+            },
+          };
+        }
+
+        let replacementForOrderId: string | undefined;
+
+        if (isReplacement) {
+          const policy = await checkReturnPolicyForOrder(store.id, {
+            orderNumber: replacementForOrderNumber,
+            customerPhone,
+          });
+          if (!policy.eligible || !policy.replacement_allowed) {
+            return {
+              result: {
+                error: "Replacement not allowed under return policy",
+                policy,
+                escalate_recommended: true,
+                message: policy.message,
+              },
+            };
+          }
+          replacementForOrderId = policy.order_id ?? undefined;
+          if (policy.order_id && (issueType || issueDescription)) {
+            await recordOrderComplaint(store.id, policy.order_id, {
+              complaint_type: issueType || "replacement",
+              description: issueDescription,
+            });
+          }
+        }
+
         const recoveryDealType =
           input.recovery_deal_type === "bundle" ||
           input.recovery_deal_type === "discount"
@@ -1000,9 +1279,11 @@ export async function executeSalesTool(
             country: String(input.country ?? "").trim() || undefined,
             zip: String(input.zip ?? "").trim() || undefined,
           },
-          discountPercent,
+          discountPercent: isReplacement ? 100 : discountPercent,
           recoveryDealType,
           storeCurrency: currency ?? ctx.storeCurrency,
+          isReplacement,
+          replacementForOrderId,
         });
 
         if (!created.ok) {

@@ -7,6 +7,10 @@ import {
 } from "./ai-settings-types";
 import type { AdProductContext } from "@/lib/ads/types";
 import { formatAdContextForPrompt } from "@/lib/ads/whatsapp-ad-links";
+import {
+  languagePromptBlock,
+  type CustomerReplyLanguage,
+} from "./customer-language";
 
 const REPLY_LENGTH_INSTRUCTIONS: Record<AiReplyLength, string> = {
   short:
@@ -23,6 +27,7 @@ export function buildSalesSystemPrompt(params: {
   aiConfig?: ResolvedStoreAiConfig | null;
   adProductContext?: AdProductContext | null;
   pendingOrdersHint?: string | null;
+  customerLanguage?: CustomerReplyLanguage;
 }): string {
   const {
     storeLabel,
@@ -31,6 +36,7 @@ export function buildSalesSystemPrompt(params: {
     aiConfig,
     adProductContext,
     pendingOrdersHint,
+    customerLanguage = "en",
   } = params;
 
   const agentName =
@@ -97,7 +103,7 @@ You are selling for: ${storeLabel}.
 Your name is ${agentName}. When introducing yourself, use this name.${currencyNote}${productHint}${adBlock}${pendingBlock}
 
 Tone: ${toneInstruction}
-Reply length: ${replyInstruction}${templateBlock}${agentModesBlock}
+Reply length: ${replyInstruction}${languagePromptBlock(customerLanguage)}${templateBlock}${agentModesBlock}
 
 You receive up to the last ${
     aiConfig?.effectiveChatHistoryLimit ?? CHAT_HISTORY_LIMIT
