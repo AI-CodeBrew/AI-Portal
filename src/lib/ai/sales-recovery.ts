@@ -12,13 +12,6 @@ import {
   parseCheckoutDetails,
 } from "./checkout-parse";
 import { orderDetailsTemplate } from "./order-details-template";
-import {
-  customerMsg,
-  detectCustomerLanguage,
-  MULTILINGUAL_ACCEPT,
-  MULTILINGUAL_DECLINE,
-  type CustomerReplyLanguage,
-} from "./customer-language";
 
 export {
   extractOutboundMedia,
@@ -289,8 +282,7 @@ function formatPersonalOfferLine(
   percent: number,
   productLabel: string,
   unitPrice: number | null,
-  currency: string,
-  lang: CustomerReplyLanguage
+  currency: string
 ): string {
   const compare = priceCompareLine(
     unitPrice,
@@ -298,51 +290,25 @@ function formatPersonalOfferLine(
     currency,
     type === "bundle" ? 2 : 1
   );
-  const now = compare?.match(/\*([^*]+)\*/)?.[1];
-  const was = compare?.match(/~([^~]+)~/i)?.[1];
-
-  if (type === "bundle" && now && was) {
-    return customerMsg("recoveryPersonalBundle", lang, {
-      percent,
-      product: productLabel,
-      now,
-      was,
-    });
-  }
-  if (type === "discount" && now && was) {
-    return customerMsg("recoveryPersonalDiscount", lang, {
-      percent,
-      product: productLabel,
-      now,
-      was,
-    });
-  }
-
   if (type === "bundle") {
+    const now = compare?.match(/\*([^*]+)\*/)?.[1];
+    const was = compare?.match(/~([^~]+)~/i)?.[1];
+    if (now && was) {
+      return `I wanted to personally offer you a *2-pack bundle (${percent}% off)* on *${productLabel}* — *${now}* instead of ${was}.`;
+    }
     return [
-      customerMsg("recoveryPersonalBundle", lang, {
-        percent,
-        product: productLabel,
-        now: now ?? "",
-        was: was ?? "",
-      }),
+      `I wanted to personally offer you a *2-pack bundle (${percent}% off)* on *${productLabel}*`,
       compare,
     ]
       .filter(Boolean)
       .join("\n");
   }
-
-  return [
-    customerMsg("recoveryPersonalDiscount", lang, {
-      percent,
-      product: productLabel,
-      now: now ?? "",
-      was: was ?? "",
-    }),
-    compare,
-  ]
-    .filter(Boolean)
-    .join("\n");
+  const now = compare?.match(/\*([^*]+)\*/)?.[1];
+  const was = compare?.match(/~([^~]+)~/i)?.[1];
+  if (now && was) {
+    return `I wanted to personally offer you *${percent}% off* on *${productLabel}* — *${now}* instead of ${was}.`;
+  }
+  return `I wanted to personally offer you *${percent}% off* on *${productLabel}*.${compare ? `\n${compare}` : ""}`;
 }
 
 function formatRecoveryOfferReply(params: {
@@ -353,26 +319,24 @@ function formatRecoveryOfferReply(params: {
   unitPrice: number | null;
   currency: string;
   accepting?: boolean;
-  lang: CustomerReplyLanguage;
 }): string {
-  const { type, percent, productLabel, unitPrice, currency, lang } = params;
+  const { type, percent, productLabel, unitPrice, currency } = params;
   const boldPct = toBoldPercent(percent);
   const personal = formatPersonalOfferLine(
     type,
     percent,
     productLabel,
     unitPrice,
-    currency,
-    lang
+    currency
   );
 
   if (params.accepting) {
     return [
       type === "bundle"
-        ? customerMsg("recoveryLockedBundle", lang, { percent })
-        : customerMsg("recoveryLockedDiscount", lang, { percent }),
+        ? `🔥 Locked in: *2-PACK* at *${percent}% OFF*`
+        : `🔥 Deal locked: *${percent}% OFF*`,
       personal,
-      orderDetailsTemplate({ defaultQty: type === "bundle" ? 2 : 1, lang }),
+      orderDetailsTemplate({ defaultQty: type === "bundle" ? 2 : 1 }),
     ]
       .filter(Boolean)
       .join("\n");
@@ -383,8 +347,8 @@ function formatRecoveryOfferReply(params: {
       bundleMarker(percent),
       `💥 𝟮-𝗣𝗔𝗖𝗞 𝗕𝗨𝗡𝗗𝗟𝗘 · ${boldPct}% 𝗢𝗙𝗙 💥`,
       personal,
-      customerMsg("recoveryBundleTitle", lang),
-      orderDetailsTemplate({ defaultQty: 2, lang }),
+      `🎁 Best value — reply *YES* to lock it:`,
+      orderDetailsTemplate({ defaultQty: 2 }),
     ]
       .filter(Boolean)
       .join("\n");
@@ -394,8 +358,8 @@ function formatRecoveryOfferReply(params: {
     discountMarker(percent),
     `🔥 𝗙𝗟𝗔𝗧 ${boldPct}% 𝗢𝗙𝗙 🔥`,
     personal,
-    customerMsg("recoveryFlatOff", lang),
-    orderDetailsTemplate({ lang }),
+    `⚡ Limited WhatsApp deal — reply *YES* to grab it:`,
+    orderDetailsTemplate(),
   ]
     .filter(Boolean)
     .join("\n");
@@ -495,14 +459,9 @@ export function looksLikeOrderDecline(text: string): boolean {
   if (t.length < 2) return false;
   if (looksLikeCheckoutMessage(t)) return false;
   if (HARD_STOP_PATTERN.test(t)) return true;
-  if (
-    /^(no|nope|nah|not now|maybe later|no thanks|don't want|nahi|na|mat)\.?$/i.test(
-      t
-    )
-  ) {
+  if (/^(no|nope|nah|not now|maybe later|no thanks|don't want)\.?$/i.test(t)) {
     return true;
   }
-  if (MULTILINGUAL_DECLINE.test(t)) return true;
   return DECLINE_PATTERN.test(t);
 }
 
@@ -512,7 +471,6 @@ export function looksLikeOfferAcceptance(text: string): boolean {
   if (parseCheckoutDetails(t)) return false;
   if (looksLikeCheckoutMessage(t)) return false;
   if (looksLikeOrderDecline(t)) return false;
-  if (MULTILINGUAL_ACCEPT.test(t) && t.length <= 120) return true;
   return ACCEPT_OFFER_PATTERN.test(t) && t.length <= 120;
 }
 
@@ -528,7 +486,6 @@ export async function tryDirectSalesRecoveryReply(
 
   const product = findProductContext(history);
   const productLabel = product.title || "this product";
-  const lang = detectCustomerLanguage(history, latestUserMessage);
   const { discount, bundle } = recoveryPercents(ctx);
   const { unitPrice, currency } = await resolveUnitPrice(ctx, product);
 
@@ -545,14 +502,13 @@ export async function tryDirectSalesRecoveryReply(
       unitPrice,
       currency,
       accepting: true,
-      lang,
     });
   }
 
   if (!looksLikeOrderDecline(latestUserMessage)) return null;
 
   if (HARD_STOP_PATTERN.test(latestUserMessage)) {
-    return `${MARKER_CLOSED}\n${customerMsg("recoveryHardStop", lang)}`;
+    return `${MARKER_CLOSED}\nOkay — I won't push. Message anytime if you need help.`;
   }
 
   const action = nextRecoveryAction(history);
@@ -566,7 +522,6 @@ export async function tryDirectSalesRecoveryReply(
       sku: product.sku,
       unitPrice,
       currency,
-      lang,
     });
   }
 
@@ -578,12 +533,11 @@ export async function tryDirectSalesRecoveryReply(
       sku: product.sku,
       unitPrice,
       currency,
-      lang,
     });
   }
 
   return [
     MARKER_CLOSED,
-    customerMsg("recoveryFinalThanks", lang, { product: productLabel }),
+    `No problem — thanks for checking ${productLabel}. Message anytime if you need anything.`,
   ].join("\n");
 }

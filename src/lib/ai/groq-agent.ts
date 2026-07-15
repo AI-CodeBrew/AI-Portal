@@ -8,24 +8,13 @@ import { buildSalesSystemPrompt } from "./build-system-prompt";
 import {
   formatProductsReply,
   tryDirectProductReply,
-  tryDirectStockPreferenceReply,
 } from "./product-reply";
 import { tryDirectCheckoutReply, looksLikeCheckoutMessage } from "./checkout-reply";
 import { tryDirectSalesRecoveryReply, looksLikeOrderDecline } from "./sales-recovery";
 import {
-  tryDirectComplaintReply,
-  productComplaintHint,
-} from "./complaint-reply";
-import { tryDirectProductComparisonReply } from "./comparison-reply";
-import { productComparisonHint } from "./product-comparison";
-import {
   extractSkuFromText,
   extractProductSearchQuery,
 } from "@/lib/products/products-service";
-import {
-  detectCustomerLanguage,
-  MULTILINGUAL_PRODUCT_ASK,
-} from "./customer-language";
 
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 const DEFAULT_MODEL = "llama-3.3-70b-versatile";
@@ -51,9 +40,8 @@ function looksLikeProductQuery(text: string): boolean {
   if (ORDER_QUERY_PATTERN.test(t)) return false;
   if (extractSkuFromText(t)) return true;
   if (PRODUCT_QUERY_PATTERN.test(t)) return true;
-  if (MULTILINGUAL_PRODUCT_ASK.test(t)) return true;
   if (/^[A-Z0-9][A-Z0-9_-]{3,47}$/i.test(t)) return true;
-  return t.length <= 80 && !/^(hi|hello|hey|thanks|thank you|ok|yes|no|salam|assalam|shukriya)\b/i.test(t);
+  return t.length <= 80 && !/^(hi|hello|hey|thanks|thank you|ok|yes|no)\b/i.test(t);
 }
 
 function looksLikeOrderQuery(text: string): boolean {
@@ -135,26 +123,11 @@ export async function runSalesAgentWithGroq(
 ): Promise<string> {
   const storeLabel = ctx.store.store_name || ctx.store.shop_domain || "our store";
   const latestUser = lastUserMessage(history);
-  const customerLanguage = detectCustomerLanguage(history, latestUser);
 
   // Place order with contact details → confirm before LLM
   const checkoutReply = await tryDirectCheckoutReply(ctx, latestUser, history);
   if (checkoutReply) {
     return checkoutReply;
-  }
-
-  const complaintReply = tryDirectComplaintReply(history, latestUser);
-  if (complaintReply) {
-    return complaintReply;
-  }
-
-  const stockPref = await tryDirectStockPreferenceReply(
-    ctx,
-    latestUser,
-    history
-  );
-  if (stockPref) {
-    return stockPref.reply;
   }
 
   const recoveryReply = await tryDirectSalesRecoveryReply(
@@ -166,17 +139,8 @@ export async function runSalesAgentWithGroq(
     return recoveryReply;
   }
 
-  const comparisonReply = await tryDirectProductComparisonReply(
-    ctx,
-    latestUser,
-    history
-  );
-  if (comparisonReply) {
-    return comparisonReply.reply;
-  }
-
   // SKU or product name → answer from catalog first (don't rely on the model)
-  const directProduct = await tryDirectProductReply(ctx, latestUser, history);
+  const directProduct = await tryDirectProductReply(ctx, latestUser);
   if (directProduct) {
     return directProduct.reply;
   }
@@ -184,23 +148,19 @@ export async function runSalesAgentWithGroq(
   const skuHint = extractSkuFromText(latestUser);
   const nameHint = extractProductSearchQuery(latestUser);
   const searchHint = skuHint || nameHint;
-  const complaintHint = productComplaintHint(history, latestUser) ?? "";
-  const comparisonHint =
-    productComparisonHint(history, latestUser) ?? "";
-  const productHint =
-    (ctx.adProductContext
-      ? `\n\nThe customer clicked an ad for "${ctx.adProductContext.productTitle}". Use the ad product context below — do not ask what product they want unless they change topic.`
-      : looksLikeCheckoutMessage(latestUser)
-        ? `\n\nThe customer wants to PLACE AN ORDER and shared details. You MUST call create_draft_order with their name, phone, address, and the product/sku from this chat (portal SKU or variant id from search_products). Do not only say thanks.`
-        : looksLikeOrderDecline(latestUser)
-          ? `\n\nThe customer declined ordering. Recover the sale ONE step at a time: if you have not offered 15% yet, offer 15% off the discussed product with the discounted price; if you already offered 15% and they declined again, offer a 2-pack bundle (~25% off); if both were refused, thank them and stop. Do not dump both offers at once.`
-          : looksLikeOrderQuery(latestUser)
-            ? `\n\nThe customer is asking about their order ("${latestUser.slice(0, 120).replace(/\n/g, " ")}"). You MUST call lookup_customer_orders (or get_order_status if they gave an order number) and share clear order details.`
-            : looksLikeProductQuery(latestUser)
-              ? `\n\nThe customer's latest message appears to be about a product ("${latestUser.slice(0, 120).replace(/\n/g, " ")}"${searchHint ? `; search query: ${searchHint}` : ""}). You MUST call search_products first${searchHint ? ` with query "${searchHint}"` : ""}, share full details (name, price_formatted, stock, description, options, and all variants), then ask if they want to buy and collect name, phone, and address to close the sale.`
-              : history.length === 0
-                ? `\n\nNo messages in the current 2-hour AI session — greet briefly as a fresh chat, then help with products or orders.`
-                : "") + complaintHint + comparisonHint;
+  const productHint = ctx.adProductContext
+    ? `\n\nThe customer clicked an ad for "${ctx.adProductContext.productTitle}". Use the ad product context below — do not ask what product they want unless they change topic.`
+    : looksLikeCheckoutMessage(latestUser)
+      ? `\n\nThe customer wants to PLACE AN ORDER and shared details. You MUST call create_draft_order with their name, phone, address, and the product/sku from this chat (portal SKU or variant id from search_products). Do not only say thanks.`
+      : looksLikeOrderDecline(latestUser)
+        ? `\n\nThe customer declined ordering. Recover the sale ONE step at a time: if you have not offered 15% yet, offer 15% off the discussed product with the discounted price; if you already offered 15% and they declined again, offer a 2-pack bundle (~25% off); if both were refused, thank them and stop. Do not dump both offers at once.`
+      : looksLikeOrderQuery(latestUser)
+      ? `\n\nThe customer is asking about their order ("${latestUser.slice(0, 120).replace(/\n/g, " ")}"). You MUST call lookup_customer_orders (or get_order_status if they gave an order number) and share clear order details.`
+      : looksLikeProductQuery(latestUser)
+        ? `\n\nThe customer's latest message appears to be about a product ("${latestUser.slice(0, 120).replace(/\n/g, " ")}"${searchHint ? `; search query: ${searchHint}` : ""}). You MUST call search_products first${searchHint ? ` with query "${searchHint}"` : ""}, share full details (name, price_formatted, stock, description, options, and all variants), then ask if they want to buy and collect name, phone, and address to close the sale.`
+        : history.length === 0
+          ? `\n\nNo messages in the current 2-hour AI session — greet briefly as a fresh chat, then help with products or orders.`
+          : "";
 
   const messages: ChatMessage[] = [
     {
@@ -212,7 +172,6 @@ export async function runSalesAgentWithGroq(
         aiConfig: ctx.aiConfig,
         adProductContext: ctx.adProductContext,
         pendingOrdersHint: ctx.pendingOrdersHint,
-        customerLanguage,
       }),
     },
     ...history
@@ -263,7 +222,7 @@ export async function runSalesAgentWithGroq(
         lastSearchProducts.length > 0 &&
         !/sku|price|rs\.?|pkr|\$|in stock|available/i.test(text)
       ) {
-        return formatProductsReply(lastSearchProducts, customerLanguage);
+        return formatProductsReply(lastSearchProducts);
       }
 
       return text;
@@ -332,7 +291,7 @@ export async function runSalesAgentWithGroq(
   }
 
   if (lastSearchProducts.length > 0) {
-    return formatProductsReply(lastSearchProducts, customerLanguage);
+    return formatProductsReply(lastSearchProducts);
   }
 
   return "I'm having trouble processing your request. Let me get a team member to help you.";

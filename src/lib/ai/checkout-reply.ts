@@ -9,11 +9,6 @@ import {
   parseCheckoutDetails,
 } from "./checkout-parse";
 import { orderDetailsTemplate } from "./order-details-template";
-import {
-  customerMsg,
-  detectCustomerLanguage,
-  type CustomerReplyLanguage,
-} from "./customer-language";
 
 export {
   looksLikeCheckoutMessage,
@@ -29,27 +24,16 @@ function formatOrderSuccess(params: {
   customer_name: string;
   quantity: number;
   discountPercent?: number;
-  lang: CustomerReplyLanguage;
 }): string {
   return [
-    customerMsg("orderConfirmed", params.lang, {
-      order: params.order_number ?? "",
-    }),
-    params.quantity > 1
-      ? `${customerMsg("qty", params.lang)} ${params.quantity}`
-      : null,
-    params.discountPercent != null
-      ? customerMsg("discountApplied", params.lang, {
-          percent: params.discountPercent,
-        })
-      : null,
-    params.total_formatted
-      ? `${customerMsg("total", params.lang)} ${params.total_formatted}`
-      : null,
+    `✅ Order *${params.order_number}* confirmed`,
+    params.quantity > 1 ? `Qty: ${params.quantity}` : null,
+    params.discountPercent != null ? `${params.discountPercent}% off applied` : null,
+    params.total_formatted ? `Total: ${params.total_formatted}` : null,
     params.whatsapp_sent
-      ? customerMsg("confirmationSent", params.lang, { phone: params.phone })
+      ? `Confirmation sent to ${params.phone}`
       : null,
-    customerMsg("thanks", params.lang, { name: params.customer_name }),
+    `Thanks, ${params.customer_name}!`,
   ]
     .filter(Boolean)
     .join("\n");
@@ -83,8 +67,6 @@ export async function tryDirectCheckoutReply(
 
   if (!shouldTry) return null;
 
-  const lang = detectCustomerLanguage(history, latestUserMessage);
-
   const details = parseCheckoutDetails(latestUserMessage);
   if (!details) {
     // Only nudge if they clearly tried to check out / accept an offer
@@ -92,8 +74,8 @@ export async function tryDirectCheckoutReply(
       looksLikeCheckoutMessage(latestUserMessage, history) ||
       pendingOffer
     ) {
-      return `${customerMsg("checkoutNeedDetails", lang)}\n\n${orderDetailsTemplate(
-        { defaultQty: pendingOffer?.defaultQty, lang }
+      return `I can place that order — please send your details like this:\n\n${orderDetailsTemplate(
+        { defaultQty: pendingOffer?.defaultQty }
       )}`;
     }
     return null;
@@ -106,7 +88,7 @@ export async function tryDirectCheckoutReply(
     ]) || findProductRefFromHistory(history);
 
   if (!productRef) {
-    return customerMsg("checkoutWhichProduct", lang);
+    return "I have your details. Which product should I order? Please send the product name or SKU again.";
   }
 
   const quantity = parseOrderQuantity(
@@ -170,7 +152,6 @@ export async function tryDirectCheckoutReply(
       customer_name: details.customer_name,
       quantity,
       discountPercent,
-      lang,
     });
   }
 
@@ -180,5 +161,5 @@ export async function tryDirectCheckoutReply(
       : "Could not create the order";
 
   console.error("[tryDirectCheckoutReply]", err);
-  return customerMsg("checkoutFailed", lang, { error: err });
+  return `I couldn't complete the order yet (${err}). Please confirm the product SKU/name and your address, or wait for a team member.`;
 }

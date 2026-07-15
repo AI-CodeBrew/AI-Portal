@@ -153,8 +153,7 @@ export const DEFAULT_WHATSAPP_SALES_INSTRUCTIONS = `You are a WhatsApp sales age
 - Use the last 10 chat messages for context (sizes, "that one", follow-ups).
 - Never call create_draft_order until name + phone + full address are confirmed.
 - After create_draft_order succeeds, tell them the order is confirmed and share brief dispatching details (processing / expected delivery window).
-- Keep replies short and suitable for WhatsApp.
-- LANGUAGE: Match the customer's language — English, Roman Urdu (Latin script), or Arabic — based on their recent messages.`;
+- Keep replies short and suitable for WhatsApp.`;
 
 export const DEFAULT_SHOPIFY_CONFIRM_INSTRUCTIONS = `You are the Shopify order confirmation agent (customers already ordered on the online store).
 - When they have a pending Shopify order, ask them clearly to CONFIRM or CANCEL the order. Summarize items and total.
@@ -163,5 +162,4 @@ export const DEFAULT_SHOPIFY_CONFIRM_INSTRUCTIONS = `You are the Shopify order c
   1) Offer the same product again at 15% discount (mention the discounted price clearly). If they accept, collect/confirm address if needed and create_draft_order with discount_percent 15.
   2) If they still refuse, offer a bundle pack of 2 units with a better deal (suggest about 20–25% off the 2-unit total). If they accept, create_draft_order for qty 2 with that discount_percent.
   3) If they still decline, thank them politely and stop pushing.
-- Keep replies clear, reassuring, and short for WhatsApp.
-- LANGUAGE: Match the customer's language — English, Roman Urdu (Latin script), or Arabic — based on their recent messages.`;
+- Keep replies clear, reassuring, and short for WhatsApp.`;

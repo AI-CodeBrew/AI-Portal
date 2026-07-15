@@ -2,23 +2,13 @@ import Anthropic from "@anthropic-ai/sdk";
 import { executeSalesTool, type AgentContext } from "./sales-tools";
 import { buildSalesSystemPrompt } from "./build-system-prompt";
 import { CHAT_HISTORY_LIMIT } from "./chat-history";
-import {
-  tryDirectProductReply,
-  tryDirectStockPreferenceReply,
-} from "./product-reply";
+import { tryDirectProductReply } from "./product-reply";
 import { tryDirectCheckoutReply } from "./checkout-reply";
 import { tryDirectSalesRecoveryReply } from "./sales-recovery";
 import {
   extractSkuFromText,
   extractProductSearchQuery,
 } from "@/lib/products/products-service";
-import { detectCustomerLanguage } from "./customer-language";
-import {
-  tryDirectComplaintReply,
-  productComplaintHint,
-} from "./complaint-reply";
-import { tryDirectProductComparisonReply } from "./comparison-reply";
-import { productComparisonHint } from "./product-comparison";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -27,21 +17,6 @@ const ANTHROPIC_TOOLS: Anthropic.Tool[] = [
     name: "search_products",
     description:
       "Search BOTH portal catalog and Shopify by name, keyword, or SKU. Always use for product questions. If the customer pasted a SKU (e.g. AA-…), pass that SKU as query.",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        query: {
-          type: "string",
-          description: "Product name, keyword, or SKU/ref",
-        },
-      },
-      required: ["query"],
-    },
-  },
-  {
-    name: "get_product_details",
-    description:
-      "Look up ONE product by name, keyword, or SKU. Use when comparing products — call once per item. Returns price_formatted, stock, and variants for the best match.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -97,10 +72,6 @@ const ANTHROPIC_TOOLS: Anthropic.Tool[] = [
         country: { type: "string" },
         zip: { type: "string" },
         discount_percent: { type: "number" },
-        is_replacement: { type: "boolean" },
-        replacement_for_order_number: { type: "string" },
-        issue_type: { type: "string" },
-        issue_description: { type: "string" },
       },
       required: ["line_items", "customer_name", "address1", "city", "phone"],
     },
@@ -153,43 +124,6 @@ const ANTHROPIC_TOOLS: Anthropic.Tool[] = [
     },
   },
   {
-    name: "get_order_details",
-    description:
-      "Full order details for support (damage/wrong item). Use before refund or replacement.",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        order_number: { type: "string" },
-      },
-    },
-  },
-  {
-    name: "check_return_policy",
-    description:
-      "Check if order qualifies for replacement/refund. Required before initiate_refund or replacement orders.",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        order_number: { type: "string" },
-      },
-      required: ["order_number"],
-    },
-  },
-  {
-    name: "initiate_refund",
-    description:
-      "Start refund for qualifying order (after check_return_policy). Amount comes from order total.",
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        order_number: { type: "string" },
-        issue_type: { type: "string" },
-        reason: { type: "string" },
-      },
-      required: ["order_number"],
-    },
-  },
-  {
     name: "escalate_to_human",
     description: "Flag conversation for human agent handoff",
     input_schema: {
@@ -209,25 +143,10 @@ export async function runSalesAgentWithAnthropic(
   const storeLabel = ctx.store.store_name || ctx.store.shop_domain || "our store";
   const latestUser =
     [...history].reverse().find((m) => m.role === "user")?.content ?? "";
-  const customerLanguage = detectCustomerLanguage(history, latestUser);
 
   const checkoutReply = await tryDirectCheckoutReply(ctx, latestUser, history);
   if (checkoutReply) {
     return checkoutReply;
-  }
-
-  const complaintReply = tryDirectComplaintReply(history, latestUser);
-  if (complaintReply) {
-    return complaintReply;
-  }
-
-  const stockPref = await tryDirectStockPreferenceReply(
-    ctx,
-    latestUser,
-    history
-  );
-  if (stockPref) {
-    return stockPref.reply;
   }
 
   const recoveryReply = await tryDirectSalesRecoveryReply(
@@ -239,28 +158,16 @@ export async function runSalesAgentWithAnthropic(
     return recoveryReply;
   }
 
-  const comparisonReply = await tryDirectProductComparisonReply(
-    ctx,
-    latestUser,
-    history
-  );
-  if (comparisonReply) {
-    return comparisonReply.reply;
-  }
-
-  const directProduct = await tryDirectProductReply(ctx, latestUser, history);
+  const directProduct = await tryDirectProductReply(ctx, latestUser);
   if (directProduct) {
     return directProduct.reply;
   }
 
   const skuHint = extractSkuFromText(latestUser);
   const searchHint = skuHint || extractProductSearchQuery(latestUser);
-  const productHint =
-    (searchHint
-      ? `\n\nCustomer is asking about a product. Call search_products with query "${searchHint}" and share full details including options and every variant with prices. When they share name/phone/address to buy, call create_draft_order with sku/variant_id and their phone for confirmation.`
-      : "") +
-    (productComplaintHint(history, latestUser) ?? "") +
-    (productComparisonHint(history, latestUser) ?? "");
+  const productHint = searchHint
+    ? `\n\nCustomer is asking about a product. Call search_products with query "${searchHint}" and share full details including options and every variant with prices. When they share name/phone/address to buy, call create_draft_order with sku/variant_id and their phone for confirmation.`
+    : "";
 
   const messages: Anthropic.MessageParam[] = history
     .slice(-(ctx.aiConfig?.effectiveChatHistoryLimit ?? CHAT_HISTORY_LIMIT))
@@ -279,7 +186,6 @@ export async function runSalesAgentWithAnthropic(
           aiConfig: ctx.aiConfig,
           adProductContext: ctx.adProductContext,
           pendingOrdersHint: ctx.pendingOrdersHint,
-          customerLanguage,
         }) + productHint,
       cache_control: { type: "ephemeral" },
     },

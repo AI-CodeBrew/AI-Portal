@@ -5,23 +5,6 @@ import {
 } from "@/lib/products/products-service";
 import { executeSalesTool, type AgentContext } from "./sales-tools";
 import { orderDetailsTemplate } from "./order-details-template";
-import {
-  customerMsg,
-  detectCustomerLanguage,
-  MULTILINGUAL_GREETING,
-  MULTILINGUAL_PRODUCT_ASK,
-  type CustomerReplyLanguage,
-} from "./customer-language";
-import {
-  buildOosOfferMarker,
-  findSimilarInStockProduct,
-  isProductOutOfStock,
-  lastOosOfferFromHistory,
-  parseStockPreference,
-  pickRequestedProduct,
-} from "./product-stock";
-import { looksLikeProductComparison } from "./product-comparison";
-import { productSearchTokens } from "@/lib/products/products-service";
 
 export type SearchProduct = {
   title?: string;
@@ -52,38 +35,16 @@ const ORDER_ONLY_PATTERN =
 const PRODUCT_ASK_PATTERN =
   /\b(price|cost|how much|do you have|available|in stock|product|products|buy|sell|show me|looking for|details|about|sku|want this|variant|variants|option|options|size|sizes|color|colors|colour|colours)\b/i;
 
-const GREETING_ONLY = MULTILINGUAL_GREETING;
+const GREETING_ONLY =
+  /^(hi|hello|hey|thanks|thank you|ok|okay|yes|no|assalam|salam)[\s!.]*$/i;
 
 const CHECKOUT_HIJACK =
   /\b(place\s+(an\s+)?order|want\s+to\s+(order|buy)|my name|address|phone|checkout|deliver)\b/i;
 
-/** Out-of-stock reply: empathy + similar alternative + back-in-stock option. */
-export function formatOutOfStockReply(
-  product: SearchProduct,
-  similar: SearchProduct | null,
-  lang: CustomerReplyLanguage
-): string {
-  const title = product.title || "this product";
-  const marker = buildOosOfferMarker(product, similar);
-
-  if (similar?.title) {
-    return `${marker}\n${customerMsg("oosWithSimilar", lang, {
-      similar: similar.title,
-    })}`;
-  }
-
-  return `${marker}\n${customerMsg("oosNoSimilarNotify", lang, {
-    product: title,
-  })}`;
-}
-
-/** Format in-stock catalog hits (skips want-to-order when primary is OOS — use formatOutOfStockReply). */
-export function formatProductsReply(
-  products: SearchProduct[],
-  lang: CustomerReplyLanguage = "en"
-): string {
+/** Format catalog hits into a short WhatsApp product answer. */
+export function formatProductsReply(products: SearchProduct[]): string {
   if (!products.length) {
-    return customerMsg("productNotFound", lang);
+    return "Couldn't find that product. Send the name or SKU again?";
   }
 
   const imageMarkers: string[] = [];
@@ -127,12 +88,9 @@ export function formatProductsReply(
     const variantLines =
       realVariants.length > 0
         ? realVariants.slice(0, 6).map((v) => {
-            const label = v.title || customerMsg("variant", lang);
+            const label = v.title || "Variant";
             const price = v.price_formatted ? ` — ${v.price_formatted}` : "";
-            const stock =
-              v.in_stock === false
-                ? ` ${customerMsg("outOfStock", lang)}`
-                : "";
+            const stock = v.in_stock === false ? " (out of stock)" : "";
             return `• ${label}${price}${stock}`;
           })
         : [];
@@ -153,16 +111,12 @@ export function formatProductsReply(
       // Keep Ref internal for order placement; stripped before WhatsApp send
       refId ? `[Ref: ${refId}]` : null,
       `*${p.title || "Product"}*`,
-      p.sku ? `${customerMsg("sku", lang)} ${p.sku}` : null,
-      basePrice ? `${customerMsg("price", lang)} ${basePrice}` : null,
-      outOfStock
-        ? customerMsg("stockOut", lang)
-        : customerMsg("stockAvailable", lang),
+      p.sku ? `SKU: ${p.sku}` : null,
+      basePrice ? `Price: ${basePrice}` : null,
+      outOfStock ? `Stock: out of stock` : `Stock: available`,
       optionsLine ? optionsLine : null,
       variantLines.length ? variantLines.join("\n") : null,
-      bundleLines.length
-        ? `${customerMsg("bundles", lang)}\n${bundleLines.join("\n")}`
-        : null,
+      bundleLines.length ? `Bundles:\n${bundleLines.join("\n")}` : null,
     ]
       .filter(Boolean)
       .join("\n");
@@ -170,9 +124,7 @@ export function formatProductsReply(
 
   const multi =
     products.length > 1
-      ? `\n\n${customerMsg("multipleMatches", lang, {
-          count: Math.min(products.length, 2),
-        })}`
+      ? `\n\nFound ${Math.min(products.length, 2)} matches — which one?`
       : "";
 
   const hasVariants = products.some((p) =>
@@ -181,8 +133,8 @@ export function formatProductsReply(
 
   const prefix = imageMarkers.length ? `${imageMarkers.join("\n")}\n` : "";
 
-  return `${prefix}${blocks.join("\n\n")}${multi}\n\n${customerMsg("wantToOrder", lang)}\n${orderDetailsTemplate(
-    { includeVariantHint: hasVariants, lang }
+  return `${prefix}${blocks.join("\n\n")}${multi}\n\nWant to order?\n${orderDetailsTemplate(
+    { includeVariantHint: hasVariants }
   )}`;
 }
 
@@ -198,14 +150,8 @@ function shouldTryDirectProductLookup(message: string): boolean {
     return false;
   }
   if (ORDER_ONLY_PATTERN.test(t) && !PRODUCT_ASK_PATTERN.test(t)) return false;
-  if (looksLikeProductComparison(t)) return false;
   if (extractSkuFromText(t) && !CHECKOUT_HIJACK.test(t)) return true;
-  if (
-    (PRODUCT_ASK_PATTERN.test(t) || MULTILINGUAL_PRODUCT_ASK.test(t)) &&
-    !CHECKOUT_HIJACK.test(t)
-  ) {
-    return true;
-  }
+  if (PRODUCT_ASK_PATTERN.test(t) && !CHECKOUT_HIJACK.test(t)) return true;
   // Short name-only messages: "nike shoes", "red dress M"
   const query = extractProductSearchQuery(t);
   if (!query) return false;
@@ -221,12 +167,9 @@ function shouldTryDirectProductLookup(message: string): boolean {
  */
 export async function tryDirectProductReply(
   ctx: AgentContext,
-  latestUserMessage: string,
-  history: Array<{ role: "user" | "assistant"; content: string }> = []
+  latestUserMessage: string
 ): Promise<{ reply: string; products: SearchProduct[] } | null> {
   if (!shouldTryDirectProductLookup(latestUserMessage)) return null;
-
-  const lang = detectCustomerLanguage(history, latestUserMessage);
 
   const sku = extractSkuFromText(latestUserMessage);
   const query =
@@ -248,114 +191,20 @@ export async function tryDirectProductReply(
     // Only hard-fail for explicit SKU; name misses can fall through to the LLM
     if (sku) {
       return {
-        reply: customerMsg("skuNotFound", lang, { sku }),
+        reply: `I couldn't find a product with SKU ${sku}. Please double-check the code or tell me the product name.`,
         products: [],
       };
     }
     return null;
   }
 
-  const requested = pickRequestedProduct(products, query, sku);
-
-  if (isProductOutOfStock(requested)) {
-    const similar = await findSimilarWithExtraSearch(ctx, requested, products);
-    return {
-      reply: formatOutOfStockReply(requested, similar, lang),
-      products: similar ? [requested, similar] : [requested],
-    };
-  }
-
-  return { reply: formatProductsReply(products, lang), products };
-}
-
-/** Follow-up after out-of-stock offer: show similar product or confirm back-in-stock alert. */
-export async function tryDirectStockPreferenceReply(
-  ctx: AgentContext,
-  latestUserMessage: string,
-  history: Array<{ role: "user" | "assistant"; content: string }> = []
-): Promise<{ reply: string; products: SearchProduct[] } | null> {
-  const oos = lastOosOfferFromHistory(history);
-  if (!oos) return null;
-
-  const pref = parseStockPreference(latestUserMessage);
-  if (!pref) return null;
-
-  const lang = detectCustomerLanguage(history, latestUserMessage);
-  const productLabel = oos.title || oos.sku || "this product";
-
-  if (pref === "notify") {
-    return {
-      reply: customerMsg("oosNotifyConfirmed", lang, { product: productLabel }),
-      products: [],
-    };
-  }
-
-  // Show similar product
-  if (oos.altSku || oos.altTitle) {
-    const query = oos.altSku || oos.altTitle;
-    const { result } = await executeSalesTool(
-      "search_products",
-      { query },
-      ctx
-    );
-    const products = (
-      result && typeof result === "object" && "products" in result
-        ? (result as { products?: SearchProduct[] }).products
-        : []
-    ) as SearchProduct[];
-
-    const similar =
-      products.find(
-        (p) =>
-          (oos.altSku && p.sku?.toUpperCase() === oos.altSku.toUpperCase()) ||
-          (oos.altTitle &&
-            (p.title ?? "").toLowerCase() === oos.altTitle.toLowerCase())
-      ) ?? products.find((p) => !isProductOutOfStock(p));
-
-    if (similar && !isProductOutOfStock(similar)) {
-      return {
-        reply: formatProductsReply([similar], lang),
-        products: [similar],
-      };
-    }
-  }
-
-  return {
-    reply: customerMsg("oosNotifyConfirmed", lang, { product: productLabel }),
-    products: [],
-  };
-}
-
-async function findSimilarWithExtraSearch(
-  ctx: AgentContext,
-  requested: SearchProduct,
-  products: SearchProduct[]
-): Promise<SearchProduct | null> {
-  let similar = findSimilarInStockProduct(requested, products);
-  if (similar) return similar;
-
-  const tokens = productSearchTokens(requested.title ?? "");
-  if (tokens.length === 0) return null;
-
-  const { result } = await executeSalesTool(
-    "search_products",
-    { query: tokens.slice(0, 3).join(" ") },
-    ctx
-  );
-  const extra = (
-    result && typeof result === "object" && "products" in result
-      ? (result as { products?: SearchProduct[] }).products
-      : []
-  ) as SearchProduct[];
-
-  return findSimilarInStockProduct(requested, [...products, ...extra]);
+  return { reply: formatProductsReply(products), products };
 }
 
 /** @deprecated use tryDirectProductReply */
 export async function tryDirectSkuProductReply(
   ctx: AgentContext,
-  latestUserMessage: string,
-  history: Array<{ role: "user" | "assistant"; content: string }> = []
+  latestUserMessage: string
 ): Promise<{ reply: string; products: SearchProduct[] } | null> {
-  return tryDirectProductReply(ctx, latestUserMessage, history);
+  return tryDirectProductReply(ctx, latestUserMessage);
 }

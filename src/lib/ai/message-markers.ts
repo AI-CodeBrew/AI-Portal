@@ -4,7 +4,6 @@ export function stripInternalAiMarkers(text: string): string {
     .replace(/^\s*\[Deal\s+[^\]]+\]\s*\n?/gim, "")
     .replace(/^\s*\[Deal closed\]\s*\n?/gim, "")
     .replace(/\[Ref:\s*[^\]]+\]\s*/gi, "")
-    .replace(/\[OOS:\s*[^\]]+\]\s*/gi, "")
     .replace(/\[Image:\s*https?:\/\/[^\]]+\]\s*/gi, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();

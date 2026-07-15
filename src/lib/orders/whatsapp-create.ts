@@ -212,8 +212,6 @@ export async function createWhatsAppAiOrder(params: {
   discountPercent?: number;
   recoveryDealType?: "discount" | "bundle" | null;
   storeCurrency?: string | null;
-  isReplacement?: boolean;
-  replacementForOrderId?: string | null;
 }): Promise<
   | {
       ok: true;
@@ -379,10 +377,6 @@ export async function createWhatsAppAiOrder(params: {
       : {}),
     ...(params.discountPercent != null && params.discountPercent > 0
       ? { recovery_discount_percent: params.discountPercent }
-      : {}),
-    ...(params.isReplacement ? { is_replacement: true } : {}),
-    ...(params.replacementForOrderId
-      ? { replacement_for_order_id: params.replacementForOrderId }
       : {}),
   };
 
