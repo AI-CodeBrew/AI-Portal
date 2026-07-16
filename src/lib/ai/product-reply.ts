@@ -3,6 +3,7 @@ import {
   extractProductSearchQuery,
   getPrimaryProductImageUrl,
   productSearchTokens,
+  skuMatchKey,
 } from "@/lib/products/products-service";
 import { executeSalesTool, type AgentContext } from "./sales-tools";
 import { parseCheckoutDetails } from "./checkout-parse";
@@ -442,21 +443,33 @@ function formatProductNotFoundReply(query: string): string {
   ].join("\n");
 }
 
+function productSkuMatches(product: SearchProduct, skuHint: string): boolean {
+  const key = skuMatchKey(skuHint);
+  if (!key) return false;
+  if (product.sku && skuMatchKey(product.sku) === key) return true;
+  return (product.variants ?? []).some(
+    (v) => v.sku && skuMatchKey(v.sku) === key
+  );
+}
+
 /** Drop fuzzy catalog noise when nothing actually matches the customer's words. */
 function productMatchesQuery(product: SearchProduct, query: string): boolean {
+  const skuHint = extractSkuFromText(query);
+  if (skuHint && productSkuMatches(product, skuHint)) return true;
+
   const tokens = productSearchTokens(query);
   if (!tokens.length) return true;
 
-  const hay = `${product.title ?? ""} ${product.sku ?? ""} ${product.description ?? ""}`
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s]/gu, " ");
+  const hay = skuMatchKey(
+    `${product.title ?? ""} ${product.sku ?? ""} ${product.description ?? ""}`
+  );
 
   const hits = tokens.filter((token) => {
-    const t = token.toLowerCase().replace(/%/g, "");
+    const t = skuMatchKey(token);
     return t.length >= 2 && hay.includes(t);
   });
 
-  if (tokens.some((t) => t.length >= 4 && hay.includes(t.toLowerCase()))) {
+  if (tokens.some((t) => t.length >= 4 && hay.includes(skuMatchKey(t)))) {
     return true;
   }
 
@@ -467,6 +480,11 @@ function filterRelevantProducts(
   products: SearchProduct[],
   query: string
 ): SearchProduct[] {
+  const skuHint = extractSkuFromText(query);
+  if (skuHint) {
+    const exact = products.filter((p) => productSkuMatches(p, skuHint));
+    if (exact.length) return exact;
+  }
   return products.filter((p) => productMatchesQuery(p, query));
 }
 

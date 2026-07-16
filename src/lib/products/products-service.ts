@@ -26,6 +26,11 @@ function normalizeSku(sku: string): string {
     .slice(0, 48);
 }
 
+/** Compare SKU / product text ignoring case, hyphens, and punctuation. */
+export function skuMatchKey(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
 /** Best public HTTPS image URL for WhatsApp / catalog display. */
 export function getPrimaryProductImageUrl(product: {
   image_url?: string | null;
@@ -341,6 +346,7 @@ export async function getStoreProductBySku(
       .from("store_products")
       .select("*")
       .eq("store_id", storeId)
+      .eq("status", "active")
       .ilike("sku", candidate)
       .maybeSingle();
 
@@ -348,12 +354,28 @@ export async function getStoreProductBySku(
       console.error("[getStoreProductBySku]", error.message);
       continue;
     }
-    if (!data) continue;
+    if (data) {
+      const [product] = await attachRelations(storeId, [
+        normalizeProductRow(data as Record<string, unknown>),
+      ]);
+      if (product) return product;
+    }
 
-    const [product] = await attachRelations(storeId, [
-      normalizeProductRow(data as Record<string, unknown>),
-    ]);
-    if (product) return product;
+    const { data: variantRow } = await supabase
+      .from("store_product_variants")
+      .select("product_id")
+      .eq("store_id", storeId)
+      .ilike("sku", candidate)
+      .limit(1)
+      .maybeSingle();
+
+    if (variantRow?.product_id) {
+      const product = await getStoreProduct(
+        storeId,
+        variantRow.product_id as string
+      );
+      if (product?.status === "active") return product;
+    }
   }
 
   return null;
@@ -871,8 +893,13 @@ export async function searchPortalProducts(
   const phrase = escapeIlike(skuHint || query);
   const tokens = productSearchTokens(skuHint || query);
 
-  // Exact SKU path first
+  // Exact SKU path first — product row or variant row
   if (skuHint) {
+    const bySku = await getStoreProductBySku(storeId, skuHint);
+    if (bySku) {
+      return [mapStoreProductToSearchHit(bySku)];
+    }
+
     const supabase = createAdminClient();
     const { data } = await supabase
       .from("store_products")
