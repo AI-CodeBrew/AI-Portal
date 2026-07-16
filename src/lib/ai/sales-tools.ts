@@ -227,9 +227,55 @@ export const OPENAI_SALES_TOOLS = [
   },
 ];
 
-/** Gemini functionDeclarations format (same schema as OpenAI parameters). */
+/** Gemini functionDeclarations — sanitize JSON schema for the Google API. */
 export function geminiFunctionDeclarations() {
-  return OPENAI_SALES_TOOLS.map((tool) => ({ ...tool.function }));
+  return OPENAI_SALES_TOOLS.map((tool) => ({
+    name: tool.function.name,
+    description: tool.function.description,
+    parameters: sanitizeGeminiSchema(tool.function.parameters),
+  }));
+}
+
+function sanitizeGeminiSchema(schema: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {
+    type: "OBJECT",
+    properties: {},
+  };
+
+  const props = schema.properties as Record<string, Record<string, unknown>> | undefined;
+  if (props) {
+    const cleaned: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(props)) {
+      cleaned[key] = sanitizeGeminiProperty(val);
+    }
+    out.properties = cleaned;
+  }
+
+  if (Array.isArray(schema.required) && schema.required.length) {
+    out.required = schema.required;
+  }
+
+  return out;
+}
+
+function sanitizeGeminiProperty(
+  prop: Record<string, unknown>
+): Record<string, unknown> {
+  const type = String(prop.type ?? "string").toUpperCase();
+  const out: Record<string, unknown> = {
+    type: type === "NUMBER" ? "NUMBER" : type === "INTEGER" ? "INTEGER" : type === "BOOLEAN" ? "BOOLEAN" : type === "ARRAY" ? "ARRAY" : type === "OBJECT" ? "OBJECT" : "STRING",
+    ...(prop.description ? { description: prop.description } : {}),
+  };
+
+  if (out.type === "ARRAY" && prop.items) {
+    out.items = sanitizeGeminiProperty(prop.items as Record<string, unknown>);
+  }
+
+  if (out.type === "OBJECT" && prop.properties) {
+    return sanitizeGeminiSchema(prop);
+  }
+
+  return out;
 }
 
 async function findStoreOrderByNumber(

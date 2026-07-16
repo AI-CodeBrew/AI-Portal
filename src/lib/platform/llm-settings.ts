@@ -3,7 +3,14 @@ import { decrypt, encrypt } from "@/lib/crypto";
 
 export type AiLlmProvider = "groq" | "gemini";
 
-export const DEFAULT_GEMINI_MODEL = "gemini-3-flash";
+export const DEFAULT_GEMINI_MODEL = "gemini-3-flash-preview";
+
+/** Map friendly admin names to valid Gemini API model ids. */
+export function normalizeGeminiModel(model: string | null | undefined): string {
+  const m = model?.trim() || DEFAULT_GEMINI_MODEL;
+  if (m === "gemini-3-flash") return "gemini-3-flash-preview";
+  return m;
+}
 
 export type PlatformLlmAdminView = {
   provider: AiLlmProvider;
@@ -32,7 +39,11 @@ function safeDecrypt(value: string | null): string | null {
   if (!value) return null;
   try {
     return decrypt(value);
-  } catch {
+  } catch (err) {
+    console.error(
+      "[llm-settings] Failed to decrypt Gemini API key — check ENCRYPTION_KEY matches the environment where the key was saved:",
+      err instanceof Error ? err.message : err
+    );
     return null;
   }
 }
@@ -61,8 +72,7 @@ export async function getActiveLlmConfig(): Promise<ActiveLlmConfig> {
   const provider = isProvider(data?.ai_llm_provider)
     ? data.ai_llm_provider
     : "groq";
-  const geminiModel =
-    (data?.gemini_model as string | null)?.trim() || DEFAULT_GEMINI_MODEL;
+  const geminiModel = normalizeGeminiModel(data?.gemini_model as string | null);
 
   let geminiApiKey: string | null = null;
   if (data?.gemini_api_key) {
@@ -95,8 +105,7 @@ export async function getPlatformLlmAdminView(): Promise<PlatformLlmAdminView> {
   const provider = isProvider(data?.ai_llm_provider)
     ? data.ai_llm_provider
     : "groq";
-  const geminiModel =
-    (data?.gemini_model as string | null)?.trim() || DEFAULT_GEMINI_MODEL;
+  const geminiModel = normalizeGeminiModel(data?.gemini_model as string | null);
   const encryptedKey = (data?.gemini_api_key as string | null) ?? null;
   const plainKey =
     safeDecrypt(encryptedKey) ?? resolveGeminiKeyFromEnv();
@@ -156,7 +165,7 @@ export async function updatePlatformLlmSettings(input: {
 
   if (input.geminiModel !== undefined) {
     payload.gemini_model =
-      input.geminiModel.trim() || DEFAULT_GEMINI_MODEL;
+      normalizeGeminiModel(input.geminiModel.trim() || DEFAULT_GEMINI_MODEL);
   } else if (!current?.gemini_model) {
     payload.gemini_model = DEFAULT_GEMINI_MODEL;
   }

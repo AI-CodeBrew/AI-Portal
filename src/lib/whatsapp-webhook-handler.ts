@@ -33,6 +33,7 @@ import {
   normalizePhone,
 } from "@/lib/whatsapp";
 import { getPlatformMetaCredentials } from "@/lib/platform/meta-settings";
+import { recordInboundWhatsappMessage } from "@/lib/whatsapp-inbound-message";
 import type { Store } from "@/lib/types";
 
 function verifyWebhookSignature(
@@ -263,45 +264,23 @@ export async function handleWhatsAppWebhookMessage(
 
           if (!conversation) continue;
 
-          // Meta may retry the same webhook — skip duplicate wamid
-          if (msg.id) {
-            const { data: duplicate } = await supabase
-              .from("whatsapp_messages")
-              .select("id")
-              .eq("meta_message_id", msg.id)
-              .maybeSingle();
-            if (duplicate) {
-              console.log(
-                `[whatsapp-webhook] duplicate wamid=${msg.id}, skipping`
-              );
-              continue;
-            }
-          }
+          const inboundStatus = await recordInboundWhatsappMessage(supabase, {
+            conversationId: conversation.id,
+            content: inboundText,
+            metaMessageId: msg.id,
+          });
 
-          const { error: inboundInsertError } = await supabase
-            .from("whatsapp_messages")
-            .insert({
-              conversation_id: conversation.id,
-              direction: "in",
-              content: inboundText,
-              ...(msg.id ? { meta_message_id: msg.id } : {}),
-            });
-
-          if (inboundInsertError) {
-            if (
-              inboundInsertError.code === "23505" &&
-              msg.id
-            ) {
-              console.log(
-                `[whatsapp-webhook] duplicate wamid=${msg.id} (race), skipping`
-              );
-              continue;
-            }
-            console.error(
-              "[whatsapp-webhook] inbound insert failed:",
-              inboundInsertError
+          if (inboundStatus === "duplicate") {
+            console.log(
+              `[whatsapp-webhook] duplicate wamid=${msg.id ?? "unknown"}, skipping`
             );
             continue;
+          }
+
+          if (inboundStatus === "failed") {
+            console.error(
+              `[whatsapp-webhook] could not persist inbound message — still attempting reply`
+            );
           }
 
           await supabase

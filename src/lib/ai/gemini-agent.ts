@@ -11,7 +11,10 @@ import {
   extractProductSearchQuery,
 } from "@/lib/products/products-service";
 import { looksLikeCasualGreeting } from "./greeting-reply";
-import { DEFAULT_GEMINI_MODEL } from "@/lib/platform/llm-settings";
+import {
+  DEFAULT_GEMINI_MODEL,
+  normalizeGeminiModel,
+} from "@/lib/platform/llm-settings";
 
 const GEMINI_API_BASE =
   "https://generativelanguage.googleapis.com/v1beta/models";
@@ -81,6 +84,28 @@ function toolResultObject(result: unknown): Record<string, unknown> {
   return { result: result ?? null };
 }
 
+function mergeGeminiContents(contents: GeminiContent[]): GeminiContent[] {
+  if (!contents.length) return contents;
+  const merged: GeminiContent[] = [];
+  for (const item of contents) {
+    const text = item.parts
+      .filter((p): p is { text: string } => "text" in p)
+      .map((p) => p.text)
+      .join("\n");
+    const last = merged[merged.length - 1];
+    if (last && last.role === item.role && text) {
+      const lastText = last.parts
+        .filter((p): p is { text: string } => "text" in p)
+        .map((p) => p.text)
+        .join("\n");
+      last.parts = [{ text: `${lastText}\n${text}`.trim() }];
+      continue;
+    }
+    merged.push(item);
+  }
+  return merged;
+}
+
 async function geminiGenerate(params: {
   apiKey: string;
   model: string;
@@ -112,16 +137,24 @@ async function geminiGenerate(params: {
   }
 
   const res = await fetch(
-    `${GEMINI_API_BASE}/${encodeURIComponent(params.model)}:generateContent?key=${encodeURIComponent(params.apiKey)}`,
+    `${GEMINI_API_BASE}/${encodeURIComponent(params.model)}:generateContent`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": params.apiKey,
+      },
       body: JSON.stringify(body),
     }
   );
 
   if (!res.ok) {
-    throw new Error(`Gemini API error: ${await res.text()}`);
+    const errText = await res.text();
+    console.error(
+      `[gemini-agent] API error model=${params.model} status=${res.status}:`,
+      errText.slice(0, 500)
+    );
+    throw new Error(`Gemini API error (${res.status}): ${errText.slice(0, 300)}`);
   }
 
   return res.json() as Promise<GeminiResponse>;
@@ -137,7 +170,7 @@ export async function runSalesAgentWithGemini(
   const historyLimit =
     ctx.aiConfig?.effectiveChatHistoryLimit ?? CHAT_HISTORY_LIMIT;
   const trimmedHistory = history.slice(-historyLimit);
-  const model = options.model?.trim() || DEFAULT_GEMINI_MODEL;
+  const model = normalizeGeminiModel(options.model);
 
   const skuHint = extractSkuFromText(latestUser);
   const nameHint = extractProductSearchQuery(latestUser);
@@ -152,7 +185,7 @@ export async function runSalesAgentWithGemini(
     history: trimmedHistory,
   });
 
-  const contents = toGeminiContents(trimmedHistory);
+  const contents = mergeGeminiContents(toGeminiContents(trimmedHistory));
   const maxIterations = 8;
   const forceSearch =
     looksLikeProductQuery(latestUser) && !looksLikeOrderQuery(latestUser);

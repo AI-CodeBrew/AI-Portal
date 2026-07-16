@@ -124,13 +124,21 @@ export async function runSalesAgent(
 
   if (llm.provider === "gemini") {
     if (!llm.geminiApiKey) {
-      console.error("[run-sales-agent] Gemini selected but no API key configured");
-      return "Thanks for your message! Our AI sales agent is being configured. A team member will respond shortly.";
+      console.error(
+        "[run-sales-agent] Gemini selected but API key unavailable (decrypt failed or not saved on this server)"
+      );
+    } else {
+      try {
+        return await runSalesAgentWithGemini(enrichedCtx, history, {
+          apiKey: llm.geminiApiKey,
+          model: llm.geminiModel,
+        });
+      } catch (err) {
+        console.error("[run-sales-agent] Gemini agent error:", err);
+        const greeting = tryDirectGreetingReply(enrichedCtx, latestUser);
+        if (greeting) return greeting;
+      }
     }
-    return runSalesAgentWithGemini(enrichedCtx, history, {
-      apiKey: llm.geminiApiKey,
-      model: llm.geminiModel,
-    });
   }
 
   if (llm.provider === "groq" && process.env.GROQ_API_KEY) {

@@ -169,7 +169,9 @@ export function AdminLlmProviderPanel() {
                 }
               />
               <p className="mt-1 text-xs text-slate-500">
-                Stored encrypted in platform settings. Never commit keys to git.
+                Use <code className="rounded bg-slate-100 px-1">gemini-3-flash-preview</code>{" "}
+                (admin accepts <code className="rounded bg-slate-100 px-1">gemini-3-flash</code> too).
+                Stored encrypted — never commit keys to git.
               </p>
             </label>
           </>
