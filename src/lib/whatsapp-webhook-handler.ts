@@ -33,7 +33,7 @@ import {
   normalizePhone,
 } from "@/lib/whatsapp";
 import { getPlatformMetaCredentials } from "@/lib/platform/meta-settings";
-import { recordInboundWhatsappMessage } from "@/lib/whatsapp-inbound-message";
+import { recordInboundWhatsappMessage, claimWhatsappWebhookDelivery } from "@/lib/whatsapp-inbound-message";
 import type { Store } from "@/lib/types";
 
 function verifyWebhookSignature(
@@ -236,6 +236,14 @@ export async function handleWhatsAppWebhookMessage(
         const inboundText = msg.text.body;
 
         try {
+          const claimed = await claimWhatsappWebhookDelivery(supabase, msg.id);
+          if (!claimed) {
+            console.log(
+              `[whatsapp-webhook] duplicate webhook wamid=${msg.id}, skipping`
+            );
+            continue;
+          }
+
           let { data: conversation } = await supabase
             .from("whatsapp_conversations")
             .select("*")

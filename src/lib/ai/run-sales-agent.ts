@@ -13,8 +13,12 @@ import {
 } from "./sales-tools";
 import { tryDirectProductReply, tryDirectProductImageReply } from "./product-reply";
 import { tryDirectCheckoutReply } from "./checkout-reply";
-import { tryDirectSalesRecoveryReply } from "./sales-recovery";
-import { tryDirectGreetingReply } from "./greeting-reply";
+import {
+  tryDirectSalesRecoveryReply,
+  looksLikeOrderDecline,
+  productOfferedInHistory,
+} from "./sales-recovery";
+import { tryDirectGreetingReply, buildCasualGreetingReply } from "./greeting-reply";
 
 export type { AgentContext } from "./sales-tools";
 
@@ -120,6 +124,17 @@ export async function runSalesAgent(
     console.error("[run-sales-agent] product prefetch failed:", err);
   }
 
+  // Objection after a product pitch — recovery handler only (no LLM double-reply)
+  if (
+    productOfferedInHistory(history) &&
+    looksLikeOrderDecline(latestUser)
+  ) {
+    console.log(
+      "[run-sales-agent] objection after pitch — skipping LLM (recovery handles this path)"
+    );
+    return "Got it 👍 No pressure from my side — message anytime if you change your mind.";
+  }
+
   const llm = await getActiveLlmConfig();
 
   if (llm.provider === "gemini") {
@@ -149,5 +164,5 @@ export async function runSalesAgent(
     return runSalesAgentWithAnthropic(enrichedCtx, history);
   }
 
-  return "Thanks for your message! Our AI sales agent is being configured. A team member will respond shortly.";
+  return buildCasualGreetingReply(enrichedCtx);
 }

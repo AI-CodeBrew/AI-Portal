@@ -239,6 +239,7 @@ When you change AI behavior, update **this doc** and the relevant file:
 
 | Date | Change |
 |------|--------|
+| 2026-07-16 | Webhook atomic dedup (`whatsapp_webhook_dedup`); no LLM on price objections (recovery only); discount shows real price; typo declines like "expsnive". |
 | 2026-07-16 | Gemini fixes: model alias `gemini-3-flash` → `gemini-3-flash-preview`; webhook no longer drops replies if dedup migration missing; Gemini errors fall back to greeting. |
 | 2026-07-16 | Recovery close message uses real product name from pitch (`findActiveProductContext`), not greeting/fallback lines. |
 | 2026-07-16 | Admin LLM switch: Groq (env) vs Gemini (`gemini-3-flash` default) in Admin → AI Defaults → LLM Provider. |

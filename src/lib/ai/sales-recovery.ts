@@ -20,7 +20,7 @@ export {
 } from "./message-markers";
 
 const DECLINE_PATTERN =
-  /\b(don'?t\s+want|do\s+not\s+want|not\s+(interested|now|today|ordering|buying)|no\s+thanks|no\s+thank\s+you|nah+|nope|not\s+for\s+me|maybe\s+later|later|skip|cancel|i'?ll\s+pass|no\s+order|won'?t\s+(order|buy)|expensive|too\s+(much|pricey|costly)|can'?t\s+afford)\b/i;
+  /\b(don'?t\s+want|dont\s+want|do\s+not\s+want|not\s+(interested|now|today|ordering|buying|want)|no\s+thanks|no\s+thank\s+you|nah+|nope|not\s+for\s+me|maybe\s+later|later|skip|cancel|i'?ll\s+pass|no\s+order|won'?t\s+(order|buy)|wnt\s+to\s+order|expens\w*|xpens\w*|too\s+(much|pricey|costly)|can'?t\s+afford|\bbudget\b|over\s+budget|out\s+of\s+(my\s+)?budget)\b/i;
 
 const HARD_STOP_PATTERN =
   /\b(stop\s+(messaging|texting|contacting)|unsubscribe|leave\s+me\s+alone|never\s+(message|contact)|block|spam)\b/i;
@@ -29,7 +29,15 @@ const ACCEPT_OFFER_PATTERN =
   /\b(yes|yeah|yep|ok|okay|sure|deal|fine|alright|i('ll| will)\s+take|interested|accept|go\s+ahead|order\s+(it|now|this)|book\s+it|let'?s\s+do\s+it)\b/i;
 
 const PRODUCT_OFFERED_PATTERN =
-  /\b(would you like to order|want to order|want it\?|place the order|reply like this|share your full name|share name, phone|in stock|out of stock right now|SKU:|Price:|From:|\[Ref:|Deal 1\/2|Deal 2\/2|𝟮-𝗣𝗔𝗖𝗞|𝗙𝗟𝗔𝗧|FLAT.*OFF|—\s*(?:Rs\.?|PKR|AED|\$|€)\s*[\d,]+)\b/i;
+  /\b(would you like to order|want to order|want it\?|place the order|reply like this|share your full name|share name, phone|in stock|out of stock right now|SKU:|Price:|From:|\[Ref:|\[Objection|Deal 1\/2|Deal 2\/2|𝟮-𝗣𝗔𝗖𝗞|𝗙𝗟𝗔𝗧|FLAT.*OFF|—\s*(?:Rs\.?|PKR|AED|\$|€)\s*[\d,]+)\b/i;
+
+export function productOfferedInHistory(
+  history: Array<{ role: "user" | "assistant"; content: string }>
+): boolean {
+  return history.some(
+    (m) => m.role === "assistant" && PRODUCT_OFFERED_PATTERN.test(m.content)
+  );
+}
 
 function discountMarker(percent: number) {
   return `[Deal 1/2 — ${percent}% off]`;
@@ -436,9 +444,15 @@ function formatRecoveryOfferReply(params: {
       .join("\n");
   }
 
-  const now = personal.match(/\*([^*]+)\*/)?.[1];
+  const now =
+    unitPrice != null && Number.isFinite(unitPrice) && unitPrice > 0
+      ? formatMoney(
+          Math.round(unitPrice * (1 - percent / 100) * 100) / 100,
+          currency
+        )
+      : personal.match(/\*([^*]+)\*/g)?.pop()?.replace(/\*/g, "") ?? null;
   const simpleOffer =
-    now != null
+    now != null && !/^\d+\s*%/i.test(now)
       ? `I can do *${percent}% off* — that's *${now}*.`
       : `I can do *${percent}% off* on *${productLabel}*.`;
 
