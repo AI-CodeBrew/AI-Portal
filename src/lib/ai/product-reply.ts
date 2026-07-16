@@ -61,13 +61,124 @@ function findSkuInConversation(
   latestUserMessage: string,
   history: Array<{ role: "user" | "assistant"; content: string }>
 ): string | null {
+  const active = findActiveProductContext(history, latestUserMessage);
+  if (active?.sku) return active.sku;
   const fromLatest = extractSkuFromText(latestUserMessage);
   if (fromLatest) return fromLatest;
-  for (let i = history.length - 1; i >= 0; i--) {
-    const sku = extractSkuFromText(history[i].content);
-    if (sku) return sku;
+  return null;
+}
+
+export type ActiveProductContext = {
+  title: string | null;
+  sku: string | null;
+  ref: string | null;
+};
+
+function isProductPitchMessage(content: string): boolean {
+  return (
+    /\[Ref:\s*[^\]]+\]/i.test(content) ||
+    /(?:^|\n)[^\n]+(?:—|-)\s*(?:Rs\.?|PKR|AED|\$|€)/im.test(content) ||
+    /\b(in stock|out of stock)\b/i.test(content)
+  );
+}
+
+function refFromContent(content: string): string | null {
+  return content.match(/\[Ref:\s*([0-9a-f-]{36}|\d{5,})\]/i)?.[1] ?? null;
+}
+
+function titleFromPitch(content: string): string | null {
+  const withoutRef = content.replace(/^\s*\[Ref:[^\]]+\]\s*\n?/i, "");
+  const dashLine = withoutRef.match(
+    /(?:^|\n)([^\n]+?)\s*(?:—|-)\s*(?:Rs\.?|PKR|AED|\$|€)/im
+  );
+  if (dashLine?.[1]) {
+    const t = dashLine[1].replace(/\*([^*]+)\*/g, "$1").trim();
+    if (t.length >= 2 && t.length <= 80 && !/^(Want it|Which size)/i.test(t)) {
+      return t;
+    }
   }
   return null;
+}
+
+/** Most recently discussed product in this chat — not older products from earlier in the session. */
+export function findActiveProductContext(
+  history: Array<{ role: "user" | "assistant"; content: string }>,
+  latestUserMessage?: string
+): ActiveProductContext | null {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const msg = history[i];
+    if (msg.role !== "assistant" || !isProductPitchMessage(msg.content)) {
+      continue;
+    }
+
+    let userTitle: string | null = null;
+    for (let j = i - 1; j >= 0 && j >= i - 3; j--) {
+      if (history[j].role !== "user") continue;
+      if (looksLikeProductFollowUp(history[j].content)) continue;
+      userTitle = extractProductSearchQuery(history[j].content);
+      if (userTitle) break;
+    }
+
+    return {
+      title: titleFromPitch(msg.content) || userTitle,
+      sku: extractSkuFromText(msg.content),
+      ref: refFromContent(msg.content),
+    };
+  }
+
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i].role !== "user") continue;
+    if (looksLikeProductFollowUp(history[i].content)) continue;
+    const sku = extractSkuFromText(history[i].content);
+    const title = extractProductSearchQuery(history[i].content);
+    if (sku || title) {
+      return { title, sku, ref: null };
+    }
+  }
+
+  if (latestUserMessage) {
+    const sku = extractSkuFromText(latestUserMessage);
+    const title = extractProductSearchQuery(latestUserMessage);
+    if (sku || title) {
+      return { title, sku, ref: null };
+    }
+  }
+
+  return null;
+}
+
+function pickBestProduct(
+  products: SearchProduct[],
+  active: ActiveProductContext | null
+): SearchProduct {
+  if (!products.length) {
+    throw new Error("pickBestProduct requires at least one product");
+  }
+  if (!active || products.length === 1) return products[0];
+
+  if (active.sku) {
+    const bySku = products.find(
+      (p) => p.sku?.toUpperCase() === active.sku!.toUpperCase()
+    );
+    if (bySku) return bySku;
+  }
+
+  if (active.title) {
+    const needle = active.title.toLowerCase();
+    const exact = products.find((p) => p.title?.toLowerCase() === needle);
+    if (exact) return exact;
+    const partial = products.find((p) =>
+      p.title?.toLowerCase().includes(needle)
+    );
+    if (partial) return partial;
+    const contained = products.find((p) => {
+      const t = p.title?.toLowerCase() ?? "";
+      return t.length > 2 && needle.includes(t);
+    });
+    if (contained) return contained;
+  }
+
+  return products[0];
 }
 
 /** Latest price mentioned by the assistant (incl. recovery offers). */
@@ -114,13 +225,7 @@ function looksLikeProductFollowUp(message: string): boolean {
 function extractRefFromHistory(
   history: Array<{ role: "user" | "assistant"; content: string }>
 ): string | null {
-  for (let i = history.length - 1; i >= 0; i--) {
-    const m =
-      history[i].content.match(/\[Ref:\s*([0-9a-f-]{36}|\d{5,})\]/i)?.[1] ||
-      history[i].content.match(/\bRef:\s*([0-9a-f-]{36}|\d{5,})\b/i)?.[1];
-    if (m) return m;
-  }
-  return null;
+  return findActiveProductContext(history)?.ref ?? null;
 }
 
 function productDiscussedInHistory(
@@ -139,8 +244,10 @@ function productDiscussedInHistory(
 export function formatProductFollowUpReply(
   product: SearchProduct,
   userMessage: string,
-  history: Array<{ role: "user" | "assistant"; content: string }> = []
+  history: Array<{ role: "user" | "assistant"; content: string }> = [],
+  active?: ActiveProductContext | null
 ): string {
+  const ctx = active ?? findActiveProductContext(history, userMessage);
   const askColor = /\b(color|colors|colour|colours)\b/i.test(userMessage);
   const askSize = /\b(size|sizes)\b/i.test(userMessage);
 
@@ -149,12 +256,12 @@ export function formatProductFollowUpReply(
     (v) => v.title && v.title !== "Default"
   );
   const refId =
-    extractRefFromHistory(history) ||
+    ctx?.ref ||
     realVariants[0]?.id ||
     product.variants?.[0]?.id ||
     null;
 
-  const title = product.title || "this product";
+  const title = product.title || ctx?.title || "this product";
   const prefix = refId ? `[Ref: ${refId}]\n` : "";
 
   const colorOption = options.find((o) =>
@@ -224,23 +331,7 @@ export function formatProductFollowUpReply(
 function findProductTitleInHistory(
   history: Array<{ role: "user" | "assistant"; content: string }>
 ): string | null {
-  for (const msg of [...history].reverse()) {
-    if (msg.role !== "assistant") continue;
-    const line = msg.content
-      .split("\n")
-      .map((l) => l.trim())
-      .find(
-        (l) =>
-          l &&
-          !/^\[/.test(l) &&
-          !/^(Want it|Which size|Options:|In stock|Out of stock)/i.test(l) &&
-          l.length <= 80
-      );
-    if (line) {
-      return line.replace(/\*([^*]+)\*/g, "$1").split("—")[0]?.trim() || null;
-    }
-  }
-  return null;
+  return findActiveProductContext(history)?.title ?? null;
 }
 
 /** Format catalog hits into a short WhatsApp product answer. */
@@ -323,9 +414,20 @@ export function formatProductsReply(products: SearchProduct[]): string {
 
   const prefix = imageMarkers.length ? `${imageMarkers.join("\n")}\n` : "";
 
-  const closeLine = hasVariants
-    ? "Which size/color do you need?"
-    : "Want it? Share name, phone & delivery address.";
+  const anyOutOfStock = products.some((p) => {
+    const rv = (p.variants ?? []).filter(
+      (v) => v.title && v.title !== "Default"
+    );
+    return (
+      rv.length > 0 && rv.every((v) => v.in_stock === false)
+    );
+  });
+
+  const closeLine = anyOutOfStock
+    ? "It's out of stock right now — want a similar item?"
+    : hasVariants
+      ? "Which size/color do you need?"
+      : "Want it? Share name, phone & delivery address.";
 
   return `${prefix}${blocks.join("\n\n")}${multi}${multi ? "" : `\n\n${closeLine}`}`;
 }
@@ -371,14 +473,13 @@ export async function tryDirectProductReply(
     return null;
   }
 
-  const sku =
-    extractSkuFromText(latestUserMessage) ||
-    (history.length ? findSkuInConversation(latestUserMessage, history) : null);
-  const title = history.length ? findProductTitleInHistory(history) : null;
+  const active = findActiveProductContext(history, latestUserMessage);
+  const sku = extractSkuFromText(latestUserMessage) || active?.sku || null;
+  const title = active?.title ?? null;
 
   let query = sku || extractProductSearchQuery(latestUserMessage);
   if (!query && followUp) {
-    query = sku || title;
+    query = title || sku;
   }
   if (!query) return null;
 
@@ -410,14 +511,21 @@ export async function tryDirectProductReply(
     return null;
   }
 
+  const product = pickBestProduct(products, active);
+
   if (followUp) {
     return {
-      reply: formatProductFollowUpReply(products[0], latestUserMessage, history),
-      products,
+      reply: formatProductFollowUpReply(
+        product,
+        latestUserMessage,
+        history,
+        active
+      ),
+      products: [product],
     };
   }
 
-  return { reply: formatProductsReply(products), products };
+  return { reply: formatProductsReply([product]), products: [product] };
 }
 
 /** Re-send product photo from catalog when customer asks for images. */
@@ -428,9 +536,9 @@ export async function tryDirectProductImageReply(
 ): Promise<string | null> {
   if (!looksLikeImageRequest(latestUserMessage)) return null;
 
-  const sku = findSkuInConversation(latestUserMessage, history);
-  const title = findProductTitleInHistory(history);
-  const query = sku || title;
+  const active = findActiveProductContext(history, latestUserMessage);
+  const query =
+    extractSkuFromText(latestUserMessage) || active?.title || active?.sku;
   if (!query) return null;
 
   const { result } = await executeSalesTool(
@@ -446,10 +554,10 @@ export async function tryDirectProductImageReply(
 
   if (!products.length) return null;
 
-  const product = products[0];
+  const product = pickBestProduct(products, active);
   const imageUrl = getPrimaryProductImageUrl(product);
   const quoted = extractLatestQuotedPrice(history);
-  const label = product.title || title || "this one";
+  const label = product.title || active?.title || "this one";
 
   if (!imageUrl) {
     return quoted

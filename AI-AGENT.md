@@ -123,6 +123,7 @@ Portal orders use portal SKU / UUID variant id. Shopify orders use numeric `vari
 - Triggers on SKU (`AA-…`), product keywords, or **follow-ups** (“different colors?”, “what sizes?”) when a product was already discussed in chat
 - **SKU always triggers lookup**, even if message also says “want to order”
 - Follow-ups re-search by SKU/title from history and answer via `formatProductFollowUpReply()` (lists options or says single variant only)
+- **Active product context** — follow-ups/images use the **most recent** product pitch in chat (`findActiveProductContext`), not older SKUs/titles from earlier in the session
 - Skips only when `parseCheckoutDetails()` finds a full contact block
 - Calls `search_products` tool internally, formats via `formatProductsReply()` or follow-up formatter
 
@@ -235,5 +236,6 @@ When you change AI behavior, update **this doc** and the relevant file:
 
 | Date | Change |
 |------|--------|
+| 2026-07-16 | Active product context: follow-ups bind to the latest product pitch, not stale SKUs from earlier chats (`findActiveProductContext`). |
 | 2026-07-16 | Follow-up variant/color/size questions use product from chat history (`formatProductFollowUpReply`); answers when only one option exists. |
 | 2026-07-16 | Initial doc. Hybrid pipeline, stage-based prompt, human persona, SKU-priority lookup, product image handler, CDN URL extraction, WebP conversion for portal images. |
