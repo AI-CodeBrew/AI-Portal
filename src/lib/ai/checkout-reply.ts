@@ -7,12 +7,15 @@ import {
   findProductRefFromHistory,
   looksLikeCheckoutMessage,
   parseCheckoutDetails,
+  validateCheckoutMessage,
+  type CheckoutValidationIssue,
 } from "./checkout-parse";
 import { orderDetailsTemplate } from "./order-details-template";
 
 export {
   looksLikeCheckoutMessage,
   parseCheckoutDetails,
+  validateCheckoutMessage,
 } from "./checkout-parse";
 
 function formatOrderSuccess(params: {
@@ -25,6 +28,11 @@ function formatOrderSuccess(params: {
   quantity: number;
   discountPercent?: number;
 }): string {
+  const thanksLine =
+    params.customer_name && params.customer_name !== "Customer"
+      ? `Thanks, ${params.customer_name}!`
+      : "Thank you!";
+
   return [
     `✅ Order *${params.order_number}* confirmed`,
     params.quantity > 1 ? `Qty: ${params.quantity}` : null,
@@ -33,14 +41,54 @@ function formatOrderSuccess(params: {
     params.whatsapp_sent
       ? `Confirmation sent to ${params.phone}`
       : null,
-    `Thanks, ${params.customer_name}!`,
+    thanksLine,
   ]
     .filter(Boolean)
     .join("\n");
 }
 
+function formatCheckoutMissingReply(
+  issues: CheckoutValidationIssue[],
+  defaultQty?: number
+): string {
+  const lines: string[] = ["Almost there — to confirm your order I need:"];
+
+  if (
+    issues.includes("missing_phone") ||
+    issues.includes("incomplete_phone") ||
+    issues.includes("invalid_phone")
+  ) {
+    if (issues.includes("incomplete_phone")) {
+      lines.push(
+        "• *Phone* — the number looks incomplete. Send the full number (e.g. 03XXXXXXXXX or 923XXXXXXXXX)."
+      );
+    } else if (issues.includes("invalid_phone")) {
+      lines.push(
+        "• *Phone* — that doesn't look like a valid number. Send digits only, e.g. 03XXXXXXXXX or 923XXXXXXXXX."
+      );
+    } else {
+      lines.push(
+        "• *Phone* (required) — send your WhatsApp/mobile number for order confirmation."
+      );
+    }
+  }
+
+  if (issues.includes("missing_address")) {
+    lines.push(
+      "• *Delivery address* (required) — house/street, area, and city."
+    );
+  }
+
+  lines.push("\nName is optional.");
+  lines.push(
+    `\nSend like this:\n\n${orderDetailsTemplate({ defaultQty })}`
+  );
+
+  return lines.join("\n");
+}
+
 /**
- * When the customer shares name/phone/address to place an order, create + confirm
+ * When the customer shares phone/address to place an order, create + confirm
  * on the portal (with recovery discount/qty when applicable).
  */
 export async function tryDirectCheckoutReply(
@@ -63,23 +111,29 @@ export async function tryDirectCheckoutReply(
   const shouldTry =
     looksLikeCheckoutMessage(latestUserMessage, history) ||
     (pendingOffer != null &&
-      parseCheckoutDetails(latestUserMessage) != null);
+      validateCheckoutMessage(latestUserMessage, ctx.customerPhone).ok);
 
   if (!shouldTry) return null;
 
-  const details = parseCheckoutDetails(latestUserMessage);
-  if (!details) {
-    // Only nudge if they clearly tried to check out / accept an offer
+  const validation = validateCheckoutMessage(
+    latestUserMessage,
+    ctx.customerPhone
+  );
+
+  if (!validation.ok) {
     if (
       looksLikeCheckoutMessage(latestUserMessage, history) ||
       pendingOffer
     ) {
-      return `I can place that order — please send your details like this:\n\n${orderDetailsTemplate(
-        { defaultQty: pendingOffer?.defaultQty }
-      )}`;
+      return formatCheckoutMissingReply(
+        validation.issues,
+        pendingOffer?.defaultQty
+      );
     }
     return null;
   }
+
+  const details = validation.details;
 
   const productRef =
     findProductRefFromHistory([
@@ -161,5 +215,13 @@ export async function tryDirectCheckoutReply(
       : "Could not create the order";
 
   console.error("[tryDirectCheckoutReply]", err);
-  return `I couldn't complete the order yet (${err}). Please confirm the product SKU/name and your address, or wait for a team member.`;
+
+  if (/phone|number/i.test(err)) {
+    return formatCheckoutMissingReply(["invalid_phone"], pendingOffer?.defaultQty);
+  }
+  if (/address/i.test(err)) {
+    return formatCheckoutMissingReply(["missing_address"], pendingOffer?.defaultQty);
+  }
+
+  return `I couldn't complete the order yet (${err}). Please check your phone number and delivery address, or wait for a team member.`;
 }

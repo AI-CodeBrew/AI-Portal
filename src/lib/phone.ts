@@ -93,6 +93,30 @@ export function toWhatsAppRecipient(
   return digits;
 }
 
+export type OrderPhoneValidation =
+  | { ok: true; phone: string }
+  | { ok: false; issue: "missing" | "incomplete" | "invalid" };
+
+/** Validate a customer phone for order confirmation (WhatsApp-ready international digits). */
+export function validateOrderPhone(
+  raw: string,
+  hintPhone?: string | null
+): OrderPhoneValidation {
+  const trimmed = raw.trim();
+  const digits = normalizePhone(trimmed);
+  if (!digits) return { ok: false, issue: "missing" };
+  if (digits.length < 10) return { ok: false, issue: "incomplete" };
+  if (digits.length > 15) return { ok: false, issue: "invalid" };
+
+  const international = toWhatsAppRecipient(trimmed, hintPhone);
+  if (international.length < 10) return { ok: false, issue: "invalid" };
+
+  // Reject obvious junk (repeated single digit, etc.)
+  if (/^(\d)\1{9,}$/.test(digits)) return { ok: false, issue: "invalid" };
+
+  return { ok: true, phone: international };
+}
+
 /** Unique WhatsApp delivery targets, conversation number first when provided. */
 export function buildWhatsAppRecipientTargets(
   phones: Array<string | null | undefined>,

@@ -6,9 +6,8 @@ export function orderDetailsTemplate(opts?: {
   const qty = opts?.defaultQty && opts.defaultQty > 1 ? String(opts.defaultQty) : "1";
   const variantLine = opts?.includeVariantHint ? "\nVariant: size/color" : "";
 
-  return `For order mention:
-Name:
-Phone:
-Address:
+  return `Phone: (required — e.g. 03XXXXXXXXX or 923XXXXXXXXX)
+Address: (required — house/street + area/city)
+Name: (optional)
 Qty: ${qty}${variantLine}`;
 }

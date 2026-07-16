@@ -240,12 +240,14 @@ export async function createWhatsAppAiOrder(params: {
       error: "A valid customer phone number is required to place the order.",
     };
   }
-  if (!shipping.customer_name.trim() || !shipping.address1.trim()) {
+  if (!shipping.address1.trim()) {
     return {
       ok: false,
-      error: "customer_name and address1 are required.",
+      error: "Delivery address is required to place the order.",
     };
   }
+
+  const customerName = shipping.customer_name.trim() || "Customer";
 
   const city = shipping.city.trim() || "N/A";
   const supabase = createAdminClient();
@@ -338,7 +340,7 @@ export async function createWhatsAppAiOrder(params: {
       {
         store_id: store.id,
         phone: phoneForOrder,
-        name: shipping.customer_name.trim(),
+        name: customerName,
       },
       { onConflict: "store_id,phone" }
     )
@@ -348,7 +350,7 @@ export async function createWhatsAppAiOrder(params: {
   const custId = cust?.id ?? params.conversationCustomerId ?? null;
 
   const portalShipping = {
-    name: shipping.customer_name.trim(),
+    name: customerName,
     phone: phoneForOrder,
     address1: shipping.address1.trim(),
     address2: shipping.address2?.trim() || undefined,
@@ -387,7 +389,7 @@ export async function createWhatsAppAiOrder(params: {
       store.shopify_access_token!,
       {
         phone: phoneForOrder,
-        name: shipping.customer_name.trim(),
+        name: customerName,
         lineItems: shopifyLines,
         discountPercent: params.discountPercent,
         shippingAddress: {

@@ -1,4 +1,4 @@
-import { normalizePhone } from "@/lib/phone";
+import { normalizePhone, validateOrderPhone } from "@/lib/phone";
 import { extractSkuFromText } from "@/lib/products/products-service";
 
 const CHECKOUT_INTENT =
@@ -8,7 +8,7 @@ const HAS_CONTACT_HINT =
   /\b(name|naam|phone|ph|mobile|whatsapp|address|addr|city|deliver)\b/i;
 
 const ASKED_FOR_DETAILS =
-  /\b(full name|share your|delivery address|reply like this|phone \(for confirmation\)|please share|i'll place the order|i'll confirm your order|discounted price|want to order)\b/i;
+  /\b(full name|share your|delivery address|reply like this|phone \(for confirmation\)|please share|i'll place the order|i'll confirm your order|discounted price|want to order|phone.*required|delivery address.*required)\b/i;
 
 export type CheckoutDetails = {
   customer_name: string;
@@ -17,6 +17,16 @@ export type CheckoutDetails = {
   city: string;
   address2?: string;
 };
+
+export type CheckoutValidationIssue =
+  | "missing_phone"
+  | "incomplete_phone"
+  | "invalid_phone"
+  | "missing_address";
+
+export type CheckoutValidation =
+  | { ok: true; details: CheckoutDetails }
+  | { ok: false; issues: CheckoutValidationIssue[] };
 
 export function assistantAskedForCheckoutDetails(
   history: Array<{ role: "user" | "assistant"; content: string }>
@@ -36,55 +46,50 @@ export function looksLikeCheckoutMessage(
   const t = text.trim();
   if (t.length < 8) return false;
   const digits = t.replace(/\D/g, "");
-  const hasPhone = digits.length >= 10;
+  const hasPhone = digits.length >= 8;
 
-  if (!hasPhone) return false;
+  if (HAS_CONTACT_HINT.test(t) && t.length >= 12) {
+    return true;
+  }
 
   if (CHECKOUT_INTENT.test(t) && (HAS_CONTACT_HINT.test(t) || t.length >= 20)) {
     return true;
   }
 
-  if (HAS_CONTACT_HINT.test(t) && t.length >= 20) {
-    return true;
-  }
-
-  // After we asked for name/phone/address, accept unlabeled contact blocks
   if (
     history &&
     assistantAskedForCheckoutDetails(history) &&
-    t.length >= 15
+    t.length >= 10
   ) {
     return true;
   }
 
-  // Multi-line contact dump: name + phone + address-ish
   const lines = t.split(/\n+/).map((l) => l.trim()).filter(Boolean);
-  if (lines.length >= 2 && hasPhone && t.length >= 18) {
+  if (lines.length >= 2 && hasPhone && t.length >= 15) {
+    return true;
+  }
+
+  if (CHECKOUT_INTENT.test(t) && t.length >= 10) {
     return true;
   }
 
   return false;
 }
 
-export function parseCheckoutDetails(text: string): CheckoutDetails | null {
+function extractPhoneRaw(text: string): string {
   const t = text.replace(/\r/g, "\n").trim();
-  const digitsAll = t.replace(/\D/g, "");
-  if (digitsAll.length < 10) return null;
-
   const phoneMatch =
     t.match(
-      /(?:phone|ph|mobile|whatsapp|number|cell)[:\s\-]*([+\d][\d\s\-()]{8,}\d)/i
+      /(?:phone|ph|mobile|whatsapp|number|cell)[:\s\-]*([+\d][\d\s\-()]{6,}\d)/i
     ) || t.match(/([+]?\d[\d\s\-()]{8,}\d)/);
+  if (phoneMatch?.[1]?.trim()) return phoneMatch[1].trim();
+  const digitsAll = t.replace(/\D/g, "");
+  if (digitsAll.length >= 8) return digitsAll;
+  return "";
+}
 
-  const phoneRaw = phoneMatch?.[1]?.trim() ?? "";
-  const phone = normalizePhone(phoneRaw || digitsAll.slice(-12));
-  if (phone.length < 10) return null;
-
-  const nameMatch = t.match(
-    /(?:name|naam|customer)[:\s\-]*([A-Za-z][A-Za-z\s.'-]{1,60})/i
-  );
-  let customer_name = nameMatch?.[1]?.trim() ?? "";
-
+function extractAddress(text: string, phone: string, customerName: string): string {
+  const t = text.replace(/\r/g, "\n").trim();
   const lines = t
     .split("\n")
     .map((l) => l.trim())
@@ -94,6 +99,63 @@ export function parseCheckoutDetails(text: string): CheckoutDetails | null {
         .replace(/^(yes|yeah|yep|ok|okay|sure|deal)[!.\s,]*/i, "")
         .trim()
     )
+    .filter(Boolean);
+
+  const addressMatch = t.match(
+    /(?:address|addr|delivery(?:\s+address)?|shipping)[:\s\-]*([^\n]+)/i
+  );
+  let address1 = addressMatch?.[1]?.trim() ?? "";
+
+  if (!address1) {
+    const nameRe = customerName
+      ? new RegExp(
+          customerName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+          "i"
+        )
+      : null;
+    const candidates = lines.filter(
+      (l) =>
+        !normalizePhone(l).includes(phone.slice(-10)) &&
+        normalizePhone(l).length < 10 &&
+        !(nameRe?.test(l)) &&
+        !/^(name|phone|ph|sku|order|city|qty|quantity|yes)\b/i.test(l)
+    );
+    address1 =
+      candidates.sort((a, b) => b.length - a.length)[0] ??
+      candidates[0] ??
+      "";
+  }
+
+  if (!address1 || address1.length < 4) {
+    const nameRe = customerName
+      ? new RegExp(
+          customerName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+          "i"
+        )
+      : null;
+    address1 = lines
+      .filter(
+        (l) =>
+          !(nameRe?.test(l)) &&
+          normalizePhone(l).length < 10 &&
+          !/^(yes|ok|okay|name|phone|ph)\b/i.test(l)
+      )
+      .join(", ");
+  }
+
+  return address1.trim();
+}
+
+function extractCustomerName(text: string): string {
+  const t = text.replace(/\r/g, "\n").trim();
+  const nameMatch = t.match(
+    /(?:name|naam|customer)[:\s\-]*([A-Za-z][A-Za-z\s.'-]{1,60})/i
+  );
+  let customer_name = nameMatch?.[1]?.trim() ?? "";
+
+  const lines = t
+    .split("\n")
+    .map((l) => l.trim())
     .filter(Boolean);
 
   if (!customer_name) {
@@ -111,61 +173,88 @@ export function parseCheckoutDetails(text: string): CheckoutDetails | null {
         .trim();
     }
   }
-  if (!customer_name || customer_name.length < 2) return null;
 
-  const addressMatch = t.match(
-    /(?:address|addr|delivery(?:\s+address)?|shipping)[:\s\-]*([^\n]+)/i
-  );
-  let address1 = addressMatch?.[1]?.trim() ?? "";
-  if (!address1) {
-    const nameRe = new RegExp(
-      customer_name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
-      "i"
-    );
-    const candidates = lines.filter(
-      (l) =>
-        !normalizePhone(l).includes(phone.slice(-10)) &&
-        normalizePhone(l).length < 10 &&
-        !nameRe.test(l) &&
-        !/^(name|phone|ph|sku|order|city|qty|quantity|yes)\b/i.test(l)
-    );
-    address1 =
-      candidates.sort((a, b) => b.length - a.length)[0] ??
-      candidates[0] ??
-      "";
-  }
-  if (!address1 || address1.length < 4) {
-    // Last resort: everything except name/phone as address
-    const nameRe = new RegExp(
-      customer_name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
-      "i"
-    );
-    address1 = lines
-      .filter(
-        (l) =>
-          !nameRe.test(l) &&
-          normalizePhone(l).length < 10 &&
-          !/^(yes|ok|okay)\b/i.test(l)
-      )
-      .join(", ");
-  }
-  if (!address1 || address1.length < 4) return null;
+  return customer_name.trim();
+}
 
-  const cityMatch = t.match(
+function extractCity(text: string, address1: string): { city: string; address1: string } {
+  const cityMatch = text.match(
     /(?:city|district)[:\s\-]*([A-Za-z][A-Za-z\s-]{1,40})/i
   );
   let city = cityMatch?.[1]?.trim() ?? "";
+  let addr = address1;
+
   if (!city) {
-    const parts = address1.split(",").map((p) => p.trim()).filter(Boolean);
+    const parts = addr.split(",").map((p) => p.trim()).filter(Boolean);
     if (parts.length >= 2) {
       city = parts[parts.length - 1];
-      address1 = parts.slice(0, -1).join(", ");
+      addr = parts.slice(0, -1).join(", ");
     } else {
       city = "N/A";
     }
   }
 
-  return { customer_name, phone, address1, city };
+  return { city, address1: addr };
+}
+
+export function validateCheckoutMessage(
+  text: string,
+  hintPhone?: string | null
+): CheckoutValidation {
+  const issues: CheckoutValidationIssue[] = [];
+  const phoneRaw = extractPhoneRaw(text);
+
+  let validatedPhone: string | null = null;
+  if (!phoneRaw) {
+    issues.push("missing_phone");
+  } else {
+    const phoneCheck = validateOrderPhone(phoneRaw, hintPhone);
+    if (!phoneCheck.ok) {
+      if (phoneCheck.issue === "incomplete") issues.push("incomplete_phone");
+      else issues.push("invalid_phone");
+    } else {
+      validatedPhone = phoneCheck.phone;
+    }
+  }
+
+  const customer_name = extractCustomerName(text) || "Customer";
+  const address1 = extractAddress(
+    text,
+    validatedPhone ?? normalizePhone(phoneRaw).slice(-12),
+    customer_name
+  );
+
+  if (!address1 || address1.length < 4) {
+    issues.push("missing_address");
+  }
+
+  if (issues.length > 0) {
+    return { ok: false, issues };
+  }
+
+  if (!validatedPhone) {
+    return { ok: false, issues: ["invalid_phone"] };
+  }
+
+  const { city, address1: addr1 } = extractCity(text, address1);
+
+  return {
+    ok: true,
+    details: {
+      customer_name,
+      phone: validatedPhone,
+      address1: addr1,
+      city,
+    },
+  };
+}
+
+export function parseCheckoutDetails(
+  text: string,
+  hintPhone?: string | null
+): CheckoutDetails | null {
+  const result = validateCheckoutMessage(text, hintPhone);
+  return result.ok ? result.details : null;
 }
 
 function extractRefFromContent(content: string): string | null {

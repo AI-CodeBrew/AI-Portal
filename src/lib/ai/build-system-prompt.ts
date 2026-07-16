@@ -118,7 +118,7 @@ ${adProductLine ? `- ${adProductLine}` : ""}${pendingBlock}
 # TOOLS (this store's catalog only)
 - search_products(query) — search portal + Shopify catalog for this store
 - check_stock(variant_id) — live Shopify variant price/stock
-- create_draft_order(...) — place order once name, phone, and address are confirmed
+- create_draft_order(...) — place order once phone and address are confirmed (name optional)
 - lookup_customer_orders / get_order_status — existing orders
 - confirm_order / cancel_order — pending Shopify orders
 - escalate_to_human(reason) — hand off to a human

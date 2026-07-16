@@ -438,7 +438,7 @@ function formatRecoveryOfferReply(params: {
       bundleMarker(percent),
       `If budget's tight, I can do a *2-pack bundle at ${percent}% off* — best value if you need more than one.`,
       personal,
-      `Want it? Share name, phone & full address (qty 2).`,
+      `Want it? Share phone & full address (qty 2). Name optional.`,
     ]
       .filter(Boolean)
       .join("\n");
@@ -460,7 +460,7 @@ function formatRecoveryOfferReply(params: {
     discountMarker(percent),
     `I get it — let me see what I can do for you.`,
     simpleOffer,
-    `Want to go ahead? Share name, phone & delivery address.`,
+    `Want to go ahead? Share phone & delivery address (name optional).`,
   ]
     .filter(Boolean)
     .join("\n");

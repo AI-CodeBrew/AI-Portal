@@ -6,6 +6,7 @@ import {
   getShopifyCatalogProduct,
 } from "@/lib/shopify";
 import { formatMoney } from "@/lib/currency";
+import { validateOrderPhone } from "@/lib/phone";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { confirmPortalOrder } from "@/lib/orders/confirm";
 import { createWhatsAppAiOrder } from "@/lib/orders/whatsapp-create";
@@ -24,7 +25,7 @@ export const SALES_TOOL_RULES = `Operational rules for tools:
 - search_products searches BOTH portal catalog and Shopify for THIS store only.
 - If the customer gives a SKU (e.g. AA-…), pass that exact SKU as query.
 - Prefer portal matches when SKU/ref is known.
-- create_draft_order requires full name, phone, and delivery address before calling.
+- create_draft_order requires phone + full delivery address before calling (name is optional).
 - Portal products: pass sku and/or UUID variant_id from search_products.
 - Shopify products: pass numeric variant_id.
 - lookup_customer_orders / get_order_status for order status — never invent tracking.
@@ -93,7 +94,7 @@ export const OPENAI_SALES_TOOLS = [
     function: {
       name: "create_draft_order",
       description:
-        "Create and confirm an order when the customer is ready to buy (portal catalog OR Shopify). Requires name + phone + full delivery address. For portal products use the product/variant id or sku from search_products (source=portal). For Shopify use numeric variant_id. Optional discount_percent for retention offers.",
+        "Create and confirm an order when the customer is ready to buy (portal catalog OR Shopify). Requires phone + full delivery address (name optional). For portal products use the product/variant id or sku from search_products (source=portal). For Shopify use numeric variant_id. Optional discount_percent for retention offers.",
       parameters: {
         type: "object",
         properties: {
@@ -124,7 +125,10 @@ export const OPENAI_SALES_TOOLS = [
               required: ["quantity"],
             },
           },
-          customer_name: { type: "string" },
+          customer_name: {
+            type: "string",
+            description: "Optional customer name",
+          },
           phone: {
             type: "string",
             description:
@@ -141,7 +145,7 @@ export const OPENAI_SALES_TOOLS = [
             description: "Optional percentage discount (e.g. 15 or 25)",
           },
         },
-        required: ["line_items", "customer_name", "address1", "city", "phone"],
+        required: ["line_items", "address1", "city", "phone"],
       },
     },
   },
@@ -948,15 +952,16 @@ export async function executeSalesTool(
       }
 
       case "create_draft_order": {
-        const customerName = String(input.customer_name ?? "").trim();
+        const customerName =
+          String(input.customer_name ?? "").trim() || "Customer";
         const address1 = String(input.address1 ?? "").trim();
         const city = String(input.city ?? "").trim() || "N/A";
         const phoneForOrder = String(input.phone ?? customerPhone).trim();
-        if (!customerName || !address1) {
+        if (!address1) {
           return {
             result: {
               error:
-                "customer_name and address1 are required before creating an order.",
+                "address1 is required before creating an order.",
             },
           };
         }
@@ -967,6 +972,15 @@ export async function executeSalesTool(
                 "phone is required — use the number the customer shared so we can send confirmation.",
             },
           };
+        }
+
+        const phoneCheck = validateOrderPhone(phoneForOrder, customerPhone);
+        if (!phoneCheck.ok) {
+          const msg =
+            phoneCheck.issue === "incomplete"
+              ? "Phone number is incomplete — ask for the full number (e.g. 03XXXXXXXXX or 923XXXXXXXXX)."
+              : "Phone number is invalid — ask the customer to send a correct mobile number.";
+          return { result: { error: msg } };
         }
 
         const discountPercent =
@@ -998,7 +1012,7 @@ export async function executeSalesTool(
           })),
           shipping: {
             customer_name: customerName,
-            phone: phoneForOrder,
+            phone: phoneCheck.phone,
             address1,
             address2: String(input.address2 ?? "").trim() || undefined,
             city,

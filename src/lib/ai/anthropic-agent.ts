@@ -42,7 +42,7 @@ const ANTHROPIC_TOOLS: Anthropic.Tool[] = [
   {
     name: "create_draft_order",
     description:
-      "Create and confirm an order (portal catalog or Shopify). Requires name + phone + address. For portal products pass sku and/or UUID variant_id/product_id from search_products. For Shopify pass numeric variant_id.",
+      "Create and confirm an order (portal catalog or Shopify). Requires phone + address (name optional). For portal products pass sku and/or UUID variant_id/product_id from search_products. For Shopify pass numeric variant_id.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -60,7 +60,10 @@ const ANTHROPIC_TOOLS: Anthropic.Tool[] = [
             required: ["quantity"],
           },
         },
-        customer_name: { type: "string" },
+        customer_name: {
+          type: "string",
+          description: "Optional customer name",
+        },
         phone: {
           type: "string",
           description: "Phone to receive confirmation (number customer shared)",
@@ -73,7 +76,7 @@ const ANTHROPIC_TOOLS: Anthropic.Tool[] = [
         zip: { type: "string" },
         discount_percent: { type: "number" },
       },
-      required: ["line_items", "customer_name", "address1", "city", "phone"],
+      required: ["line_items", "address1", "city", "phone"],
     },
   },
   {

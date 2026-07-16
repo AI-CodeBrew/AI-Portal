@@ -33,6 +33,7 @@ import {
   sendWhatsAppImage,
   normalizePhone,
 } from "@/lib/whatsapp";
+import { startTypingIndicatorRefresh } from "@/lib/whatsapp/sendTypingIndicator";
 import { getPlatformMetaCredentials } from "@/lib/platform/meta-settings";
 import { recordInboundWhatsappMessage, claimWhatsappWebhookDelivery } from "@/lib/whatsapp-inbound-message";
 import {
@@ -438,131 +439,146 @@ export async function handleWhatsAppWebhookMessage(
             }
           }
 
+          // Typing indicator + read receipt — before LLM / reply generation
+          const waCreds = getStoreWhatsAppCredentials(activeStore);
+          const stopTypingRefresh =
+            waCreds && msg.id
+              ? startTypingIndicatorRefresh({
+                  phoneNumberId: waCreds.phoneNumberId,
+                  messageId: msg.id,
+                  accessToken: waCreds.accessToken,
+                })
+              : null;
+
           let replyText: string;
 
-          if (await isSalesAgentConfigured()) {
-            try {
-              const quota = await tryConsumeAiQuota(activeStore.id);
+          try {
+            if (await isSalesAgentConfigured()) {
+              try {
+                const quota = await tryConsumeAiQuota(activeStore.id);
 
-              if (!quota.allowed) {
-                replyText = quotaLimitMessage(
-                  quota.usage.plan,
-                  quota.usage.used
-                );
-                console.log(
-                  `[whatsapp-webhook] AI quota exceeded store=${activeStore.id} used=${quota.usage.used}/${quota.usage.limit}`
-                );
-              } else {
-                const chatLimits = await getStoreChatContextLimits(
-                  activeStore.id
-                );
-                const chatHistory = await getRecentChatHistory(
-                  conversation.id,
-                  chatLimits.historyLimit,
-                  chatLimits.windowMs
-                );
+                if (!quota.allowed) {
+                  replyText = quotaLimitMessage(
+                    quota.usage.plan,
+                    quota.usage.used
+                  );
+                  console.log(
+                    `[whatsapp-webhook] AI quota exceeded store=${activeStore.id} used=${quota.usage.used}/${quota.usage.limit}`
+                  );
+                } else {
+                  const chatLimits = await getStoreChatContextLimits(
+                    activeStore.id
+                  );
+                  const chatHistory = await getRecentChatHistory(
+                    conversation.id,
+                    chatLimits.historyLimit,
+                    chatLimits.windowMs
+                  );
 
-                replyText = await runSalesAgent(
-                  {
+                  replyText = await runSalesAgent(
+                    {
+                      store: activeStore,
+                      conversationId: conversation.id,
+                      customerPhone,
+                      customerId: conversation.customer_id,
+                      adProductContext,
+                    },
+                    chatHistory
+                  );
+                }
+              } catch (agentErr) {
+                console.error("[whatsapp-webhook] AI agent error:", agentErr);
+                try {
+                  const chatLimits = await getStoreChatContextLimits(
+                    activeStore.id
+                  );
+                  const chatHistory = await getRecentChatHistory(
+                    conversation.id,
+                    chatLimits.historyLimit,
+                    chatLimits.windowMs
+                  );
+                  const agentCtx = {
                     store: activeStore,
                     conversationId: conversation.id,
                     customerPhone,
                     customerId: conversation.customer_id,
                     adProductContext,
-                  },
-                  chatHistory
-                );
-              }
-            } catch (agentErr) {
-              console.error("[whatsapp-webhook] AI agent error:", agentErr);
-              try {
-                const chatLimits = await getStoreChatContextLimits(
-                  activeStore.id
-                );
-                const chatHistory = await getRecentChatHistory(
-                  conversation.id,
-                  chatLimits.historyLimit,
-                  chatLimits.windowMs
-                );
-                const agentCtx = {
-                  store: activeStore,
-                  conversationId: conversation.id,
-                  customerPhone,
-                  customerId: conversation.customer_id,
-                  adProductContext,
-                };
-                const aiSettings = await resolveStoreAiConfig(activeStore.id);
-                const greetingCtx = { ...agentCtx, aiConfig: aiSettings };
-                const imageReply = await tryDirectProductImageReply(
-                  agentCtx,
-                  inboundText,
-                  chatHistory
-                );
-                if (imageReply) {
-                  replyText = imageReply;
-                } else {
-                  const direct = await tryDirectProductReply(
+                  };
+                  const aiSettings = await resolveStoreAiConfig(activeStore.id);
+                  const greetingCtx = { ...agentCtx, aiConfig: aiSettings };
+                  const imageReply = await tryDirectProductImageReply(
                     agentCtx,
                     inboundText,
                     chatHistory
                   );
-                  replyText =
-                    direct?.reply ??
-                    tryDirectOffTopicReply(greetingCtx, inboundText) ??
-                    buildCasualGreetingReply(greetingCtx);
+                  if (imageReply) {
+                    replyText = imageReply;
+                  } else {
+                    const direct = await tryDirectProductReply(
+                      agentCtx,
+                      inboundText,
+                      chatHistory
+                    );
+                    replyText =
+                      direct?.reply ??
+                      tryDirectOffTopicReply(greetingCtx, inboundText) ??
+                      buildCasualGreetingReply(greetingCtx);
+                  }
+                } catch (fallbackErr) {
+                  console.error(
+                    "[whatsapp-webhook] direct product fallback failed:",
+                    fallbackErr
+                  );
+                  const aiSettings = await resolveStoreAiConfig(activeStore.id);
+                  replyText = buildCasualGreetingReply({
+                    store: activeStore,
+                    conversationId: conversation.id,
+                    customerPhone,
+                    customerId: conversation.customer_id,
+                    adProductContext,
+                    aiConfig: aiSettings,
+                  });
                 }
-              } catch (fallbackErr) {
-                console.error(
-                  "[whatsapp-webhook] direct product fallback failed:",
-                  fallbackErr
-                );
-                const aiSettings = await resolveStoreAiConfig(activeStore.id);
-                replyText = buildCasualGreetingReply({
-                  store: activeStore,
-                  conversationId: conversation.id,
-                  customerPhone,
-                  customerId: conversation.customer_id,
-                  adProductContext,
-                  aiConfig: aiSettings,
-                });
               }
-            }
-          } else {
-            console.error(
-              "[whatsapp-webhook] No LLM configured — set Groq or Gemini in Admin → AI Defaults."
-            );
-            const chatLimits = await getStoreChatContextLimits(activeStore.id);
-            const chatHistory = await getRecentChatHistory(
-              conversation.id,
-              chatLimits.historyLimit,
-              chatLimits.windowMs
-            );
-            const agentCtx = {
-              store: activeStore,
-              conversationId: conversation.id,
-              customerPhone,
-              customerId: conversation.customer_id,
-              adProductContext,
-            };
-            const aiSettings = await resolveStoreAiConfig(activeStore.id);
-            const imageReply = await tryDirectProductImageReply(
-              agentCtx,
-              inboundText,
-              chatHistory
-            );
-            if (imageReply) {
-              replyText = imageReply;
             } else {
-              const direct = await tryDirectProductReply(
+              console.error(
+                "[whatsapp-webhook] No LLM configured — set Groq or Gemini in Admin → AI Defaults."
+              );
+              const chatLimits = await getStoreChatContextLimits(activeStore.id);
+              const chatHistory = await getRecentChatHistory(
+                conversation.id,
+                chatLimits.historyLimit,
+                chatLimits.windowMs
+              );
+              const agentCtx = {
+                store: activeStore,
+                conversationId: conversation.id,
+                customerPhone,
+                customerId: conversation.customer_id,
+                adProductContext,
+              };
+              const aiSettings = await resolveStoreAiConfig(activeStore.id);
+              const imageReply = await tryDirectProductImageReply(
                 agentCtx,
                 inboundText,
                 chatHistory
               );
-              replyText =
-                direct?.reply ??
-                tryDirectOffTopicReply({ ...agentCtx, aiConfig: aiSettings }, inboundText) ??
-                buildCasualGreetingReply({ ...agentCtx, aiConfig: aiSettings });
+              if (imageReply) {
+                replyText = imageReply;
+              } else {
+                const direct = await tryDirectProductReply(
+                  agentCtx,
+                  inboundText,
+                  chatHistory
+                );
+                replyText =
+                  direct?.reply ??
+                  tryDirectOffTopicReply({ ...agentCtx, aiConfig: aiSettings }, inboundText) ??
+                  buildCasualGreetingReply({ ...agentCtx, aiConfig: aiSettings });
+              }
             }
+          } finally {
+            stopTypingRefresh?.();
           }
 
           const { text: customerFacingText, imageUrls } =
