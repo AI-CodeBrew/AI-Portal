@@ -1,7 +1,12 @@
 import { runSalesAgentWithGroq } from "./groq-agent";
+import { runSalesAgentWithGemini } from "./gemini-agent";
 import { runSalesAgentWithAnthropic } from "./anthropic-agent";
 import { getShopCurrency } from "@/lib/shopify";
 import { resolveStoreAiConfig } from "./store-ai-settings";
+import {
+  getActiveLlmConfig,
+  isLlmProviderConfigured,
+} from "@/lib/platform/llm-settings";
 import {
   getPendingOrdersHintForPhone,
   type AgentContext,
@@ -9,11 +14,12 @@ import {
 import { tryDirectProductReply, tryDirectProductImageReply } from "./product-reply";
 import { tryDirectCheckoutReply } from "./checkout-reply";
 import { tryDirectSalesRecoveryReply } from "./sales-recovery";
+import { tryDirectGreetingReply } from "./greeting-reply";
 
 export type { AgentContext } from "./sales-tools";
 
-export function isSalesAgentConfigured(): boolean {
-  return Boolean(process.env.GROQ_API_KEY || process.env.ANTHROPIC_API_KEY);
+export async function isSalesAgentConfigured(): Promise<boolean> {
+  return isLlmProviderConfigured();
 }
 
 async function enrichAgentContext(ctx: AgentContext): Promise<AgentContext> {
@@ -87,6 +93,14 @@ export async function runSalesAgent(
     console.error("[run-sales-agent] sales recovery failed:", err);
   }
 
+  // Casual hi / what's up — human greeting, not catalog lookup
+  try {
+    const greeting = tryDirectGreetingReply(enrichedCtx, latestUser);
+    if (greeting) return greeting;
+  } catch (err) {
+    console.error("[run-sales-agent] greeting reply failed:", err);
+  }
+
   // Catalog lookup by SKU or product name (incl. variants) before the LLM
   try {
     const imageReply = await tryDirectProductImageReply(
@@ -106,7 +120,20 @@ export async function runSalesAgent(
     console.error("[run-sales-agent] product prefetch failed:", err);
   }
 
-  if (process.env.GROQ_API_KEY) {
+  const llm = await getActiveLlmConfig();
+
+  if (llm.provider === "gemini") {
+    if (!llm.geminiApiKey) {
+      console.error("[run-sales-agent] Gemini selected but no API key configured");
+      return "Thanks for your message! Our AI sales agent is being configured. A team member will respond shortly.";
+    }
+    return runSalesAgentWithGemini(enrichedCtx, history, {
+      apiKey: llm.geminiApiKey,
+      model: llm.geminiModel,
+    });
+  }
+
+  if (llm.provider === "groq" && process.env.GROQ_API_KEY) {
     return runSalesAgentWithGroq(enrichedCtx, history);
   }
 

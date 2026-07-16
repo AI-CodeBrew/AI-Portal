@@ -5,6 +5,7 @@ import {
 } from "@/lib/products/products-service";
 import { executeSalesTool, type AgentContext } from "./sales-tools";
 import { parseCheckoutDetails } from "./checkout-parse";
+import { looksLikeCasualGreeting } from "./greeting-reply";
 
 export type SearchProduct = {
   title?: string;
@@ -435,6 +436,7 @@ export function formatProductsReply(products: SearchProduct[]): string {
 function shouldTryDirectProductLookup(message: string): boolean {
   const t = message.trim();
   if (t.length < 2) return false;
+  if (looksLikeCasualGreeting(t)) return false;
   if (GREETING_ONLY.test(t)) return false;
   // Full contact block → checkout handler, not catalog lookup
   if (parseCheckoutDetails(t)) return false;

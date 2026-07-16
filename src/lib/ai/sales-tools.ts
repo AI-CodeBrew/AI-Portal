@@ -227,6 +227,11 @@ export const OPENAI_SALES_TOOLS = [
   },
 ];
 
+/** Gemini functionDeclarations format (same schema as OpenAI parameters). */
+export function geminiFunctionDeclarations() {
+  return OPENAI_SALES_TOOLS.map((tool) => ({ ...tool.function }));
+}
+
 async function findStoreOrderByNumber(
   storeId: string,
   orderNumber: string

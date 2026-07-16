@@ -53,7 +53,7 @@ Handlers run **in order**. First match wins; LLM only runs if nothing else handl
 | 2 | Sales recovery | `sales-recovery.ts` | Decline / “too expensive” after product pitch → discount → bundle → stop |
 | 3 | Product image | `product-reply.ts` | “Send/share/show product image/photo” |
 | 4 | Product lookup | `product-reply.ts` | SKU or product name question (SKU wins even if message says “want to order”) |
-| 5 | LLM | `groq-agent.ts` / `anthropic-agent.ts` | Everything else |
+| 5 | LLM | `groq-agent.ts` / `gemini-agent.ts` / `anthropic-agent.ts` | Everything else (provider set in Admin → AI Defaults → LLM) |
 
 If the LLM throws, the webhook falls back to direct product/image lookup before a generic error message.
 
@@ -136,8 +136,8 @@ Portal orders use portal SKU / UUID variant id. Shopify orders use numeric `vari
 
 ### Sales recovery (`tryDirectSalesRecoveryReply`)
 
-- After product pitch, on decline: **Deal 1/2** (configurable % off) → **Deal 2/2** (2-pack bundle) → polite stop
-- Uses internal markers: `[Deal 1/2 — N% off]`, `[Deal 2/2 — …]`, `[Deal closed]`
+- After product pitch, on decline: **value reassurance** → **Deal 1/2** (configurable % off) → **Deal 2/2** (2-pack bundle) → polite stop
+- Uses internal markers: `[Objection — value pitch]`, `[Deal 1/2 — N% off]`, `[Deal 2/2 — …]`, `[Deal closed]`
 - Stored in DB history for stage detection; stripped before WhatsApp send
 
 ### Checkout (`tryDirectCheckoutReply`)
@@ -157,6 +157,7 @@ Internal markers in stored message content (stripped before customer sees text):
 | `[Image: https://…]` | Send as WhatsApp image message |
 | `[Ref: uuid]` | Internal variant/product ref for order placement |
 | `[Deal 1/2 …]` / `[Deal 2/2 …]` | Recovery stage tracking |
+| `[Objection — value pitch]` | First refusal — quality/value reassurance before any discount |
 
 Processing: `message-markers.ts` → `extractOutboundMedia()`
 
@@ -203,9 +204,10 @@ Admin platform defaults apply when store leaves a field null.
 
 | Variable | Role |
 |----------|------|
-| `GROQ_API_KEY` | Primary LLM (preferred) |
-| `GROQ_MODEL` | Optional override (default `llama-3.3-70b-versatile`) |
-| `ANTHROPIC_API_KEY` | Fallback LLM |
+| `GROQ_API_KEY` | Groq LLM when provider = **groq** (default) |
+| `GROQ_MODEL` | Optional Groq override (default `llama-3.3-70b-versatile`) |
+| `GEMINI_API_KEY` | Optional Gemini fallback if not saved in admin UI |
+| `ANTHROPIC_API_KEY` | Fallback LLM if active provider unavailable |
 | `BUNNY_CDN_HOSTNAME` | Portal product image URLs |
 
 ---
@@ -223,7 +225,8 @@ When you change AI behavior, update **this doc** and the relevant file:
 | Product + image direct replies | `src/lib/ai/product-reply.ts` |
 | Checkout parsing | `src/lib/ai/checkout-reply.ts`, `checkout-parse.ts` |
 | Recovery offers | `src/lib/ai/sales-recovery.ts` |
-| Groq / Anthropic loops | `src/lib/ai/groq-agent.ts`, `anthropic-agent.ts` |
+| Groq / Gemini / Anthropic loops | `src/lib/ai/groq-agent.ts`, `gemini-agent.ts`, `anthropic-agent.ts` |
+| LLM provider admin | `src/lib/platform/llm-settings.ts`, Admin → AI Defaults → LLM Provider |
 | Webhook / send | `src/lib/whatsapp-webhook-handler.ts` |
 | Image markers / strip | `src/lib/ai/message-markers.ts` |
 | WebP → JPEG for WhatsApp | `src/lib/whatsapp-image.server.ts` |
@@ -236,6 +239,11 @@ When you change AI behavior, update **this doc** and the relevant file:
 
 | Date | Change |
 |------|--------|
+| 2026-07-16 | Recovery close message uses real product name from pitch (`findActiveProductContext`), not greeting/fallback lines. |
+| 2026-07-16 | Admin LLM switch: Groq (env) vs Gemini (`gemini-3-flash` default) in Admin → AI Defaults → LLM Provider. |
+| 2026-07-16 | Sales recovery: first refusal → quality/value reassurance; discount only on second decline; softer offer copy. |
+| 2026-07-16 | Duplicate WhatsApp replies: dedupe inbound webhooks by Meta `wamid` (`meta_message_id` unique index). |
+| 2026-07-16 | Casual greetings (`hi whats up`, etc.) → human rep intro via `tryDirectGreetingReply`; no catalog search or SKU-bot fallback. |
 | 2026-07-16 | Active product context: follow-ups bind to the latest product pitch, not stale SKUs from earlier chats (`findActiveProductContext`). |
 | 2026-07-16 | Follow-up variant/color/size questions use product from chat history (`formatProductFollowUpReply`); answers when only one option exists. |
 | 2026-07-16 | Initial doc. Hybrid pipeline, stage-based prompt, human persona, SKU-priority lookup, product image handler, CDN URL extraction, WebP conversion for portal images. |

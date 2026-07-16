@@ -740,7 +740,7 @@ export async function getResellerDashboardStats(
       limit: aiUsage.limit,
       percentUsed: aiUsage.percentUsed,
       limitReached: aiUsage.limitReached,
-      platformConfigured: isSalesAgentConfigured(),
+      platformConfigured: await isSalesAgentConfigured(),
     },
     ads: {
       linkCount: adRows.length,

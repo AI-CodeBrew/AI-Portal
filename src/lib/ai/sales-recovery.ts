@@ -12,6 +12,7 @@ import {
   parseCheckoutDetails,
 } from "./checkout-parse";
 import { orderDetailsTemplate } from "./order-details-template";
+import { findActiveProductContext } from "./product-reply";
 
 export {
   extractOutboundMedia,
@@ -28,7 +29,7 @@ const ACCEPT_OFFER_PATTERN =
   /\b(yes|yeah|yep|ok|okay|sure|deal|fine|alright|i('ll| will)\s+take|interested|accept|go\s+ahead|order\s+(it|now|this)|book\s+it|let'?s\s+do\s+it)\b/i;
 
 const PRODUCT_OFFERED_PATTERN =
-  /\b(would you like to order|want to order|place the order|reply like this|share your full name|SKU:|Price:|From:|Deal 1\/2|Deal 2\/2|𝟮-𝗣𝗔𝗖𝗞|𝗙𝗟𝗔𝗧|FLAT.*OFF)\b/i;
+  /\b(would you like to order|want to order|want it\?|place the order|reply like this|share your full name|share name, phone|in stock|out of stock right now|SKU:|Price:|From:|\[Ref:|Deal 1\/2|Deal 2\/2|𝟮-𝗣𝗔𝗖𝗞|𝗙𝗟𝗔𝗧|FLAT.*OFF|—\s*(?:Rs\.?|PKR|AED|\$|€)\s*[\d,]+)\b/i;
 
 function discountMarker(percent: number) {
   return `[Deal 1/2 — ${percent}% off]`;
@@ -39,6 +40,7 @@ function bundleMarker(percent: number) {
 }
 
 const MARKER_CLOSED = "[Deal closed]";
+const MARKER_VALUE_PITCH = "[Objection — value pitch]";
 
 function lastAssistantMessages(
   history: Array<{ role: "user" | "assistant"; content: string }>,
@@ -68,22 +70,64 @@ function parsePriceAmount(text: string | null | undefined): number | null {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
+/** Greetings, fallbacks, and offer lines — not a product name. */
+function isGenericAssistantLine(line: string): boolean {
+  const t = line.trim();
+  if (!t || t.length > 80) return true;
+  return (
+    /^hey\b/i.test(t) ||
+    /^hi\b/i.test(t) ||
+    /send me (the )?product name or sku/i.test(t) ||
+    /what product (are you|can I)/i.test(t) ||
+    /^no problem/i.test(t) ||
+    /^all good/i.test(t) ||
+    /^\[Deal/i.test(t) ||
+    /^I (can|get it|hear you|wanted to)/i.test(t) ||
+    /^Let me offer/i.test(t) ||
+    /^Totally fine/i.test(t) ||
+    /^Understand/i.test(t) ||
+    /^Sorry/i.test(t) ||
+    /^No worries/i.test(t)
+  );
+}
+
+function productLabelFromContext(title: string | null | undefined): string {
+  const t = title?.trim();
+  if (t && !isGenericAssistantLine(t)) return t;
+  return "this item";
+}
+
+function formatRecoveryCloseReply(title: string | null): string {
+  const label = title?.trim() && !isGenericAssistantLine(title) ? title.trim() : null;
+  return [
+    MARKER_CLOSED,
+    label
+      ? `All good 👍 No worries. Thanks for checking ${label} — ping us anytime you need help.`
+      : `All good 👍 No worries. Ping us anytime you need help.`,
+  ].join("\n");
+}
+
 function findProductContext(
-  history: Array<{ role: "user" | "assistant"; content: string }>
+  history: Array<{ role: "user" | "assistant"; content: string }>,
+  latestUserMessage?: string
 ): {
   sku: string | null;
   title: string | null;
   priceText: string | null;
   variantRef: string | null;
 } {
-  const assistants = lastAssistantMessages(history, 12);
-  let sku: string | null = null;
-  let title: string | null = null;
+  const active = findActiveProductContext(history, latestUserMessage);
+  let sku = active?.sku ?? null;
+  let title = active?.title ?? null;
   let priceText: string | null = null;
-  let variantRef: string | null = null;
+  let variantRef = active?.ref ?? null;
 
+  if (title && isGenericAssistantLine(title)) {
+    title = null;
+  }
+
+  const assistants = lastAssistantMessages(history, 12);
   for (const content of [...assistants].reverse()) {
-    if (!sku) sku = extractSkuFromText(content);
     if (!variantRef) variantRef = extractRefFromAssistant(content);
     if (!priceText) {
       const m =
@@ -101,28 +145,18 @@ function findProductContext(
       );
       if (offerNow?.[1]) priceText = offerNow[1].trim();
     }
-    if (!title) {
-      const bold = content.match(/^\*([^*]+)\*/m);
-      if (bold?.[1] && bold[1].trim().length <= 80) {
-        title = bold[1].trim();
-      } else {
-        const first = content
-          .split("\n")
-          .map((l) => l.trim())
-          .find(
-            (l) =>
-              l &&
-              !/^(SKU:|Ref:|\[Ref:|Price:|From:|Stock:|Options:|Variants|Bundles:|Would you|Want to|Reply like|Name:|Phone:|Address:|Qty:|\[Deal)/i.test(
-                l
-              ) &&
-              !l.startsWith("•")
-          );
-        if (first && first.length <= 80) {
-          title = first.replace(/^\*|\*$/g, "").trim();
+    if (!title && /\[Ref:|(?:^|\n)[^\n]+(?:—|-)\s*(?:Rs\.?|PKR|AED|\$|€)/im.test(content)) {
+      const dash = content.match(
+        /(?:^|\n)([^\n]+?)\s*(?:—|-)\s*(?:Rs\.?|PKR|AED|\$|€)/im
+      );
+      if (dash?.[1]) {
+        const candidate = dash[1].replace(/\*([^*]+)\*/g, "$1").trim();
+        if (candidate && !isGenericAssistantLine(candidate)) {
+          title = candidate;
         }
       }
     }
-    if (sku && title && (priceText || variantRef)) break;
+    if (!sku) sku = extractSkuFromText(content);
   }
 
   if (!sku) {
@@ -228,26 +262,6 @@ function priceCompareLine(
   return `~${was}~  →  *${now}*`;
 }
 
-function toBoldPercent(percent: number): string {
-  // Math bold digits for hype (WhatsApp-safe unicode)
-  const map: Record<string, string> = {
-    "0": "𝟬",
-    "1": "𝟭",
-    "2": "𝟮",
-    "3": "𝟯",
-    "4": "𝟰",
-    "5": "𝟱",
-    "6": "𝟲",
-    "7": "𝟳",
-    "8": "𝟴",
-    "9": "𝟵",
-  };
-  return String(percent)
-    .split("")
-    .map((c) => map[c] ?? c)
-    .join("");
-}
-
 function newestRecoveryOfferMessage(
   assistants: string[]
 ): string | null {
@@ -285,6 +299,66 @@ function isDiscountOfferMessage(content: string): boolean {
     /\[Deal\s+1\/2/i.test(content) ||
     /𝗙𝗟𝗔𝗧|FLAT.*OFF/i.test(content)
   );
+}
+
+function isValuePitchMessage(content: string): boolean {
+  return /\[Objection — value pitch\]/i.test(content);
+}
+
+function hasValuePitchInHistory(assistants: string[]): boolean {
+  return assistants.some(isValuePitchMessage);
+}
+
+function shortenDescription(description: string | null): string | null {
+  if (!description?.trim()) return null;
+  const clean = description
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (clean.length < 20) return null;
+  const firstSentence = clean.split(/[.!?]/)[0]?.trim();
+  if (firstSentence && firstSentence.length >= 20 && firstSentence.length <= 140) {
+    return firstSentence;
+  }
+  return clean.length > 120 ? `${clean.slice(0, 117).trim()}…` : clean;
+}
+
+async function resolveProductDescription(
+  ctx: AgentContext,
+  sku: string | null
+): Promise<string | null> {
+  if (!sku) return null;
+  try {
+    const portal = await getStoreProductBySku(ctx.store.id, sku);
+    if (!portal) return null;
+    return shortenDescription(portal.description || portal.tagline || null);
+  } catch (err) {
+    console.error("[sales-recovery] description lookup failed:", err);
+    return null;
+  }
+}
+
+function formatValueReassuranceReply(params: {
+  productLabel: string;
+  priceText: string | null;
+  description: string | null;
+}): string {
+  const { productLabel, priceText, description } = params;
+  const qualityLine = description
+    ? `${description.charAt(0).toUpperCase()}${description.slice(1)} — that's a big part of why it's priced where it is.`
+    : `It's one of our better-built items — solid quality and made to last, not a cheap throwaway.`;
+
+  const priceLine = priceText
+    ? `At ${priceText.trim()}, you're paying for that quality upfront instead of replacing it later.`
+    : `You're paying for quality that holds up — not something you'd swap out in a few months.`;
+
+  return [
+    MARKER_VALUE_PITCH,
+    `I hear you — ${productLabel} isn't the cheapest option out there.`,
+    qualityLine,
+    priceLine,
+    `Honestly, do you think it fits what you need, or is budget the main thing holding you back?`,
+  ].join("\n");
 }
 
 function formatPersonalOfferLine(
@@ -331,7 +405,6 @@ function formatRecoveryOfferReply(params: {
   accepting?: boolean;
 }): string {
   const { type, percent, productLabel, unitPrice, currency } = params;
-  const boldPct = toBoldPercent(percent);
   const personal = formatPersonalOfferLine(
     type,
     percent,
@@ -355,21 +428,25 @@ function formatRecoveryOfferReply(params: {
   if (type === "bundle") {
     return [
       bundleMarker(percent),
-      `💥 𝟮-𝗣𝗔𝗖𝗞 𝗕𝗨𝗡𝗗𝗟𝗘 · ${boldPct}% 𝗢𝗙𝗙 💥`,
+      `If budget's tight, I can do a *2-pack bundle at ${percent}% off* — best value if you need more than one.`,
       personal,
-      `🎁 Best value — reply *YES* to lock it:`,
-      orderDetailsTemplate({ defaultQty: 2 }),
+      `Want it? Share name, phone & full address (qty 2).`,
     ]
       .filter(Boolean)
       .join("\n");
   }
 
+  const now = personal.match(/\*([^*]+)\*/)?.[1];
+  const simpleOffer =
+    now != null
+      ? `I can do *${percent}% off* — that's *${now}*.`
+      : `I can do *${percent}% off* on *${productLabel}*.`;
+
   return [
     discountMarker(percent),
-    `🔥 𝗙𝗟𝗔𝗧 ${boldPct}% 𝗢𝗙𝗙 🔥`,
-    personal,
-    `⚡ Limited WhatsApp deal — reply *YES* to grab it:`,
-    orderDetailsTemplate(),
+    `I get it — let me see what I can do for you.`,
+    simpleOffer,
+    `Want to go ahead? Share name, phone & delivery address.`,
   ]
     .filter(Boolean)
     .join("\n");
@@ -391,7 +468,7 @@ function recoveryPercents(ctx: AgentContext): {
 
 function nextRecoveryAction(
   history: Array<{ role: "user" | "assistant"; content: string }>
-): "discount" | "bundle" | "close" | null {
+): "reassure" | "discount" | "bundle" | "close" | null {
   const assistants = lastAssistantMessages(history, 12);
   const recent = assistants.join("\n");
 
@@ -406,8 +483,11 @@ function nextRecoveryAction(
   if (lastOffer && isDiscountOfferMessage(lastOffer)) {
     return "bundle";
   }
+  if (hasValuePitchInHistory(assistants)) {
+    return "discount";
+  }
 
-  return "discount";
+  return "reassure";
 }
 
 /** Detect an open recovery offer in chat (for checkout discount + qty). */
@@ -494,10 +574,11 @@ export async function tryDirectSalesRecoveryReply(
   const hadProductPitch = PRODUCT_OFFERED_PATTERN.test(recentAssistant);
   if (!hadProductPitch) return null;
 
-  const product = findProductContext(history);
-  const productLabel = product.title || "this product";
+  const product = findProductContext(history, latestUserMessage);
+  const productLabel = productLabelFromContext(product.title);
   const { discount, bundle } = recoveryPercents(ctx);
   const { unitPrice, currency } = await resolveUnitPrice(ctx, product);
+  const description = await resolveProductDescription(ctx, product.sku);
 
   // Soft accept without details yet → ask for name / phone / address
   if (looksLikeOfferAcceptance(latestUserMessage)) {
@@ -524,6 +605,14 @@ export async function tryDirectSalesRecoveryReply(
   const action = nextRecoveryAction(history);
   if (!action) return null;
 
+  if (action === "reassure") {
+    return formatValueReassuranceReply({
+      productLabel,
+      priceText: product.priceText,
+      description,
+    });
+  }
+
   if (action === "discount") {
     return formatRecoveryOfferReply({
       type: "discount",
@@ -546,8 +635,5 @@ export async function tryDirectSalesRecoveryReply(
     });
   }
 
-  return [
-    MARKER_CLOSED,
-    `No problem — thanks for checking ${productLabel}. Message anytime if you need anything.`,
-  ].join("\n");
+  return formatRecoveryCloseReply(product.title);
 }

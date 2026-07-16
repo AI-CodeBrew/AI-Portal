@@ -3,6 +3,7 @@ export function stripInternalAiMarkers(text: string): string {
   return text
     .replace(/^\s*\[Deal\s+[^\]]+\]\s*\n?/gim, "")
     .replace(/^\s*\[Deal closed\]\s*\n?/gim, "")
+    .replace(/^\s*\[Objection — value pitch\]\s*\n?/gim, "")
     .replace(/\[Ref:\s*[^\]]+\]\s*/gi, "")
     .replace(/\[Image:\s*https?:\/\/[^\]]+\]\s*/gi, "")
     .replace(/\n{3,}/g, "\n\n")

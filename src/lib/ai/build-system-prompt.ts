@@ -45,7 +45,7 @@ export function buildSalesSystemPrompt(params: {
     aiConfig?.generalTemplatePrompt?.trim() ||
     "Be warm and helpful. Mention free delivery or bundles only if true for this store.";
 
-  const recoveryNote = `If they refuse after a product pitch, recovery offers are handled automatically at ${aiConfig?.effectiveRecoveryDiscountPercent ?? 15}% off first, then a 2-pack bundle at ${aiConfig?.effectiveRecoveryBundleDiscountPercent ?? 25}% off — do not stack offers in one message.`;
+  const recoveryNote = `If they refuse after a product pitch, recovery is automatic and step-by-step: (1) reassure on quality/value — no discount yet, (2) ${aiConfig?.effectiveRecoveryDiscountPercent ?? 15}% off, (3) 2-pack bundle at ${aiConfig?.effectiveRecoveryBundleDiscountPercent ?? 25}% off — one step per reply, never stack offers.`;
 
   const currencyNote = storeCurrency
     ? `Store currency: ${storeCurrency}. Always quote prices using price_formatted from tools — never guess or convert.`

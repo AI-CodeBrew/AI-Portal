@@ -29,7 +29,7 @@ const STAGE_INSTRUCTIONS: Record<ConversationStage, string> = {
   qualifying:
     "Get delivery city, quantity, and variant if missing. Ask one question at a time. Don't re-pitch the whole product.",
   objection_handling:
-    "Address price/trust/delivery concerns briefly and honestly. Don't over-argue. Offer a small reassurance, then gently ask if they'd like to proceed. Recovery discounts are handled automatically — don't invent extra offers here unless tools confirm policy.",
+    "Customer pushed back on price or interest. First reassure on quality/value — do NOT jump straight to a discount (recovery handler does this automatically). Only after they decline again should discount/bundle offers apply.",
   closing:
     "Customer is ready or you have enough details. Ask directly for delivery address (and name/phone if still missing). Don't re-explain the product.",
   order_confirmation:

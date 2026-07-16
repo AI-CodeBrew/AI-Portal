@@ -10,6 +10,7 @@ import {
   extractSkuFromText,
   extractProductSearchQuery,
 } from "@/lib/products/products-service";
+import { looksLikeCasualGreeting } from "./greeting-reply";
 
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 const DEFAULT_MODEL = "llama-3.3-70b-versatile";
@@ -32,6 +33,7 @@ function lastUserMessage(
 function looksLikeProductQuery(text: string): boolean {
   const t = text.trim();
   if (t.length < 2) return false;
+  if (looksLikeCasualGreeting(t)) return false;
   if (ORDER_QUERY_PATTERN.test(t)) return false;
   if (extractSkuFromText(t)) return true;
   if (PRODUCT_QUERY_PATTERN.test(t)) return true;
@@ -176,7 +178,7 @@ export async function runSalesAgentWithGroq(
     ) {
       const text =
         assistantMessage.content?.trim() ||
-        "Hey! What can I help you with today?";
+        "Hey 👋 What product can I help you with?";
 
       if (
         usedSearchProducts &&

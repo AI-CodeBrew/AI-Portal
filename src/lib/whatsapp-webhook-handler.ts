@@ -24,6 +24,7 @@ import {
 } from "@/lib/ads/ad-links-service";
 import { parseAdRefFromMessage } from "@/lib/ads/whatsapp-ad-links";
 import { extractOutboundMedia } from "@/lib/ai/message-markers";
+import { buildCasualGreetingReply } from "@/lib/ai/greeting-reply";
 import {
   getStoreWhatsAppCredentials,
   resolveMetaSecret,
@@ -262,11 +263,46 @@ export async function handleWhatsAppWebhookMessage(
 
           if (!conversation) continue;
 
-          await supabase.from("whatsapp_messages").insert({
-            conversation_id: conversation.id,
-            direction: "in",
-            content: inboundText,
-          });
+          // Meta may retry the same webhook — skip duplicate wamid
+          if (msg.id) {
+            const { data: duplicate } = await supabase
+              .from("whatsapp_messages")
+              .select("id")
+              .eq("meta_message_id", msg.id)
+              .maybeSingle();
+            if (duplicate) {
+              console.log(
+                `[whatsapp-webhook] duplicate wamid=${msg.id}, skipping`
+              );
+              continue;
+            }
+          }
+
+          const { error: inboundInsertError } = await supabase
+            .from("whatsapp_messages")
+            .insert({
+              conversation_id: conversation.id,
+              direction: "in",
+              content: inboundText,
+              ...(msg.id ? { meta_message_id: msg.id } : {}),
+            });
+
+          if (inboundInsertError) {
+            if (
+              inboundInsertError.code === "23505" &&
+              msg.id
+            ) {
+              console.log(
+                `[whatsapp-webhook] duplicate wamid=${msg.id} (race), skipping`
+              );
+              continue;
+            }
+            console.error(
+              "[whatsapp-webhook] inbound insert failed:",
+              inboundInsertError
+            );
+            continue;
+          }
 
           await supabase
             .from("whatsapp_conversations")
@@ -377,7 +413,7 @@ export async function handleWhatsAppWebhookMessage(
 
           let replyText: string;
 
-          if (isSalesAgentConfigured()) {
+          if (await isSalesAgentConfigured()) {
             try {
               const quota = await tryConsumeAiQuota(activeStore.id);
 
@@ -428,6 +464,8 @@ export async function handleWhatsAppWebhookMessage(
                   customerId: conversation.customer_id,
                   adProductContext,
                 };
+                const aiSettings = await resolveStoreAiConfig(activeStore.id);
+                const greetingCtx = { ...agentCtx, aiConfig: aiSettings };
                 const imageReply = await tryDirectProductImageReply(
                   agentCtx,
                   inboundText,
@@ -443,20 +481,27 @@ export async function handleWhatsAppWebhookMessage(
                   );
                   replyText =
                     direct?.reply ??
-                    "Hey — send me the product name or SKU and I'll pull it up for you.";
+                    buildCasualGreetingReply(greetingCtx);
                 }
               } catch (fallbackErr) {
                 console.error(
                   "[whatsapp-webhook] direct product fallback failed:",
                   fallbackErr
                 );
-                replyText =
-                  "Hey — send me the product name or SKU and I'll pull it up for you.";
+                const aiSettings = await resolveStoreAiConfig(activeStore.id);
+                replyText = buildCasualGreetingReply({
+                  store: activeStore,
+                  conversationId: conversation.id,
+                  customerPhone,
+                  customerId: conversation.customer_id,
+                  adProductContext,
+                  aiConfig: aiSettings,
+                });
               }
             }
           } else {
             console.error(
-              "[whatsapp-webhook] GROQ_API_KEY not set — add it in Vercel env vars and redeploy."
+              "[whatsapp-webhook] No LLM configured — set GROQ_API_KEY or configure Gemini in Admin → AI Defaults."
             );
             replyText =
               "Thanks for your message! Our team will get back to you shortly.";
