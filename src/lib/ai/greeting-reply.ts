@@ -1,18 +1,18 @@
 import type { AgentContext } from "./sales-tools";
 
 const GREETING_ONLY =
-  /^(hi|hello|hey|thanks|thank you|ok|okay|yes|no|assalam|salam|assalamu|good morning|good evening|good afternoon|good night)[\s!.?,]*$/i;
+  /^(hi+|hey+|heya+|hello+|hola+|yo+|sup+|thanks+|thank\s*you+|ok+|okay+|yes+|no+|assalam+|salam+|assalamu+|good morning|good evening|good afternoon|good night)[\s!.?,]*$/i;
 
-/** Casual openers that are not product lookups — "hi whats up", "hey there", etc. */
+/** Casual openers that are not product lookups — "hi whats up", "hey there", "heyyy", etc. */
 export function looksLikeCasualGreeting(text: string): boolean {
   const t = text.trim();
   if (t.length < 2) return false;
   if (GREETING_ONLY.test(t)) return true;
-  if (/^(what'?s? up|whatsa? up|sup|yo|howdy|how are you|how r u|how are u)[\s!.?,]*$/i.test(t)) {
+  if (/^(what'?s? up|whatsa? up|sup+|yo+|howdy|how are you|how r u|how are u)[\s!.?,]*$/i.test(t)) {
     return true;
   }
   if (
-    /^(hi|hello|hey|salam|assalam|assalamu|good morning|good evening|good afternoon)\b[\s,!.?-]*(there|how are you|what'?s? up|whatsa? up|how r u|friend|bro|sis)?[\s!.?,]*$/i.test(
+    /^(hi+|hello+|hey+|heya+|salam+|assalam+|assalamu+|good morning|good evening|good afternoon)\b[\s,!.?-]*(there|how are you|what'?s? up|whatsa? up|how r u|friend|bro|sis)?[\s!.?,]*$/i.test(
       t
     )
   ) {

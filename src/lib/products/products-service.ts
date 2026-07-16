@@ -76,7 +76,10 @@ export function extractSkuFromText(text: string): string | null {
     if (sku === "AI-PORTAL") return null;
     return sku;
   }
-  if (/^[A-Z0-9][A-Z0-9_-]{3,47}$/i.test(t)) return normalizeSku(t);
+  // Standalone token — require digit/dash/underscore so "heyyy", "hello", "storage" aren't SKUs
+  if (/^[A-Z0-9][A-Z0-9_-]{3,47}$/i.test(t) && /\d|[-_]/.test(t)) {
+    return normalizeSku(t);
+  }
   return null;
 }
 
@@ -786,7 +789,31 @@ export function productSearchTokens(query: string): string[] {
     "joke",
     "jokes",
     "robot",
+    "hi",
+    "hey",
+    "heya",
+    "hello",
+    "hola",
+    "yo",
+    "sup",
+    "thanks",
+    "thank",
+    "ok",
+    "okay",
+    "yes",
+    "no",
+    "salam",
+    "assalam",
+    "assalamu",
+    "morning",
+    "evening",
+    "afternoon",
+    "night",
+    "good",
   ]);
+
+  const isGreetingToken = (token: string) =>
+    /^(hi+|hey+|heya+|hello+|hola+|yo+|sup+|thanks+|ok+|okay+)$/i.test(token);
 
   return Array.from(
     new Set(
@@ -794,7 +821,12 @@ export function productSearchTokens(query: string): string[] {
         .replace(/[^\p{L}\p{N}\s\-]/gu, " ")
         .split(/\s+/)
         .map((t) => escapeIlike(t))
-        .filter((t) => t.length >= 2 && !stop.has(t.toLowerCase()))
+        .filter(
+          (t) =>
+            t.length >= 2 &&
+            !stop.has(t.toLowerCase()) &&
+            !isGreetingToken(t)
+        )
     )
   ).slice(0, 6);
 }

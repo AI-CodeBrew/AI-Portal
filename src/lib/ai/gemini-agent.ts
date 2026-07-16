@@ -58,8 +58,11 @@ function looksLikeProductQuery(text: string): boolean {
   if (ORDER_QUERY_PATTERN.test(t)) return false;
   if (extractSkuFromText(t)) return true;
   if (PRODUCT_QUERY_PATTERN.test(t)) return true;
-  if (/^[A-Z0-9][A-Z0-9_-]{3,47}$/i.test(t)) return true;
-  return t.length <= 80 && !/^(hi|hello|hey|thanks|thank you|ok|yes|no)\b/i.test(t);
+  return (
+    t.length <= 80 &&
+    !!extractProductSearchQuery(t) &&
+    !/^(hi+|hello+|hey+|thanks|thank you|ok+|yes+|no+)\b/i.test(t)
+  );
 }
 
 function looksLikeOrderQuery(text: string): boolean {
