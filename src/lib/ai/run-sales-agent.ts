@@ -6,7 +6,7 @@ import {
   getPendingOrdersHintForPhone,
   type AgentContext,
 } from "./sales-tools";
-import { tryDirectProductReply } from "./product-reply";
+import { tryDirectProductReply, tryDirectProductImageReply } from "./product-reply";
 import { tryDirectCheckoutReply } from "./checkout-reply";
 import { tryDirectSalesRecoveryReply } from "./sales-recovery";
 
@@ -88,6 +88,17 @@ export async function runSalesAgent(
   }
 
   // Catalog lookup by SKU or product name (incl. variants) before the LLM
+  try {
+    const imageReply = await tryDirectProductImageReply(
+      enrichedCtx,
+      latestUser,
+      history
+    );
+    if (imageReply) return imageReply;
+  } catch (err) {
+    console.error("[run-sales-agent] product image failed:", err);
+  }
+
   try {
     const direct = await tryDirectProductReply(enrichedCtx, latestUser);
     if (direct) return direct.reply;

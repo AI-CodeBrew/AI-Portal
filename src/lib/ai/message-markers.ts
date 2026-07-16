@@ -9,24 +9,54 @@ export function stripInternalAiMarkers(text: string): string {
     .trim();
 }
 
-/** Pull image URLs embedded as [Image: https://...] and return clean customer text. */
+/** Pull image URLs from [Image: …] markers and bare CDN links in LLM text. */
 export function extractOutboundMedia(text: string): {
   text: string;
   imageUrls: string[];
 } {
   const imageUrls: string[] = [];
-  const withoutImages = text.replace(
+
+  const collect = (url: string) => {
+    const cleaned = String(url).trim();
+    if (
+      /^https:\/\//i.test(cleaned) &&
+      !imageUrls.includes(cleaned) &&
+      imageUrls.length < 3
+    ) {
+      imageUrls.push(cleaned);
+    }
+  };
+
+  let working = text.replace(
     /\[Image:\s*(https?:\/\/[^\]]+)\]\s*/gi,
     (_, url: string) => {
-      const cleaned = String(url).trim();
-      if (/^https:\/\//i.test(cleaned) && !imageUrls.includes(cleaned)) {
-        imageUrls.push(cleaned);
-      }
+      collect(url);
       return "";
     }
   );
+
+  // LLMs often paste raw CDN links — extract and send as WhatsApp images instead
+  working = working.replace(
+    /(?:here'?s?\s+(?:the\s+)?(?:product\s+)?(?:image|photo|picture)s?:?\s*)/gi,
+    ""
+  );
+  working = working.replace(
+    /https:\/\/[^\s\])<>"]+\.(?:jpe?g|png|webp|gif)(?:\?[^\s\])<>"]*)?/gi,
+    (url) => {
+      if (
+        /(?:cdn\.shopify|shopify\.com|b-cdn\.net|bunnycdn|cloudinary|imgix)/i.test(
+          url
+        )
+      ) {
+        collect(url);
+        return "";
+      }
+      return url;
+    }
+  );
+
   return {
-    text: stripInternalAiMarkers(withoutImages),
-    imageUrls: imageUrls.slice(0, 3),
+    text: stripInternalAiMarkers(working),
+    imageUrls,
   };
 }

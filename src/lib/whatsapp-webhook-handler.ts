@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { verifyHubSignature256 } from "@/lib/crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { runSalesAgent, isSalesAgentConfigured } from "@/lib/ai/run-sales-agent";
+import {
+  tryDirectProductImageReply,
+  tryDirectProductReply,
+} from "@/lib/ai/product-reply";
 import { getRecentChatHistory, getStoreChatContextLimits } from "@/lib/ai/chat-history";
 import { quotaLimitMessage } from "@/lib/ai/plans";
 import { tryConsumeAiQuota } from "@/lib/ai/quota";
@@ -408,8 +412,46 @@ export async function handleWhatsAppWebhookMessage(
               }
             } catch (agentErr) {
               console.error("[whatsapp-webhook] AI agent error:", agentErr);
-              replyText =
-                "Thanks for your message! How can I help you today? Ask me about our products or your order.";
+              try {
+                const chatLimits = await getStoreChatContextLimits(
+                  activeStore.id
+                );
+                const chatHistory = await getRecentChatHistory(
+                  conversation.id,
+                  chatLimits.historyLimit,
+                  chatLimits.windowMs
+                );
+                const agentCtx = {
+                  store: activeStore,
+                  conversationId: conversation.id,
+                  customerPhone,
+                  customerId: conversation.customer_id,
+                  adProductContext,
+                };
+                const imageReply = await tryDirectProductImageReply(
+                  agentCtx,
+                  inboundText,
+                  chatHistory
+                );
+                if (imageReply) {
+                  replyText = imageReply;
+                } else {
+                  const direct = await tryDirectProductReply(
+                    agentCtx,
+                    inboundText
+                  );
+                  replyText =
+                    direct?.reply ??
+                    "Hey — send me the product name or SKU and I'll pull it up for you.";
+                }
+              } catch (fallbackErr) {
+                console.error(
+                  "[whatsapp-webhook] direct product fallback failed:",
+                  fallbackErr
+                );
+                replyText =
+                  "Hey — send me the product name or SKU and I'll pull it up for you.";
+              }
             }
           } else {
             console.error(

@@ -86,10 +86,20 @@ function findProductContext(
     if (!sku) sku = extractSkuFromText(content);
     if (!variantRef) variantRef = extractRefFromAssistant(content);
     if (!priceText) {
-      const m = content.match(/(?:Price|From):\s*([^\n]+)/i);
+      const m =
+        content.match(/(?:Price|From):\s*([^\n]+)/i) ||
+        content.match(
+          /(?:^|\n)[^\n]+(?:—|-)\s*((?:Rs\.?|PKR|AED|\$|€)\s*[\d,]+(?:\.\d+)?)/im
+        );
       if (m?.[1] && !/see store for price/i.test(m[1])) {
         priceText = m[1].trim();
       }
+    }
+    if (!priceText) {
+      const offerNow = content.match(
+        /instead of [~*][^~*\n]+[~*][^*\n]*\*([^*]+)\*/i
+      );
+      if (offerNow?.[1]) priceText = offerNow[1].trim();
     }
     if (!title) {
       const bold = content.match(/^\*([^*]+)\*/m);
