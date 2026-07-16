@@ -2,7 +2,7 @@
   "crons": [
     {
       "path": "/api/outcomes/extract",
-      "schedule": "0 * * * *"
+      "schedule": "0 3 * * *"
     },
     {
       "path": "/api/outcomes/weekly-summary",
