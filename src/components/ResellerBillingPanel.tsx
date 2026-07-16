@@ -95,6 +95,7 @@ export function ResellerBillingPanel() {
   }
 
   async function buyTopup(packId: TopupPackId) {
+    if (!available) return;
     setTopupLoading(packId);
     setError(null);
     setSuccess(null);
@@ -119,14 +120,31 @@ export function ResellerBillingPanel() {
     <div className="space-y-6">
       <PlanUsageCard />
 
+      {error && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+          {error}
+        </div>
+      )}
+      {success && (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+          {success}
+        </div>
+      )}
+
       <div className="rounded-xl border border-emerald-200 bg-emerald-50/40 p-6 shadow-sm">
         <h2 className="text-base font-bold text-slate-900">
           Top up AI message credits
         </h2>
         <p className="mt-1 text-sm text-slate-600">
           Stay on Basic (or any plan) and buy extra AI replies anytime. Credits
-          add to your monthly limit.
+          add to your monthly limit after PayTabs checkout completes.
         </p>
+        {!loading && !available && (
+          <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            Online checkout is not available yet. Ask your platform admin to
+            connect PayTabs under Admin → Billing.
+          </div>
+        )}
         <div className="mt-4 grid gap-3 sm:grid-cols-3">
           {TOPUP_PACK_ORDER.map((id) => {
             const pack = AI_TOPUP_PACKS[id];
@@ -144,11 +162,15 @@ export function ResellerBillingPanel() {
                 </p>
                 <button
                   type="button"
-                  disabled={topupLoading === id}
+                  disabled={!available || topupLoading === id}
                   onClick={() => buyTopup(id)}
                   className="mt-3 w-full rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
                 >
-                  {topupLoading === id ? "Adding..." : "Top up"}
+                  {topupLoading === id
+                    ? "Opening checkout..."
+                    : available
+                      ? "Top up"
+                      : "Checkout unavailable"}
                 </button>
               </div>
             );
@@ -162,17 +184,6 @@ export function ResellerBillingPanel() {
           Select Pro or Max to open PayTabs checkout and pay. Basic is free —
           use top-ups above for more AI messages without upgrading.
         </p>
-
-        {error && (
-          <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
-            {error}
-          </div>
-        )}
-        {success && (
-          <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
-            {success}
-          </div>
-        )}
 
         {!loading && !available && (
           <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">

@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireResellerStore } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getTopupPack, type TopupPackId } from "@/lib/ai/topup";
-import { applyTopupCredits } from "@/lib/ai/quota";
 import { getBillingAvailability } from "@/lib/payments/paytabs";
 
 export async function GET() {
@@ -30,8 +29,8 @@ export async function GET() {
 
 /**
  * Start an AI credit top-up (available on Basic and all plans).
- * Until PayTabs live checkout is wired, creates a pending payment and
- * immediately applies credits in stub mode so resellers can use top-ups.
+ * Requires PayTabs to be connected; credits are applied only after payment
+ * is confirmed (via PayTabs callback once the live API is wired).
  */
 export async function POST(request: NextRequest) {
   try {
@@ -43,6 +42,16 @@ export async function POST(request: NextRequest) {
     }
 
     const billing = await getBillingAvailability();
+    if (!billing.available) {
+      return NextResponse.json(
+        {
+          error:
+            "Billing is not available yet. The platform admin must connect PayTabs first.",
+        },
+        { status: 400 }
+      );
+    }
+
     const supabase = createAdminClient();
     const cartId = `topup_${storeId.slice(0, 8)}_${Date.now()}`;
 
@@ -53,12 +62,11 @@ export async function POST(request: NextRequest) {
         credits: pack.credits,
         amount: pack.priceAed,
         currency: billing.currency || "AED",
-        status: "paid",
+        status: "pending",
         paytabs_cart_id: cartId,
         metadata: {
           pack_id: pack.id,
-          stub: true,
-          note: "Credits applied immediately until PayTabs top-up checkout is live",
+          note: "Awaiting PayTabs hosted payment API. Wire payment/request next.",
         },
       })
       .select("id, credits, amount, currency, status")
@@ -74,21 +82,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const applied = await applyTopupCredits(storeId, pack.credits);
-    if (!applied.ok) {
-      return NextResponse.json(
-        { error: applied.error ?? "Failed to apply credits" },
-        { status: 400 }
-      );
-    }
-
     return NextResponse.json({
       ok: true,
       payment,
-      creditsAdded: pack.credits,
-      message: `${pack.credits} AI message credits added to your store.`,
+      creditsAdded: 0,
       checkoutUrl: null,
-      billingAvailable: billing.available,
+      message:
+        "Checkout created. PayTabs hosted page will open here once the payment API is connected. Your top-up is saved as pending.",
     });
   } catch {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
