@@ -5,12 +5,7 @@ import {
 } from "./sales-tools";
 import { CHAT_HISTORY_LIMIT } from "./chat-history";
 import { buildSalesSystemPrompt } from "./build-system-prompt";
-import {
-  formatProductsReply,
-  tryDirectProductReply,
-} from "./product-reply";
-import { tryDirectCheckoutReply, looksLikeCheckoutMessage } from "./checkout-reply";
-import { tryDirectSalesRecoveryReply, looksLikeOrderDecline } from "./sales-recovery";
+import { formatProductsReply } from "./product-reply";
 import {
   extractSkuFromText,
   extractProductSearchQuery,
@@ -46,7 +41,6 @@ function looksLikeProductQuery(text: string): boolean {
 
 function looksLikeOrderQuery(text: string): boolean {
   const t = text.trim();
-  if (looksLikeCheckoutMessage(t)) return false;
   if (/\bplace\s+(an\s+)?order\b/i.test(t)) return false;
   return ORDER_QUERY_PATTERN.test(t);
 }
@@ -106,7 +100,7 @@ async function groqChat(
         ? { type: "function", function: { name: "search_products" } }
         : "auto",
       max_tokens: 1024,
-      temperature: 0.2,
+      temperature: 0.35,
     }),
   });
 
@@ -123,44 +117,13 @@ export async function runSalesAgentWithGroq(
 ): Promise<string> {
   const storeLabel = ctx.store.store_name || ctx.store.shop_domain || "our store";
   const latestUser = lastUserMessage(history);
-
-  // Place order with contact details → confirm before LLM
-  const checkoutReply = await tryDirectCheckoutReply(ctx, latestUser, history);
-  if (checkoutReply) {
-    return checkoutReply;
-  }
-
-  const recoveryReply = await tryDirectSalesRecoveryReply(
-    ctx,
-    latestUser,
-    history
-  );
-  if (recoveryReply) {
-    return recoveryReply;
-  }
-
-  // SKU or product name → answer from catalog first (don't rely on the model)
-  const directProduct = await tryDirectProductReply(ctx, latestUser);
-  if (directProduct) {
-    return directProduct.reply;
-  }
+  const historyLimit =
+    ctx.aiConfig?.effectiveChatHistoryLimit ?? CHAT_HISTORY_LIMIT;
+  const trimmedHistory = history.slice(-historyLimit);
 
   const skuHint = extractSkuFromText(latestUser);
   const nameHint = extractProductSearchQuery(latestUser);
   const searchHint = skuHint || nameHint;
-  const productHint = ctx.adProductContext
-    ? `\n\nThe customer clicked an ad for "${ctx.adProductContext.productTitle}". Use the ad product context below — do not ask what product they want unless they change topic.`
-    : looksLikeCheckoutMessage(latestUser)
-      ? `\n\nThe customer wants to PLACE AN ORDER and shared details. You MUST call create_draft_order with their name, phone, address, and the product/sku from this chat (portal SKU or variant id from search_products). Do not only say thanks.`
-      : looksLikeOrderDecline(latestUser)
-        ? `\n\nThe customer declined ordering. Recover the sale ONE step at a time: if you have not offered 15% yet, offer 15% off the discussed product with the discounted price; if you already offered 15% and they declined again, offer a 2-pack bundle (~25% off); if both were refused, thank them and stop. Do not dump both offers at once.`
-      : looksLikeOrderQuery(latestUser)
-      ? `\n\nThe customer is asking about their order ("${latestUser.slice(0, 120).replace(/\n/g, " ")}"). You MUST call lookup_customer_orders (or get_order_status if they gave an order number) and share clear order details.`
-      : looksLikeProductQuery(latestUser)
-        ? `\n\nThe customer's latest message appears to be about a product ("${latestUser.slice(0, 120).replace(/\n/g, " ")}"${searchHint ? `; search query: ${searchHint}` : ""}). You MUST call search_products first${searchHint ? ` with query "${searchHint}"` : ""}, share full details (name, price_formatted, stock, description, options, and all variants), then ask if they want to buy and collect name, phone, and address to close the sale.`
-        : history.length === 0
-          ? `\n\nNo messages in the current 2-hour AI session — greet briefly as a fresh chat, then help with products or orders.`
-          : "";
 
   const messages: ChatMessage[] = [
     {
@@ -168,17 +131,13 @@ export async function runSalesAgentWithGroq(
       content: buildSalesSystemPrompt({
         storeLabel,
         storeCurrency: ctx.storeCurrency,
-        productHint,
         aiConfig: ctx.aiConfig,
         adProductContext: ctx.adProductContext,
         pendingOrdersHint: ctx.pendingOrdersHint,
+        history: trimmedHistory,
       }),
     },
-    ...history
-      .slice(
-        -(ctx.aiConfig?.effectiveChatHistoryLimit ?? CHAT_HISTORY_LIMIT)
-      )
-      .map((m) => ({
+    ...trimmedHistory.map((m) => ({
       role: m.role,
       content: m.content,
     })),
@@ -192,6 +151,9 @@ export async function runSalesAgentWithGroq(
     title?: string;
     sku?: string;
     description?: string | null;
+    imageUrl?: string | null;
+    image_url?: string | null;
+    image_urls?: string[] | null;
     variants?: Array<{
       title?: string;
       price_formatted?: string;
@@ -214,13 +176,12 @@ export async function runSalesAgentWithGroq(
     ) {
       const text =
         assistantMessage.content?.trim() ||
-        "Thanks for your message! How can I help you today?";
+        "Hey! What can I help you with today?";
 
-      // Model greeted without product details after we forced a search — use catalog data
       if (
         usedSearchProducts &&
         lastSearchProducts.length > 0 &&
-        !/sku|price|rs\.?|pkr|\$|in stock|available/i.test(text)
+        !/price|rs\.?|pkr|€|\$|aed|in stock|available|\d/i.test(text)
       ) {
         return formatProductsReply(lastSearchProducts);
       }
@@ -246,7 +207,6 @@ export async function runSalesAgentWithGroq(
           input = {};
         }
 
-        // Prefer extracted SKU/name when the model searches with the full free-text message
         if (
           toolCall.function.name === "search_products" &&
           searchHint &&
@@ -264,7 +224,7 @@ export async function runSalesAgentWithGroq(
         );
 
         if (escalated) {
-          return "I've connected you with our team. A human agent will be with you shortly. Thank you for your patience!";
+          return "Got it — someone from our team will message you shortly 👍";
         }
 
         if (toolCall.function.name === "search_products") {
@@ -294,5 +254,5 @@ export async function runSalesAgentWithGroq(
     return formatProductsReply(lastSearchProducts);
   }
 
-  return "I'm having trouble processing your request. Let me get a team member to help you.";
+  return "Sorry, I'm having a bit of trouble — a team member will jump in shortly.";
 }

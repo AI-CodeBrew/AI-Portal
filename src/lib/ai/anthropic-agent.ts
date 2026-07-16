@@ -163,30 +163,29 @@ export async function runSalesAgentWithAnthropic(
     return directProduct.reply;
   }
 
+  const historyLimit =
+    ctx.aiConfig?.effectiveChatHistoryLimit ?? CHAT_HISTORY_LIMIT;
+  const trimmedHistory = history.slice(-historyLimit);
+
   const skuHint = extractSkuFromText(latestUser);
   const searchHint = skuHint || extractProductSearchQuery(latestUser);
-  const productHint = searchHint
-    ? `\n\nCustomer is asking about a product. Call search_products with query "${searchHint}" and share full details including options and every variant with prices. When they share name/phone/address to buy, call create_draft_order with sku/variant_id and their phone for confirmation.`
-    : "";
 
-  const messages: Anthropic.MessageParam[] = history
-    .slice(-(ctx.aiConfig?.effectiveChatHistoryLimit ?? CHAT_HISTORY_LIMIT))
-    .map((m) => ({
-      role: m.role,
-      content: m.content,
-    }));
+  const messages: Anthropic.MessageParam[] = trimmedHistory.map((m) => ({
+    role: m.role,
+    content: m.content,
+  }));
 
   const systemBlocks: Anthropic.TextBlockParam[] = [
     {
       type: "text",
-      text:
-        buildSalesSystemPrompt({
-          storeLabel,
-          storeCurrency: ctx.storeCurrency,
-          aiConfig: ctx.aiConfig,
-          adProductContext: ctx.adProductContext,
-          pendingOrdersHint: ctx.pendingOrdersHint,
-        }) + productHint,
+      text: buildSalesSystemPrompt({
+        storeLabel,
+        storeCurrency: ctx.storeCurrency,
+        aiConfig: ctx.aiConfig,
+        adProductContext: ctx.adProductContext,
+        pendingOrdersHint: ctx.pendingOrdersHint,
+        history: trimmedHistory,
+      }),
       cache_control: { type: "ephemeral" },
     },
   ];
@@ -251,6 +250,9 @@ export async function runSalesAgentWithAnthropic(
         input = { ...input, query: searchHint };
       }
       const executed = await executeSalesTool(tool.name, input, ctx);
+      if (executed.escalated) {
+        return "Got it — someone from our team will message you shortly 👍";
+      }
       toolResults.push({
         type: "tool_result",
         tool_use_id: tool.id,

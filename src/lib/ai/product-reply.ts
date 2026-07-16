@@ -4,7 +4,6 @@ import {
   getPrimaryProductImageUrl,
 } from "@/lib/products/products-service";
 import { executeSalesTool, type AgentContext } from "./sales-tools";
-import { orderDetailsTemplate } from "./order-details-template";
 
 export type SearchProduct = {
   title?: string;
@@ -87,7 +86,7 @@ export function formatProductsReply(products: SearchProduct[]): string {
 
     const variantLines =
       realVariants.length > 0
-        ? realVariants.slice(0, 6).map((v) => {
+        ? realVariants.slice(0, 3).map((v) => {
             const label = v.title || "Variant";
             const price = v.price_formatted ? ` — ${v.price_formatted}` : "";
             const stock = v.in_stock === false ? " (out of stock)" : "";
@@ -95,28 +94,16 @@ export function formatProductsReply(products: SearchProduct[]): string {
           })
         : [];
 
-    const bundleLines = (p.bundles ?? [])
-      .filter((b) => b.quantity && b.price_formatted)
-      .slice(0, 3)
-      .map((b) => {
-        const label = b.label?.trim() || `${b.quantity}-pack`;
-        return `• ${label}: ${b.price_formatted}`;
-      });
-
     const outOfStock =
       realVariants.length > 0 &&
       realVariants.every((v) => v.in_stock === false);
 
     return [
-      // Keep Ref internal for order placement; stripped before WhatsApp send
       refId ? `[Ref: ${refId}]` : null,
-      `*${p.title || "Product"}*`,
-      p.sku ? `SKU: ${p.sku}` : null,
-      basePrice ? `Price: ${basePrice}` : null,
-      outOfStock ? `Stock: out of stock` : `Stock: available`,
-      optionsLine ? optionsLine : null,
-      variantLines.length ? variantLines.join("\n") : null,
-      bundleLines.length ? `Bundles:\n${bundleLines.join("\n")}` : null,
+      `${p.title || "Product"}${basePrice ? ` — ${basePrice}` : ""}`,
+      outOfStock ? "Out of stock right now" : "In stock",
+      optionsLine ? `Options: ${optionsLine}` : null,
+      variantLines.length === 1 ? variantLines[0].replace(/^•\s*/, "") : null,
     ]
       .filter(Boolean)
       .join("\n");
@@ -124,7 +111,7 @@ export function formatProductsReply(products: SearchProduct[]): string {
 
   const multi =
     products.length > 1
-      ? `\n\nFound ${Math.min(products.length, 2)} matches — which one?`
+      ? `\n\nI found a couple matches — which one did you mean?`
       : "";
 
   const hasVariants = products.some((p) =>
@@ -133,9 +120,11 @@ export function formatProductsReply(products: SearchProduct[]): string {
 
   const prefix = imageMarkers.length ? `${imageMarkers.join("\n")}\n` : "";
 
-  return `${prefix}${blocks.join("\n\n")}${multi}\n\nWant to order?\n${orderDetailsTemplate(
-    { includeVariantHint: hasVariants }
-  )}`;
+  const closeLine = hasVariants
+    ? "Which size/color do you need?"
+    : "Want it? Share name, phone & delivery address.";
+
+  return `${prefix}${blocks.join("\n\n")}${multi}${multi ? "" : `\n\n${closeLine}`}`;
 }
 
 function shouldTryDirectProductLookup(message: string): boolean {
