@@ -4,7 +4,7 @@ import {
   type AgentContext,
 } from "./sales-tools";
 import { CHAT_HISTORY_LIMIT } from "./chat-history";
-import { buildSalesSystemPrompt } from "./build-system-prompt";
+import { buildSalesSystemPromptWithExamples } from "./build-system-prompt-with-examples";
 import { formatProductsReply } from "./product-reply";
 import {
   extractSkuFromText,
@@ -128,17 +128,20 @@ export async function runSalesAgentWithGroq(
   const nameHint = extractProductSearchQuery(latestUser);
   const searchHint = skuHint || nameHint;
 
+  const systemPrompt = await buildSalesSystemPromptWithExamples({
+    storeId: ctx.store.id,
+    storeLabel,
+    storeCurrency: ctx.storeCurrency,
+    aiConfig: ctx.aiConfig,
+    adProductContext: ctx.adProductContext,
+    pendingOrdersHint: ctx.pendingOrdersHint,
+    history: trimmedHistory,
+  });
+
   const messages: ChatMessage[] = [
     {
       role: "system",
-      content: buildSalesSystemPrompt({
-        storeLabel,
-        storeCurrency: ctx.storeCurrency,
-        aiConfig: ctx.aiConfig,
-        adProductContext: ctx.adProductContext,
-        pendingOrdersHint: ctx.pendingOrdersHint,
-        history: trimmedHistory,
-      }),
+      content: systemPrompt,
     },
     ...trimmedHistory.map((m) => ({
       role: m.role,

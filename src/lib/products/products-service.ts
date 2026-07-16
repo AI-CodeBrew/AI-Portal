@@ -56,12 +56,26 @@ export function getPrimaryProductImageUrl(product: {
 
 /** Pull SKU-like codes from free text (e.g. "AA-6CH6DZ33WZ\\ntell me about this"). */
 export function extractSkuFromText(text: string): string | null {
-  const t = text.trim();
+  const t = text
+    .trim()
+    // Strip URLs / domains so "ai-portal-silk.vercel.app" is not read as SKU "AI-PORTAL"
+    .replace(/https?:\/\/[^\s]+/gi, " ")
+    .replace(
+      /\b[a-z0-9][a-z0-9-]*\.(?:vercel\.app|myshopify\.com|co\.uk|com|net|org|io)\b/gi,
+      " "
+    )
+    .replace(/\s+/g, " ")
+    .trim();
   if (!t) return null;
   const portal = t.match(/\b(AA-[A-Z0-9]{6,})\b/i);
   if (portal?.[1]) return normalizeSku(portal[1]);
   const generic = t.match(/\b([A-Z]{1,5}-[A-Z0-9]{4,32})\b/i);
-  if (generic?.[1]) return normalizeSku(generic[1]);
+  if (generic?.[1]) {
+    const sku = normalizeSku(generic[1]);
+    // Project / host false positives
+    if (sku === "AI-PORTAL") return null;
+    return sku;
+  }
   if (/^[A-Z0-9][A-Z0-9_-]{3,47}$/i.test(t)) return normalizeSku(t);
   return null;
 }
@@ -729,6 +743,8 @@ export function productSearchTokens(query: string): string[] {
     "item",
     "items",
     "want",
+    "order",
+    "ordering",
     "looking",
     "for",
     "show",
@@ -765,6 +781,11 @@ export function productSearchTokens(query: string): string[] {
     "with",
     "from",
     "store",
+    "ai",
+    "bot",
+    "joke",
+    "jokes",
+    "robot",
   ]);
 
   return Array.from(
@@ -785,11 +806,22 @@ export function extractProductSearchQuery(text: string): string | null {
   const sku = extractSkuFromText(text);
   if (sku) return sku;
 
+  const orderNamed = text.match(
+    /\bwant\s+to\s+(?:order|buy)\s+(?:a\s+|an\s+|the\s+)?(.+?)(?:\?|\.|!|$|\bdo you have\b|\bplease\b)/i
+  );
+  if (orderNamed?.[1]) {
+    const phrase = orderNamed[1].replace(/[?.!]+$/g, "").trim();
+    const tokens = productSearchTokens(phrase);
+    if (tokens.length) return tokens.join(" ").slice(0, 80);
+  }
+
   const availabilityAsk = text.match(
     /\b(?:do you have|have you got|got any|any|looking for|searching for|need|want|show me|find)\b[\s,:-]*(.+)/i
   );
   if (availabilityAsk?.[1]) {
-    const phrase = availabilityAsk[1].replace(/[?.!]+$/g, "").trim();
+    let phrase = availabilityAsk[1].replace(/[?.!]+$/g, "").trim();
+    // "want to order storage rack" → skip leading order phrasing
+    phrase = phrase.replace(/^to\s+(?:order|buy)\s+/i, "").trim();
     const tokens = productSearchTokens(phrase);
     if (tokens.length) return tokens.join(" ").slice(0, 80);
   }

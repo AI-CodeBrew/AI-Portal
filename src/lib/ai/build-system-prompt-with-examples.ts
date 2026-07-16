@@ -1,0 +1,30 @@
+import { buildSalesSystemPrompt } from "./build-system-prompt";
+import { getSuccessExamplesSection } from "@/lib/outcomes/prompt-examples-cache";
+import type { ResolvedStoreAiConfig } from "./ai-settings-types";
+import type { AdProductContext } from "@/lib/ads/types";
+
+type HistoryMessage = { role: "user" | "assistant"; content: string };
+
+export async function buildSalesSystemPromptWithExamples(params: {
+  storeId: string;
+  storeLabel: string;
+  storeCurrency?: string | null;
+  aiConfig?: ResolvedStoreAiConfig | null;
+  adProductContext?: AdProductContext | null;
+  pendingOrdersHint?: string | null;
+  history?: HistoryMessage[];
+}): Promise<string> {
+  const successExamplesSection = await getSuccessExamplesSection(
+    params.storeId
+  );
+
+  return buildSalesSystemPrompt({
+    storeLabel: params.storeLabel,
+    storeCurrency: params.storeCurrency,
+    aiConfig: params.aiConfig,
+    adProductContext: params.adProductContext,
+    pendingOrdersHint: params.pendingOrdersHint,
+    history: params.history,
+    successExamplesSection,
+  });
+}

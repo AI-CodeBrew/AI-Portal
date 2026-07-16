@@ -6,7 +6,7 @@ import {
 } from "@/lib/products/products-service";
 import { executeSalesTool, type AgentContext } from "./sales-tools";
 import { parseCheckoutDetails } from "./checkout-parse";
-import { looksLikeCasualGreeting } from "./greeting-reply";
+import { looksLikeCasualGreeting, looksLikeOffTopicChat } from "./greeting-reply";
 
 export type SearchProduct = {
   title?: string;
@@ -474,6 +474,7 @@ function shouldTryDirectProductLookup(message: string): boolean {
   const t = message.trim();
   if (t.length < 2) return false;
   if (looksLikeCasualGreeting(t)) return false;
+  if (looksLikeOffTopicChat(t)) return false;
   if (GREETING_ONLY.test(t)) return false;
   // Full contact block → checkout handler, not catalog lookup
   if (parseCheckoutDetails(t)) return false;
@@ -486,13 +487,31 @@ function shouldTryDirectProductLookup(message: string): boolean {
   if (ORDER_ONLY_PATTERN.test(t) && !PRODUCT_ASK_PATTERN.test(t)) return false;
   // SKU always wins — even if they say "I want to order AA-…"
   if (extractSkuFromText(t)) return true;
-  if (PRODUCT_ASK_PATTERN.test(t) && !CHECKOUT_HIJACK.test(t)) return true;
+
   const query = extractProductSearchQuery(t);
+
+  // "I want to order storage rack" / "do you have X" — catalog lookup, not checkout yet
+  if (
+    CHECKOUT_HIJACK.test(t) &&
+    !parseCheckoutDetails(t) &&
+    query &&
+    (PRODUCT_ASK_PATTERN.test(t) || query.length >= 3)
+  ) {
+    return true;
+  }
+
+  if (PRODUCT_ASK_PATTERN.test(t) && !CHECKOUT_HIJACK.test(t)) return true;
+
   if (!query) return false;
   if (t.length <= 80 && !ORDER_ONLY_PATTERN.test(t) && !CHECKOUT_HIJACK.test(t)) {
     return true;
   }
   return false;
+}
+
+/** True when the message is asking about a product (used to skip generic opening messages). */
+export function looksLikeProductInquiry(message: string): boolean {
+  return shouldTryDirectProductLookup(message);
 }
 
 /**

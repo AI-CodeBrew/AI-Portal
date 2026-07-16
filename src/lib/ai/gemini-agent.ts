@@ -4,7 +4,7 @@ import {
   type AgentContext,
 } from "./sales-tools";
 import { CHAT_HISTORY_LIMIT } from "./chat-history";
-import { buildSalesSystemPrompt } from "./build-system-prompt";
+import { buildSalesSystemPromptWithExamples } from "./build-system-prompt-with-examples";
 import { formatProductsReply } from "./product-reply";
 import {
   extractSkuFromText,
@@ -176,7 +176,8 @@ export async function runSalesAgentWithGemini(
   const nameHint = extractProductSearchQuery(latestUser);
   const searchHint = skuHint || nameHint;
 
-  const systemPrompt = buildSalesSystemPrompt({
+  const systemPrompt = await buildSalesSystemPromptWithExamples({
+    storeId: ctx.store.id,
     storeLabel,
     storeCurrency: ctx.storeCurrency,
     aiConfig: ctx.aiConfig,

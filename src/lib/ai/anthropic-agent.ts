@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { executeSalesTool, type AgentContext } from "./sales-tools";
-import { buildSalesSystemPrompt } from "./build-system-prompt";
+import { buildSalesSystemPromptWithExamples } from "./build-system-prompt-with-examples";
 import { CHAT_HISTORY_LIMIT } from "./chat-history";
 import { tryDirectProductReply } from "./product-reply";
 import { tryDirectCheckoutReply } from "./checkout-reply";
@@ -175,17 +175,20 @@ export async function runSalesAgentWithAnthropic(
     content: m.content,
   }));
 
+  const systemPrompt = await buildSalesSystemPromptWithExamples({
+    storeId: ctx.store.id,
+    storeLabel,
+    storeCurrency: ctx.storeCurrency,
+    aiConfig: ctx.aiConfig,
+    adProductContext: ctx.adProductContext,
+    pendingOrdersHint: ctx.pendingOrdersHint,
+    history: trimmedHistory,
+  });
+
   const systemBlocks: Anthropic.TextBlockParam[] = [
     {
       type: "text",
-      text: buildSalesSystemPrompt({
-        storeLabel,
-        storeCurrency: ctx.storeCurrency,
-        aiConfig: ctx.aiConfig,
-        adProductContext: ctx.adProductContext,
-        pendingOrdersHint: ctx.pendingOrdersHint,
-        history: trimmedHistory,
-      }),
+      text: systemPrompt,
       cache_control: { type: "ephemeral" },
     },
   ];

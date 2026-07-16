@@ -22,6 +22,26 @@ export function looksLikeCasualGreeting(text: string): boolean {
   return false;
 }
 
+/** Meta / chitchat — not catalog or checkout. */
+export function looksLikeOffTopicChat(text: string): boolean {
+  const t = text.trim();
+  if (t.length < 3) return false;
+  if (
+    /\b(are you|you're|u r|r u)\s+(an?\s+)?(ai|a bot|bot|robot|real person|human)\b/i.test(
+      t
+    )
+  ) {
+    return true;
+  }
+  if (/\b(tell me (a|about)?\s*(joke|funny|story)|say something funny)\b/i.test(t)) {
+    return true;
+  }
+  if (/\b(who (made|built|created) you|what are you|are you real)\b/i.test(t)) {
+    return true;
+  }
+  return false;
+}
+
 function storeLabel(ctx: AgentContext): string {
   return (
     ctx.store.store_name ||
@@ -53,4 +73,23 @@ export function tryDirectGreetingReply(
 ): string | null {
   if (!looksLikeCasualGreeting(latestUserMessage)) return null;
   return buildCasualGreetingReply(ctx);
+}
+
+/** Honest reply to "are you AI?", jokes, etc. — not a product SKU lookup. */
+export function tryDirectOffTopicReply(
+  ctx: AgentContext,
+  latestUserMessage: string
+): string | null {
+  if (!looksLikeOffTopicChat(latestUserMessage)) return null;
+  const store = storeLabel(ctx);
+  const agent = agentLabel(ctx, store);
+  const t = latestUserMessage.trim();
+
+  if (/\bjoke\b/i.test(t)) {
+    return `Ha — I'm ${agent} from ${store}, better at orders than comedy 😄 Need anything from the catalog?`;
+  }
+  if (/\b(are you|you're).*\b(ai|bot|robot)\b/i.test(t)) {
+    return `I'm ${agent}, the ${store} assistant on WhatsApp — I help with products, prices, and placing orders. What can I look up for you?`;
+  }
+  return `I'm here to help with ${store} products and orders — what would you like to check?`;
 }

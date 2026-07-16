@@ -18,6 +18,7 @@ export function buildSalesSystemPrompt(params: {
   adProductContext?: AdProductContext | null;
   pendingOrdersHint?: string | null;
   history?: HistoryMessage[];
+  successExamplesSection?: string | null;
 }): string {
   const {
     storeLabel,
@@ -26,6 +27,7 @@ export function buildSalesSystemPrompt(params: {
     adProductContext,
     pendingOrdersHint,
     history = [],
+    successExamplesSection,
   } = params;
 
   const agentName =
@@ -125,6 +127,7 @@ Always trust tool output over memory.
 ${SALES_TOOL_RULES}
 
 ${sessionNote}
+${successExamplesSection?.trim() ? `\n${successExamplesSection.trim()}` : ""}
 
 # YOUR TASK
 Write the next WhatsApp message as ${agentName}. If you need product/stock/order data, call the appropriate tool first. Move toward a closed order unless the customer disengaged or needs escalation.`;

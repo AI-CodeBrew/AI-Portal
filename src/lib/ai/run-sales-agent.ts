@@ -18,7 +18,7 @@ import {
   looksLikeOrderDecline,
   productOfferedInHistory,
 } from "./sales-recovery";
-import { tryDirectGreetingReply, buildCasualGreetingReply } from "./greeting-reply";
+import { tryDirectGreetingReply, tryDirectOffTopicReply, buildCasualGreetingReply } from "./greeting-reply";
 
 export type { AgentContext } from "./sales-tools";
 
@@ -97,7 +97,23 @@ export async function runSalesAgent(
     console.error("[run-sales-agent] sales recovery failed:", err);
   }
 
-  // Catalog lookup by SKU or product name (incl. variants) before greetings / LLM
+  // Casual hi / what's up — human greeting, not catalog lookup
+  try {
+    const greeting = tryDirectGreetingReply(enrichedCtx, latestUser);
+    if (greeting) return greeting;
+  } catch (err) {
+    console.error("[run-sales-agent] greeting reply failed:", err);
+  }
+
+  // "Are you AI?", jokes, etc. — before catalog lookup
+  try {
+    const offTopic = tryDirectOffTopicReply(enrichedCtx, latestUser);
+    if (offTopic) return offTopic;
+  } catch (err) {
+    console.error("[run-sales-agent] off-topic reply failed:", err);
+  }
+
+  // Catalog lookup by SKU or product name (incl. variants)
   try {
     const imageReply = await tryDirectProductImageReply(
       enrichedCtx,
@@ -114,14 +130,6 @@ export async function runSalesAgent(
     if (direct) return direct.reply;
   } catch (err) {
     console.error("[run-sales-agent] product prefetch failed:", err);
-  }
-
-  // Casual hi / what's up — human greeting, not catalog lookup
-  try {
-    const greeting = tryDirectGreetingReply(enrichedCtx, latestUser);
-    if (greeting) return greeting;
-  } catch (err) {
-    console.error("[run-sales-agent] greeting reply failed:", err);
   }
 
   // Objection after a product pitch — recovery handler only (no LLM double-reply)

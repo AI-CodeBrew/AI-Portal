@@ -36,6 +36,7 @@ const navGroups: NavGroup[] = [
     label: "Settings",
     items: [
       { href: "/dashboard/ai", label: "AI Settings" },
+      { href: "/dashboard/outcomes", label: "Deal Outcomes" },
       { href: "/dashboard/whatsapp-templates", label: "WA Templates" },
       { href: "/dashboard/integrations", label: "Integrations" },
       { href: "/dashboard/plan", label: "Plan & Usage" },

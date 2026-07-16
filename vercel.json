@@ -1,0 +1,12 @@
+{
+  "crons": [
+    {
+      "path": "/api/outcomes/extract",
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/outcomes/weekly-summary",
+      "schedule": "0 9 * * 1"
+    }
+  ]
+}

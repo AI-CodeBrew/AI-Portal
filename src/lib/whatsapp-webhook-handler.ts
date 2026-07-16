@@ -5,6 +5,7 @@ import { runSalesAgent, isSalesAgentConfigured } from "@/lib/ai/run-sales-agent"
 import {
   tryDirectProductImageReply,
   tryDirectProductReply,
+  looksLikeProductInquiry,
 } from "@/lib/ai/product-reply";
 import { getRecentChatHistory, getStoreChatContextLimits } from "@/lib/ai/chat-history";
 import { quotaLimitMessage } from "@/lib/ai/plans";
@@ -24,7 +25,7 @@ import {
 } from "@/lib/ads/ad-links-service";
 import { parseAdRefFromMessage } from "@/lib/ads/whatsapp-ad-links";
 import { extractOutboundMedia } from "@/lib/ai/message-markers";
-import { buildCasualGreetingReply } from "@/lib/ai/greeting-reply";
+import { buildCasualGreetingReply, tryDirectOffTopicReply } from "@/lib/ai/greeting-reply";
 import {
   getStoreWhatsAppCredentials,
   resolveMetaSecret,
@@ -399,7 +400,7 @@ export async function handleWhatsAppWebhookMessage(
             }
           );
 
-          if (isNewConversation) {
+          if (isNewConversation && !looksLikeProductInquiry(inboundText)) {
             try {
               const aiSettings = await resolveStoreAiConfig(activeStore.id);
               const opening = aiSettings.openingMessage?.trim();
@@ -507,6 +508,7 @@ export async function handleWhatsAppWebhookMessage(
                   );
                   replyText =
                     direct?.reply ??
+                    tryDirectOffTopicReply(greetingCtx, inboundText) ??
                     buildCasualGreetingReply(greetingCtx);
                 }
               } catch (fallbackErr) {
@@ -529,8 +531,38 @@ export async function handleWhatsAppWebhookMessage(
             console.error(
               "[whatsapp-webhook] No LLM configured — set Groq or Gemini in Admin → AI Defaults."
             );
-            replyText =
-              "Thanks for your message! Our team will get back to you shortly.";
+            const chatLimits = await getStoreChatContextLimits(activeStore.id);
+            const chatHistory = await getRecentChatHistory(
+              conversation.id,
+              chatLimits.historyLimit,
+              chatLimits.windowMs
+            );
+            const agentCtx = {
+              store: activeStore,
+              conversationId: conversation.id,
+              customerPhone,
+              customerId: conversation.customer_id,
+              adProductContext,
+            };
+            const aiSettings = await resolveStoreAiConfig(activeStore.id);
+            const imageReply = await tryDirectProductImageReply(
+              agentCtx,
+              inboundText,
+              chatHistory
+            );
+            if (imageReply) {
+              replyText = imageReply;
+            } else {
+              const direct = await tryDirectProductReply(
+                agentCtx,
+                inboundText,
+                chatHistory
+              );
+              replyText =
+                direct?.reply ??
+                tryDirectOffTopicReply({ ...agentCtx, aiConfig: aiSettings }, inboundText) ??
+                buildCasualGreetingReply({ ...agentCtx, aiConfig: aiSettings });
+            }
           }
 
           const { text: customerFacingText, imageUrls } =
