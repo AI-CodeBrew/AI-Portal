@@ -22,6 +22,8 @@ const COUNTRIES = [
 
 type Tab = "basics" | "options" | "bundles" | "discount";
 
+type FormOption = ProductOptionInput & { valuesText?: string };
+
 const TABS: { id: Tab; label: string }[] = [
   { id: "basics", label: "Basics" },
   { id: "options", label: "Options & Variants" },
@@ -43,7 +45,7 @@ function emptyForm() {
     discount_enabled: false,
     discount_type: "percent" as "percent" | "fixed",
     discount_value: "",
-    options: [] as ProductOptionInput[],
+    options: [] as FormOption[],
     bundles: [] as ProductBundleInput[],
   };
 }
@@ -57,7 +59,18 @@ function suggestSku(name: string): string {
     .slice(0, 32);
 }
 
-function cartesianPreview(options: ProductOptionInput[]): string[] {
+function parseOptionValues(text: string): string[] {
+  return text
+    .split(",")
+    .map((v) => v.trim())
+    .filter(Boolean);
+}
+
+function formatOptionValues(values: string[]): string {
+  return values.join(", ");
+}
+
+function cartesianPreview(options: FormOption[]): string[] {
   const cleaned = options
     .map((o) => ({
       name: o.name.trim(),
@@ -147,6 +160,7 @@ export function ProductsPanel() {
       options: (product.options ?? []).map((o) => ({
         name: o.name,
         values: o.values,
+        valuesText: formatOptionValues(o.values),
       })),
       bundles: (product.bundles ?? []).map((b) => ({
         quantity: b.quantity,
@@ -225,7 +239,10 @@ export function ProductsPanel() {
         discount_value: form.discount_enabled
           ? Number(form.discount_value) || 0
           : null,
-        options: form.options,
+        options: form.options.map(({ name, values, valuesText }) => ({
+          name,
+          values: parseOptionValues(valuesText ?? formatOptionValues(values)),
+        })),
         bundles: form.bundles,
       };
 
@@ -654,15 +671,27 @@ export function ProductsPanel() {
                         </button>
                       </div>
                       <input
-                        value={opt.values.join(", ")}
+                        value={opt.valuesText ?? formatOptionValues(opt.values)}
                         onChange={(e) => {
+                          const text = e.target.value;
                           const options = [...form.options];
                           options[idx] = {
                             ...options[idx],
-                            values: e.target.value
-                              .split(",")
-                              .map((v) => v.trim())
-                              .filter(Boolean),
+                            valuesText: text,
+                            values: parseOptionValues(text),
+                          };
+                          setForm((f) => ({ ...f, options }));
+                        }}
+                        onBlur={() => {
+                          const options = [...form.options];
+                          const parsed = parseOptionValues(
+                            options[idx].valuesText ??
+                              formatOptionValues(options[idx].values)
+                          );
+                          options[idx] = {
+                            ...options[idx],
+                            values: parsed,
+                            valuesText: formatOptionValues(parsed),
                           };
                           setForm((f) => ({ ...f, options }));
                         }}
@@ -676,7 +705,7 @@ export function ProductsPanel() {
                     onClick={() =>
                       setForm((f) => ({
                         ...f,
-                        options: [...f.options, { name: "", values: [] }],
+                        options: [...f.options, { name: "", values: [], valuesText: "" }],
                       }))
                     }
                     className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700"
