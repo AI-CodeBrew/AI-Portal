@@ -1,12 +1,16 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { fetchShopifyOrderContact } from "@/lib/shopify";
-import { toWhatsAppRecipient } from "@/lib/phone";
+import {
+  buildWhatsAppRecipientTargets,
+  phoneVariants,
+} from "@/lib/phone";
 
 type OrderRow = {
   id: string;
   store_id: string;
   customer_id: string | null;
   shopify_order_id: string | null;
+  source?: string | null;
   shipping_address?: unknown;
   customers?:
     | { phone: string | null; name: string | null }
@@ -22,27 +26,50 @@ type StoreRow = {
 async function findConversationPhone(
   supabase: SupabaseClient,
   storeId: string,
-  customerId: string | null
+  customerId: string | null,
+  phoneHints: string[]
 ): Promise<string | null> {
-  if (!customerId) return null;
+  if (customerId) {
+    const { data } = await supabase
+      .from("whatsapp_conversations")
+      .select("customer_phone")
+      .eq("store_id", storeId)
+      .eq("customer_id", customerId)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
-  const { data } = await supabase
+    const linked = (data?.customer_phone as string | null)?.trim();
+    if (linked) return linked;
+  }
+
+  const variants = new Set<string>();
+  for (const raw of phoneHints) {
+    for (const v of phoneVariants(raw)) {
+      variants.add(v);
+    }
+  }
+
+  if (variants.size === 0) return null;
+
+  const { data: rows } = await supabase
     .from("whatsapp_conversations")
     .select("customer_phone")
     .eq("store_id", storeId)
-    .eq("customer_id", customerId)
+    .in("customer_phone", Array.from(variants))
     .order("updated_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .limit(1);
 
-  return (data?.customer_phone as string | null)?.trim() || null;
+  const match = rows?.[0]?.customer_phone as string | undefined;
+  return match?.trim() || null;
 }
 
 export async function findOrderConversationId(
   supabase: SupabaseClient,
   storeId: string,
   customerId: string | null,
-  recipientPhone: string
+  recipientPhone: string,
+  extraPhones: string[] = []
 ): Promise<string | null> {
   if (customerId) {
     const { data } = await supabase
@@ -57,28 +84,36 @@ export async function findOrderConversationId(
     if (data?.id) return data.id as string;
   }
 
-  const { data } = await supabase
+  const variants = new Set<string>();
+  for (const raw of [recipientPhone, ...extraPhones]) {
+    for (const v of phoneVariants(raw)) {
+      variants.add(v);
+    }
+  }
+
+  if (variants.size === 0) return null;
+
+  const { data: rows } = await supabase
     .from("whatsapp_conversations")
     .select("id")
     .eq("store_id", storeId)
-    .eq("customer_phone", recipientPhone)
+    .in("customer_phone", Array.from(variants))
     .order("updated_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .limit(1);
 
-  return (data?.id as string | null) ?? null;
+  return (rows?.[0]?.id as string | null) ?? null;
 }
 
 /**
- * Resolve the WhatsApp number for an order — same sources as order confirmation:
- * shipping phone → linked customer → WhatsApp chat → Shopify order contact.
+ * Resolve WhatsApp delivery targets for an order — conversation chat number first,
+ * then shipping / customer / Shopify contact (each normalized).
  */
-export async function resolveOrderWhatsAppRecipient(
+export async function resolveOrderWhatsAppTargets(
   supabase: SupabaseClient,
   order: OrderRow,
   store: StoreRow
 ): Promise<
-  | { to: string; customerName: string | null; rawPhone: string | null }
+  | { targets: string[]; customerName: string | null; conversationPhone: string | null }
   | { error: string }
 > {
   const customer = order.customers;
@@ -89,28 +124,27 @@ export async function resolveOrderWhatsAppRecipient(
     name?: string | null;
   } | null;
 
-  let rawPhone =
-    (shipping?.phone && String(shipping.phone).trim()) ||
-    cust?.phone?.trim() ||
-    null;
+  const shippingPhone = shipping?.phone?.trim() || null;
+  const customerPhone = cust?.phone?.trim() || null;
 
   let customerName =
     (shipping?.name && String(shipping.name).trim()) ||
     cust?.name?.trim() ||
     null;
 
-  const conversationHint = await findConversationPhone(
-    supabase,
-    order.store_id,
-    order.customer_id
+  const phoneHints = [shippingPhone, customerPhone].filter(
+    (p): p is string => Boolean(p)
   );
 
-  if (!rawPhone && conversationHint) {
-    rawPhone = conversationHint;
-  }
+  let conversationPhone = await findConversationPhone(
+    supabase,
+    order.store_id,
+    order.customer_id,
+    phoneHints
+  );
 
+  let shopifyPhone: string | null = null;
   if (
-    !rawPhone &&
     order.shopify_order_id &&
     store.shop_domain &&
     store.shopify_access_token
@@ -121,24 +155,43 @@ export async function resolveOrderWhatsAppRecipient(
       order.shopify_order_id
     );
     if (contact.phone) {
-      rawPhone = contact.phone;
+      shopifyPhone = contact.phone;
       customerName = customerName ?? contact.name;
     }
   }
 
-  if (!rawPhone) {
+  const orderPhones =
+    order.source === "whatsapp_ai"
+      ? [shippingPhone, customerPhone, shopifyPhone]
+      : [shippingPhone, customerPhone, shopifyPhone];
+
+  const targets = buildWhatsAppRecipientTargets(orderPhones, conversationPhone);
+
+  if (targets.length === 0) {
     return {
       error:
         "No customer phone on this order — cannot send WhatsApp follow-up",
     };
   }
 
-  const to = toWhatsAppRecipient(rawPhone, conversationHint);
-  if (!to || to.length < 10) {
-    return {
-      error: `Invalid customer phone number: ${rawPhone}`,
-    };
-  }
+  return { targets, customerName, conversationPhone };
+}
 
-  return { to, customerName, rawPhone };
+/** @deprecated Prefer resolveOrderWhatsAppTargets — kept for single-target callers */
+export async function resolveOrderWhatsAppRecipient(
+  supabase: SupabaseClient,
+  order: OrderRow,
+  store: StoreRow
+): Promise<
+  | { to: string; customerName: string | null; rawPhone: string | null }
+  | { error: string }
+> {
+  const resolved = await resolveOrderWhatsAppTargets(supabase, order, store);
+  if ("error" in resolved) return resolved;
+
+  return {
+    to: resolved.targets[0]!,
+    customerName: resolved.customerName,
+    rawPhone: resolved.targets[0] ?? null,
+  };
 }

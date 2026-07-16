@@ -7,7 +7,7 @@ import {
 import type { AuthUser } from "@/lib/auth";
 import {
   findOrderConversationId,
-  resolveOrderWhatsAppRecipient,
+  resolveOrderWhatsAppTargets,
 } from "@/lib/orders/order-whatsapp-phone";
 
 export async function sendOrderFollowUp(
@@ -80,12 +80,12 @@ export async function sendOrderFollowUp(
     return { error: "WhatsApp is not connected", status: 400, orderId };
   }
 
-  const resolved = await resolveOrderWhatsAppRecipient(supabase, order, store);
+  const resolved = await resolveOrderWhatsAppTargets(supabase, order, store);
   if ("error" in resolved) {
     return { error: resolved.error, status: 400, orderId };
   }
 
-  const { to, customerName } = resolved;
+  const { targets, customerName } = resolved;
 
   const items = (order.items as Array<{ title: string; quantity: number }>) ?? [];
   const bodyParams = buildFollowUpParams({
@@ -97,26 +97,46 @@ export async function sendOrderFollowUp(
     currency: (order.currency as string | null) ?? null,
   });
 
-  try {
-    await sendWhatsAppTemplate({
-      phoneNumberId: waCreds.phoneNumberId,
-      accessToken: waCreds.accessToken,
-      to,
-      templateName: template.name as string,
-      languageCode: (template.language as string) || "en",
-      bodyParams,
-    });
-  } catch (err) {
-    const message =
-      err instanceof Error ? err.message : "WhatsApp template send failed";
-    return { error: message, status: 502, orderId };
+  let to = targets[0]!;
+  let lastError = "WhatsApp template send failed";
+
+  for (const candidate of targets) {
+    try {
+      await sendWhatsAppTemplate({
+        phoneNumberId: waCreds.phoneNumberId,
+        accessToken: waCreds.accessToken,
+        to: candidate,
+        templateName: template.name as string,
+        languageCode: (template.language as string) || "en",
+        bodyParams,
+      });
+      to = candidate;
+      lastError = "";
+      break;
+    } catch (err) {
+      lastError =
+        err instanceof Error ? err.message : "WhatsApp template send failed";
+      console.warn(
+        `[follow-up] template send failed order=${orderId} to=${candidate}: ${lastError}`
+      );
+    }
+  }
+
+  if (lastError) {
+    const tried = targets.map((t) => `+${t}`).join(", ");
+    return {
+      error: `${lastError} (tried: ${tried})`,
+      status: 502,
+      orderId,
+    };
   }
 
   const conversationId = await findOrderConversationId(
     supabase,
     storeId,
     order.customer_id as string | null,
-    to
+    to,
+    targets
   );
 
   if (conversationId) {

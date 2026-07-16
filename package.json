@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:window": "node --experimental-strip-types --test src/lib/whatsapp-window/window-status.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.110.0",

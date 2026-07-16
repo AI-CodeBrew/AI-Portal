@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireResellerStore } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { normalizePhone } from "@/lib/whatsapp";
+import { getWindowStatus } from "@/lib/whatsapp-window/window-status";
+import type { WindowType } from "@/lib/whatsapp-window/window-status";
 
 export type InboxConversation = {
   id: string;
@@ -13,6 +15,9 @@ export type InboxConversation = {
   created_at: string;
   updated_at: string;
   ai_exhausted?: boolean | null;
+  last_customer_message_at: string | null;
+  window_type: WindowType;
+  marketing_opt_in: boolean;
 };
 
 export async function GET(request: NextRequest) {
@@ -35,6 +40,10 @@ export async function GET(request: NextRequest) {
       query = query.eq("status", "ai_handling");
     } else if (filter === "exhausted") {
       query = query.eq("ai_exhausted", true);
+    } else if (filter === "closing_soon") {
+      query = query
+        .not("last_customer_message_at", "is", null)
+        .order("last_customer_message_at", { ascending: true });
     }
 
     let { data: conversations, error } = await query;
@@ -43,7 +52,10 @@ export async function GET(request: NextRequest) {
       if (error.message.includes("ai_exhausted") && filter === "exhausted") {
         return NextResponse.json({ conversations: [] });
       }
-      if (error.message.includes("ai_exhausted")) {
+      if (
+        error.message.includes("ai_exhausted") ||
+        error.message.includes("last_customer_message_at")
+      ) {
         let fallback = supabase
           .from("whatsapp_conversations")
           .select("*")
@@ -85,7 +97,6 @@ export async function GET(request: NextRequest) {
         if (phone && name) nameByPhone.set(phone, name);
       }
 
-      // Also try matching without relying on exact phone format in DB
       if (nameByPhone.size < phones.length) {
         const { data: allCustomers } = await supabase
           .from("customers")
@@ -113,8 +124,23 @@ export async function GET(request: NextRequest) {
         created_at: c.created_at as string,
         updated_at: c.updated_at as string,
         ai_exhausted: (c.ai_exhausted as boolean | null) ?? null,
+        last_customer_message_at:
+          (c.last_customer_message_at as string | null) ?? null,
+        window_type: ((c.window_type as WindowType | null) ?? "service") as WindowType,
+        marketing_opt_in: Boolean(c.marketing_opt_in),
       };
     });
+
+    if (filter === "closing_soon") {
+      enriched = enriched
+        .map((c) => ({
+          c,
+          window: getWindowStatus(c.last_customer_message_at, c.window_type),
+        }))
+        .filter(({ window }) => window.urgency === "closing_soon")
+        .sort((a, b) => a.window.msRemaining - b.window.msRemaining)
+        .map(({ c }) => c);
+    }
 
     if (search) {
       const q = search.toLowerCase();

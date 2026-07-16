@@ -4,6 +4,8 @@ export type ShopifySyncStatus = "synced" | "failed" | "not_applicable";
 export type RecoveryDealType = "discount" | "bundle";
 export type ConversationStatus = "ai_handling" | "human_handoff" | "closed";
 export type MessageDirection = "in" | "out";
+export type WhatsAppWindowType = "service" | "free_entry_point";
+export type WindowUrgency = "safe" | "closing_soon" | "closed";
 
 export interface Store {
   id: string;
@@ -102,6 +104,9 @@ export interface WhatsappConversation {
   updated_at: string;
   admin_read_at?: string | null;
   ai_exhausted?: boolean | null;
+  last_customer_message_at?: string | null;
+  window_type?: WhatsAppWindowType | null;
+  marketing_opt_in?: boolean | null;
 }
 
 export interface WhatsappMessage {

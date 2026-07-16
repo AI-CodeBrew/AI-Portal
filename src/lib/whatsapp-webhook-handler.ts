@@ -34,6 +34,12 @@ import {
 } from "@/lib/whatsapp";
 import { getPlatformMetaCredentials } from "@/lib/platform/meta-settings";
 import { recordInboundWhatsappMessage, claimWhatsappWebhookDelivery } from "@/lib/whatsapp-inbound-message";
+import {
+  inboundMessagePreview,
+  isCtwaReferral,
+  resolveWindowTypeOnInbound,
+} from "@/lib/whatsapp-window/conversation-window";
+import type { WindowType } from "@/lib/whatsapp-window/window-status";
 import type { Store } from "@/lib/types";
 
 function verifyWebhookSignature(
@@ -158,6 +164,10 @@ export async function handleWhatsAppWebhookMessage(
             id: string;
             type: string;
             text?: { body: string };
+            referral?: {
+              ctwa_clid?: string;
+              source_type?: string;
+            };
           }>;
         };
       }>;
@@ -230,10 +240,8 @@ export async function handleWhatsAppWebhookMessage(
       }
 
       for (const msg of messages) {
-        if (msg.type !== "text" || !msg.text?.body) continue;
-
         const customerPhone = normalizePhone(msg.from);
-        const inboundText = msg.text.body;
+        if (!customerPhone) continue;
 
         try {
           const claimed = await claimWhatsappWebhookDelivery(supabase, msg.id);
@@ -272,9 +280,14 @@ export async function handleWhatsAppWebhookMessage(
 
           if (!conversation) continue;
 
+          const inboundPreview = inboundMessagePreview(
+            msg.type,
+            msg.text?.body
+          );
+
           const inboundStatus = await recordInboundWhatsappMessage(supabase, {
             conversationId: conversation.id,
-            content: inboundText,
+            content: inboundPreview,
             metaMessageId: msg.id,
           });
 
@@ -287,14 +300,40 @@ export async function handleWhatsAppWebhookMessage(
 
           if (inboundStatus === "failed") {
             console.error(
-              `[whatsapp-webhook] could not persist inbound message — still attempting reply`
+              `[whatsapp-webhook] could not persist inbound message — still updating window`
             );
           }
 
+          const windowType = resolveWindowTypeOnInbound({
+            isNewConversation,
+            lastCustomerMessageAt:
+              (conversation.last_customer_message_at as string | null) ?? null,
+            currentWindowType:
+              (conversation.window_type as WindowType | null) ?? "service",
+            isAdReferral: isCtwaReferral(msg.referral),
+          });
+          const nowIso = new Date().toISOString();
+
           await supabase
             .from("whatsapp_conversations")
-            .update({ updated_at: new Date().toISOString() })
+            .update({
+              last_customer_message_at: nowIso,
+              window_type: windowType,
+              updated_at: nowIso,
+            })
             .eq("id", conversation.id);
+
+          conversation = {
+            ...conversation,
+            last_customer_message_at: nowIso,
+            window_type: windowType,
+          };
+
+          if (msg.type !== "text" || !msg.text?.body) {
+            continue;
+          }
+
+          const inboundText = msg.text.body;
 
           if (conversation.status === "human_handoff") {
             continue;

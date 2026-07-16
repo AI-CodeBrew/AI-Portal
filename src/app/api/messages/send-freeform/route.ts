@@ -70,7 +70,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         {
           error:
-            "The messaging window has closed. Use POST /api/messages/send-template with an approved template.",
+            "The 24-hour messaging window has closed. Use an approved WhatsApp template instead.",
           windowClosed: true,
         },
         { status: 400 }
@@ -126,14 +126,9 @@ export async function POST(request: NextRequest) {
     } catch (sendErr) {
       const detail =
         sendErr instanceof Error ? sendErr.message : "WhatsApp send failed";
-      console.error("[inbox/reply] WhatsApp send failed:", detail);
+      console.error("[messages/send-freeform] WhatsApp send failed:", detail);
       return NextResponse.json(
-        {
-          error:
-            "Could not deliver message to WhatsApp. " +
-            "If the customer last messaged more than 24 hours ago, Meta requires an approved template. " +
-            `Details: ${detail}`,
-        },
+        { error: `Could not deliver message to WhatsApp. Details: ${detail}` },
         { status: 502 }
       );
     }
@@ -147,7 +142,10 @@ export async function POST(request: NextRequest) {
       });
 
     if (insertError) {
-      console.error("[inbox/reply] DB insert failed after send:", insertError.message);
+      console.error(
+        "[messages/send-freeform] DB insert failed after send:",
+        insertError.message
+      );
       return NextResponse.json(
         {
           error:
@@ -169,13 +167,13 @@ export async function POST(request: NextRequest) {
       .update(conversationUpdate)
       .eq("id", conversationId);
 
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, to });
   } catch (err) {
     const authRes = authErrorResponse(err);
     if (authRes) return authRes;
-    console.error("[inbox/reply]", err);
+    console.error("[messages/send-freeform]", err);
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Failed to send reply" },
+      { error: err instanceof Error ? err.message : "Failed to send message" },
       { status: 500 }
     );
   }
