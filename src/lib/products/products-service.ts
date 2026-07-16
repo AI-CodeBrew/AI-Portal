@@ -784,6 +784,16 @@ export function productSearchTokens(query: string): string[] {
 export function extractProductSearchQuery(text: string): string | null {
   const sku = extractSkuFromText(text);
   if (sku) return sku;
+
+  const availabilityAsk = text.match(
+    /\b(?:do you have|have you got|got any|any|looking for|searching for|need|want|show me|find)\b[\s,:-]*(.+)/i
+  );
+  if (availabilityAsk?.[1]) {
+    const phrase = availabilityAsk[1].replace(/[?.!]+$/g, "").trim();
+    const tokens = productSearchTokens(phrase);
+    if (tokens.length) return tokens.join(" ").slice(0, 80);
+  }
+
   const tokens = productSearchTokens(text);
   if (!tokens.length) return null;
   return tokens.join(" ").slice(0, 80);

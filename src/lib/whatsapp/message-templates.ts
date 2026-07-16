@@ -479,6 +479,7 @@ export async function syncWhatsAppTemplatesFromMeta(
       .from("whatsapp_message_templates")
       .update({
         status,
+        language: remote.language || localRow.language,
         meta_template_id: remote.id ?? localRow.meta_template_id,
         meta_status: remote.status ?? null,
         rejection_reason:

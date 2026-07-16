@@ -2,10 +2,13 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import {
   getStoreWhatsAppCredentials,
   sendWhatsAppTemplate,
-  normalizePhone,
   formatOrderConfirmationParams,
 } from "@/lib/whatsapp";
 import type { AuthUser } from "@/lib/auth";
+import {
+  findOrderConversationId,
+  resolveOrderWhatsAppRecipient,
+} from "@/lib/orders/order-whatsapp-phone";
 
 export async function sendOrderFollowUp(
   orderId: string,
@@ -60,7 +63,7 @@ export async function sendOrderFollowUp(
   const { data: store } = await supabase
     .from("stores")
     .select(
-      "id, whatsapp_phone_number_id, whatsapp_access_token, store_name, shop_domain"
+      "id, whatsapp_phone_number_id, whatsapp_access_token, store_name, shop_domain, shopify_access_token"
     )
     .eq("id", storeId)
     .single();
@@ -77,26 +80,12 @@ export async function sendOrderFollowUp(
     return { error: "WhatsApp is not connected", status: 400, orderId };
   }
 
-  const customer = order.customers as
-    | { phone: string | null; name: string | null }
-    | { phone: string | null; name: string | null }[]
-    | null;
-  const cust = Array.isArray(customer) ? customer[0] : customer;
-  let phone = cust?.phone?.trim() || null;
-  const customerName = cust?.name?.trim() || null;
-
-  // Try Shopify contact if no local phone
-  if (!phone && order.shopify_order_id && store) {
-    // leave as-is; confirm flow has richer Shopify fetch — keep simple here
+  const resolved = await resolveOrderWhatsAppRecipient(supabase, order, store);
+  if ("error" in resolved) {
+    return { error: resolved.error, status: 400, orderId };
   }
 
-  if (!phone) {
-    return {
-      error: "No customer phone on this order — cannot send WhatsApp follow-up",
-      status: 400,
-      orderId,
-    };
-  }
+  const { to, customerName } = resolved;
 
   const items = (order.items as Array<{ title: string; quantity: number }>) ?? [];
   const bodyParams = buildFollowUpParams({
@@ -112,7 +101,7 @@ export async function sendOrderFollowUp(
     await sendWhatsAppTemplate({
       phoneNumberId: waCreds.phoneNumberId,
       accessToken: waCreds.accessToken,
-      to: normalizePhone(phone),
+      to,
       templateName: template.name as string,
       languageCode: (template.language as string) || "en",
       bodyParams,
@@ -123,28 +112,24 @@ export async function sendOrderFollowUp(
     return { error: message, status: 502, orderId };
   }
 
-  // Log outbound in conversation if one exists
-  const to = normalizePhone(phone);
-  const { data: conv } = await supabase
-    .from("whatsapp_conversations")
-    .select("id")
-    .eq("store_id", storeId)
-    .eq("customer_phone", to)
-    .order("updated_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const conversationId = await findOrderConversationId(
+    supabase,
+    storeId,
+    order.customer_id as string | null,
+    to
+  );
 
-  if (conv?.id) {
+  if (conversationId) {
     const preview = `Follow-up template: ${template.name}`;
     await supabase.from("whatsapp_messages").insert({
-      conversation_id: conv.id,
+      conversation_id: conversationId,
       direction: "out",
       content: preview,
     });
     await supabase
       .from("whatsapp_conversations")
       .update({ updated_at: new Date().toISOString() })
-      .eq("id", conv.id);
+      .eq("id", conversationId);
   }
 
   return {

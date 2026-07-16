@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { Order } from "@/lib/types";
 import type { WhatsAppMessageTemplate } from "@/lib/whatsapp/message-templates";
+import { previewOrderPhone } from "@/lib/orders/order-whatsapp-phone";
 
 export function OrderFollowUpModal({
   order,
@@ -58,7 +59,7 @@ export function OrderFollowUpModal({
   }
 
   const selected = templates.find((t) => t.id === templateId);
-  const phone = order.customers?.phone;
+  const phone = previewOrderPhone(order);
 
   return (
     <div

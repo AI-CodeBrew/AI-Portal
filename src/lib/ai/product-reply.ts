@@ -2,6 +2,7 @@ import {
   extractSkuFromText,
   extractProductSearchQuery,
   getPrimaryProductImageUrl,
+  productSearchTokens,
 } from "@/lib/products/products-service";
 import { executeSalesTool, type AgentContext } from "./sales-tools";
 import { parseCheckoutDetails } from "./checkout-parse";
@@ -433,6 +434,42 @@ export function formatProductsReply(products: SearchProduct[]): string {
   return `${prefix}${blocks.join("\n\n")}${multi}${multi ? "" : `\n\n${closeLine}`}`;
 }
 
+function formatProductNotFoundReply(query: string): string {
+  const label = query.trim() || "that";
+  return [
+    `I checked our catalog — we don't have *${label}* available right now.`,
+    `Try a different spelling, another product name, or send a SKU and I'll look again.`,
+  ].join("\n");
+}
+
+/** Drop fuzzy catalog noise when nothing actually matches the customer's words. */
+function productMatchesQuery(product: SearchProduct, query: string): boolean {
+  const tokens = productSearchTokens(query);
+  if (!tokens.length) return true;
+
+  const hay = `${product.title ?? ""} ${product.sku ?? ""} ${product.description ?? ""}`
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, " ");
+
+  const hits = tokens.filter((token) => {
+    const t = token.toLowerCase().replace(/%/g, "");
+    return t.length >= 2 && hay.includes(t);
+  });
+
+  if (tokens.some((t) => t.length >= 4 && hay.includes(t.toLowerCase()))) {
+    return true;
+  }
+
+  return hits.length >= Math.max(1, Math.ceil(tokens.length * 0.5));
+}
+
+function filterRelevantProducts(
+  products: SearchProduct[],
+  query: string
+): SearchProduct[] {
+  return products.filter((p) => productMatchesQuery(p, query));
+}
+
 function shouldTryDirectProductLookup(message: string): boolean {
   const t = message.trim();
   if (t.length < 2) return false;
@@ -510,10 +547,21 @@ export async function tryDirectProductReply(
         products: [],
       };
     }
-    return null;
+    return {
+      reply: formatProductNotFoundReply(query),
+      products: [],
+    };
   }
 
-  const product = pickBestProduct(products, active);
+  const relevant = filterRelevantProducts(products, query);
+  if (!relevant.length) {
+    return {
+      reply: formatProductNotFoundReply(query),
+      products: [],
+    };
+  }
+
+  const product = pickBestProduct(relevant, active);
 
   if (followUp) {
     return {
