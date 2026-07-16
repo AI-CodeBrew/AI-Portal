@@ -97,6 +97,130 @@ export function extractLatestQuotedPrice(
   return null;
 }
 
+const VARIANT_FOLLOW_UP_PATTERN =
+  /\b(color|colors|colour|colours|size|sizes|variant|variants|option|options|different|other)\b/i;
+
+function looksLikeProductFollowUp(message: string): boolean {
+  const t = message.trim();
+  if (t.length < 3 || t.length > 140) return false;
+  if (!VARIANT_FOLLOW_UP_PATTERN.test(t)) return false;
+  if (/^(what|which|any|how many)\b/i.test(t)) return true;
+  if (/\b(it|this|that|the product|same)\b/i.test(t)) return true;
+  if (/^(do(es)?|is there|are there|can i|have you)\b/i.test(t)) return true;
+  if (/^(color|size|variant)s?\??$/i.test(t)) return true;
+  return false;
+}
+
+function extractRefFromHistory(
+  history: Array<{ role: "user" | "assistant"; content: string }>
+): string | null {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const m =
+      history[i].content.match(/\[Ref:\s*([0-9a-f-]{36}|\d{5,})\]/i)?.[1] ||
+      history[i].content.match(/\bRef:\s*([0-9a-f-]{36}|\d{5,})\b/i)?.[1];
+    if (m) return m;
+  }
+  return null;
+}
+
+function productDiscussedInHistory(
+  history: Array<{ role: "user" | "assistant"; content: string }>
+): boolean {
+  return history.some(
+    (m) =>
+      m.role === "assistant" &&
+      (/\[Ref:\s*[^\]]+\]/i.test(m.content) ||
+        /(?:—|-)\s*(?:Rs\.?|PKR|AED|\$|€)/i.test(m.content) ||
+        /\b(in stock|out of stock)\b/i.test(m.content))
+  );
+}
+
+/** Answer variant/color/size questions about the product already in chat. */
+export function formatProductFollowUpReply(
+  product: SearchProduct,
+  userMessage: string,
+  history: Array<{ role: "user" | "assistant"; content: string }> = []
+): string {
+  const askColor = /\b(color|colors|colour|colours)\b/i.test(userMessage);
+  const askSize = /\b(size|sizes)\b/i.test(userMessage);
+
+  const options = product.options ?? [];
+  const realVariants = (product.variants ?? []).filter(
+    (v) => v.title && v.title !== "Default"
+  );
+  const refId =
+    extractRefFromHistory(history) ||
+    realVariants[0]?.id ||
+    product.variants?.[0]?.id ||
+    null;
+
+  const title = product.title || "this product";
+  const prefix = refId ? `[Ref: ${refId}]\n` : "";
+
+  const colorOption = options.find((o) =>
+    /color|colour/i.test(o.name ?? "")
+  );
+  const sizeOption = options.find((o) => /size/i.test(o.name ?? ""));
+
+  if (askColor) {
+    if (colorOption?.values?.length) {
+      const vals = colorOption.values.slice(0, 8).join(", ");
+      return `${prefix}Yes — ${title} comes in: ${vals}.\nWhich color do you want?`;
+    }
+    const fromVariants = [
+      ...new Set(
+        realVariants
+          .map(
+            (v) =>
+              v.option_values?.Color ||
+              v.option_values?.Colour ||
+              v.option_values?.color ||
+              v.option_values?.colour
+          )
+          .filter(Boolean)
+      ),
+    ] as string[];
+    if (fromVariants.length > 1) {
+      return `${prefix}Color options: ${fromVariants.join(", ")}.\nWhich one?`;
+    }
+    return `${prefix}This one only comes in a single version — no color options for ${title} 👍`;
+  }
+
+  if (askSize) {
+    if (sizeOption?.values?.length) {
+      return `${prefix}Sizes: ${sizeOption.values.slice(0, 8).join(", ")}.\nWhich size?`;
+    }
+    const fromVariants = [
+      ...new Set(
+        realVariants
+          .map((v) => v.option_values?.Size || v.option_values?.size)
+          .filter(Boolean)
+      ),
+    ] as string[];
+    if (fromVariants.length > 1) {
+      return `${prefix}Sizes: ${fromVariants.join(", ")}.\nWhich size?`;
+    }
+    return `${prefix}Just one size for ${title} — no size options 👍`;
+  }
+
+  if (options.length) {
+    const lines = options
+      .slice(0, 4)
+      .map((o) => `${o.name}: ${(o.values ?? []).slice(0, 6).join(", ")}`);
+    return `${prefix}${lines.join("\n")}\n\nWhich option do you need?`;
+  }
+
+  if (realVariants.length > 1) {
+    const lines = realVariants.slice(0, 6).map((v) => {
+      const price = v.price_formatted ? ` — ${v.price_formatted}` : "";
+      return `• ${v.title}${price}`;
+    });
+    return `${prefix}Options:\n${lines.join("\n")}\n\nWhich one?`;
+  }
+
+  return `${prefix}Just one version for ${title} — no extra color/size options 👍`;
+}
+
 function findProductTitleInHistory(
   history: Array<{ role: "user" | "assistant"; content: string }>
 ): string | null {
@@ -232,17 +356,30 @@ function shouldTryDirectProductLookup(message: string): boolean {
 
 /**
  * Look up catalog by SKU or product name (full/partial) and answer with details + variants.
- * Used so replies don't depend on the model calling tools.
+ * Uses chat history for follow-ups like "does it have different colors?"
  */
 export async function tryDirectProductReply(
   ctx: AgentContext,
-  latestUserMessage: string
+  latestUserMessage: string,
+  history: Array<{ role: "user" | "assistant"; content: string }> = []
 ): Promise<{ reply: string; products: SearchProduct[] } | null> {
-  if (!shouldTryDirectProductLookup(latestUserMessage)) return null;
+  const followUp =
+    looksLikeProductFollowUp(latestUserMessage) &&
+    productDiscussedInHistory(history);
 
-  const sku = extractSkuFromText(latestUserMessage);
-  const query =
-    sku || extractProductSearchQuery(latestUserMessage);
+  if (!shouldTryDirectProductLookup(latestUserMessage) && !followUp) {
+    return null;
+  }
+
+  const sku =
+    extractSkuFromText(latestUserMessage) ||
+    (history.length ? findSkuInConversation(latestUserMessage, history) : null);
+  const title = history.length ? findProductTitleInHistory(history) : null;
+
+  let query = sku || extractProductSearchQuery(latestUserMessage);
+  if (!query && followUp) {
+    query = sku || title;
+  }
   if (!query) return null;
 
   const { result } = await executeSalesTool(
@@ -257,14 +394,27 @@ export async function tryDirectProductReply(
   ) as SearchProduct[];
 
   if (!products?.length) {
-    // Only hard-fail for explicit SKU; name misses can fall through to the LLM
     if (sku) {
       return {
         reply: `I couldn't find a product with SKU ${sku}. Please double-check the code or tell me the product name.`,
         products: [],
       };
     }
+    if (followUp && title) {
+      return {
+        reply:
+          "I'm not seeing that product in the catalog anymore — send the name or SKU again?",
+        products: [],
+      };
+    }
     return null;
+  }
+
+  if (followUp) {
+    return {
+      reply: formatProductFollowUpReply(products[0], latestUserMessage, history),
+      products,
+    };
   }
 
   return { reply: formatProductsReply(products), products };

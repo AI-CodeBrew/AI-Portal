@@ -100,7 +100,7 @@ export async function runSalesAgent(
   }
 
   try {
-    const direct = await tryDirectProductReply(enrichedCtx, latestUser);
+    const direct = await tryDirectProductReply(enrichedCtx, latestUser, history);
     if (direct) return direct.reply;
   } catch (err) {
     console.error("[run-sales-agent] product prefetch failed:", err);

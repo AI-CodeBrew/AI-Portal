@@ -438,7 +438,8 @@ export async function handleWhatsAppWebhookMessage(
                 } else {
                   const direct = await tryDirectProductReply(
                     agentCtx,
-                    inboundText
+                    inboundText,
+                    chatHistory
                   );
                   replyText =
                     direct?.reply ??

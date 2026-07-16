@@ -1,0 +1,29 @@
+---
+description: Keep AI-AGENT.md in sync when changing WhatsApp sales AI behavior
+globs:
+  - src/lib/ai/**
+  - src/lib/whatsapp-webhook-handler.ts
+  - src/lib/whatsapp-image.server.ts
+  - src/lib/whatsapp.ts
+alwaysApply: false
+---
+
+# AI agent documentation
+
+When you change **WhatsApp sales AI behavior** (prompts, pipeline order, tools, direct handlers, recovery, images, stages, settings defaults, or webhook send flow):
+
+1. Read `AI-AGENT.md` at the repo root.
+2. Update the relevant sections so they match the code.
+3. Add a row to the **Changelog** table at the bottom (date + one-line summary).
+
+Files that typically require a doc update:
+
+- `src/lib/ai/run-sales-agent.ts` — pipeline order
+- `src/lib/ai/build-system-prompt.ts` — persona / hard rules
+- `src/lib/ai/conversation-stage.ts` — stages
+- `src/lib/ai/sales-tools.ts` — tools
+- `src/lib/ai/product-reply.ts`, `checkout-reply.ts`, `sales-recovery.ts` — direct handlers
+- `src/lib/ai/message-markers.ts` — outbound media
+- `src/lib/whatsapp-webhook-handler.ts` — webhook flow
+
+Do **not** skip the doc update for “small” AI behavior tweaks — future agents and humans rely on `AI-AGENT.md` as the source of truth.

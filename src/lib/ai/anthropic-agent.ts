@@ -158,7 +158,7 @@ export async function runSalesAgentWithAnthropic(
     return recoveryReply;
   }
 
-  const directProduct = await tryDirectProductReply(ctx, latestUser);
+  const directProduct = await tryDirectProductReply(ctx, latestUser, history);
   if (directProduct) {
     return directProduct.reply;
   }
