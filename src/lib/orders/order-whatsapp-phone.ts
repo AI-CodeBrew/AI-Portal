@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { fetchShopifyOrderContact } from "@/lib/shopify";
-import { toWhatsAppRecipient } from "@/lib/whatsapp";
+import { toWhatsAppRecipient } from "@/lib/phone";
 
 type OrderRow = {
   id: string;
@@ -18,15 +18,6 @@ type StoreRow = {
   shop_domain?: string | null;
   shopify_access_token?: string | null;
 };
-
-export function previewOrderPhone(order: {
-  shipping_address?: { phone?: string | null } | null;
-  customers?: { phone?: string | null } | null;
-}): string | null {
-  const shippingPhone = order.shipping_address?.phone?.trim();
-  const customerPhone = order.customers?.phone?.trim();
-  return shippingPhone || customerPhone || null;
-}
 
 async function findConversationPhone(
   supabase: SupabaseClient,

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import type { Order } from "@/lib/types";
 import type { WhatsAppMessageTemplate } from "@/lib/whatsapp/message-templates";
-import { previewOrderPhone } from "@/lib/orders/order-whatsapp-phone";
+import { previewOrderPhone } from "@/lib/orders/order-whatsapp-phone.shared";
 
 export function OrderFollowUpModal({
   order,
