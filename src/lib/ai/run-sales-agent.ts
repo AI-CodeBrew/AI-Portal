@@ -156,8 +156,17 @@ export async function runSalesAgent(
     }
   }
 
-  if (llm.provider === "groq" && process.env.GROQ_API_KEY) {
-    return runSalesAgentWithGroq(enrichedCtx, history);
+  if (llm.provider === "groq" && llm.groqApiKey) {
+    try {
+      return await runSalesAgentWithGroq(enrichedCtx, history, {
+        apiKey: llm.groqApiKey,
+        model: llm.groqModel,
+      });
+    } catch (err) {
+      console.error("[run-sales-agent] Groq agent error:", err);
+      const greeting = tryDirectGreetingReply(enrichedCtx, latestUser);
+      if (greeting) return greeting;
+    }
   }
 
   if (process.env.ANTHROPIC_API_KEY) {

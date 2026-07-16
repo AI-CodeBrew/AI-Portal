@@ -527,7 +527,7 @@ export async function handleWhatsAppWebhookMessage(
             }
           } else {
             console.error(
-              "[whatsapp-webhook] No LLM configured — set GROQ_API_KEY or configure Gemini in Admin → AI Defaults."
+              "[whatsapp-webhook] No LLM configured — set Groq or Gemini in Admin → AI Defaults."
             );
             replyText =
               "Thanks for your message! Our team will get back to you shortly.";

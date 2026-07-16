@@ -6,7 +6,7 @@ import {
   SERVICE_WINDOW_HOURS,
   formatWindowCountdown,
   getWindowStatus,
-} from "./window-status.ts";
+} from "./window-status";
 
 const base = new Date("2026-07-16T12:00:00.000Z");
 

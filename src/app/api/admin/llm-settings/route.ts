@@ -23,12 +23,20 @@ export async function PATCH(request: NextRequest) {
       provider?: AiLlmProvider;
       geminiApiKey?: string;
       geminiModel?: string;
+      groqApiKey?: string;
+      groqModel?: string;
+      clearGeminiApiKey?: boolean;
+      clearGroqApiKey?: boolean;
     };
 
     const result = await updatePlatformLlmSettings({
       provider: body.provider,
       geminiApiKey: body.geminiApiKey,
       geminiModel: body.geminiModel,
+      groqApiKey: body.groqApiKey,
+      groqModel: body.groqModel,
+      clearGeminiApiKey: body.clearGeminiApiKey,
+      clearGroqApiKey: body.clearGroqApiKey,
       updatedBy: user.id,
     });
 

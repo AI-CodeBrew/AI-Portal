@@ -81,11 +81,11 @@ interface GroqResponse {
 
 async function groqChat(
   messages: ChatMessage[],
-  opts?: { forceSearchProducts?: boolean }
+  opts?: { forceSearchProducts?: boolean; apiKey: string; model: string }
 ): Promise<GroqResponse> {
-  const apiKey = process.env.GROQ_API_KEY;
+  const apiKey = opts?.apiKey;
   if (!apiKey) {
-    throw new Error("GROQ_API_KEY is not configured");
+    throw new Error("Groq API key is not configured");
   }
 
   const res = await fetch(GROQ_API_URL, {
@@ -95,7 +95,7 @@ async function groqChat(
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: process.env.GROQ_MODEL || DEFAULT_MODEL,
+      model: opts?.model || DEFAULT_MODEL,
       messages,
       tools: OPENAI_SALES_TOOLS,
       tool_choice: opts?.forceSearchProducts
@@ -115,7 +115,8 @@ async function groqChat(
 
 export async function runSalesAgentWithGroq(
   ctx: AgentContext,
-  history: Array<{ role: "user" | "assistant"; content: string }>
+  history: Array<{ role: "user" | "assistant"; content: string }>,
+  options: { apiKey: string; model?: string }
 ): Promise<string> {
   const storeLabel = ctx.store.store_name || ctx.store.shop_domain || "our store";
   const latestUser = lastUserMessage(history);
@@ -163,9 +164,13 @@ export async function runSalesAgentWithGroq(
     }>;
   }> = [];
 
+  const groqModel = options.model?.trim() || DEFAULT_MODEL;
+
   for (let i = 0; i < maxIterations; i++) {
     const response = await groqChat(messages, {
       forceSearchProducts: forceSearch && i === 0,
+      apiKey: options.apiKey,
+      model: groqModel,
     });
     const choice = response.choices[0];
     if (!choice) break;
