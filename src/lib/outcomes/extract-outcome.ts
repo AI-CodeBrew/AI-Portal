@@ -1,5 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getActiveLlmConfig, normalizeGeminiModel } from "@/lib/platform/llm-settings";
+import { phoneVariants, normalizePhone } from "@/lib/phone";
 import {
   buildExtractionUserPrompt,
   formatTranscript,
@@ -62,18 +63,24 @@ export type ExtractionCandidate = {
 };
 
 export async function findOutcomeExtractionCandidates(
-  limit = 20
+  limit = 20,
+  storeId?: string
 ): Promise<ExtractionCandidate[]> {
   const supabase = createAdminClient();
 
-  const { data: orders, error } = await supabase
+  let ordersQuery = supabase
     .from("orders")
-    .select("id, store_id, customer_id, status, source, confirmed_at")
+    .select("id, store_id, customer_id, status, source, confirmed_at, shipping_address")
     .eq("status", "confirmed")
     .eq("source", "whatsapp_ai")
-    .not("customer_id", "is", null)
     .order("confirmed_at", { ascending: false })
-    .limit(limit * 3);
+    .limit(limit * 5);
+
+  if (storeId) {
+    ordersQuery = ordersQuery.eq("store_id", storeId);
+  }
+
+  const { data: orders, error } = await ordersQuery;
 
   if (error || !orders?.length) return [];
 
@@ -82,18 +89,47 @@ export async function findOutcomeExtractionCandidates(
   for (const order of orders) {
     if (candidates.length >= limit) break;
 
-    const storeId = order.store_id as string;
-    const customerId = order.customer_id as string;
+    const orderStoreId = order.store_id as string;
+    const customerId = order.customer_id as string | null;
 
-    const { data: conv } = await supabase
+    let phonesToMatch: string[] = [];
+    if (customerId) {
+      const { data: customer } = await supabase
+        .from("customers")
+        .select("phone")
+        .eq("id", customerId)
+        .maybeSingle();
+      if (customer?.phone) {
+        phonesToMatch = phoneVariants(String(customer.phone));
+      }
+    }
+
+    const shipping = order.shipping_address as { phone?: string } | null;
+    if (shipping?.phone) {
+      phonesToMatch = [
+        ...new Set([
+          ...phonesToMatch,
+          ...phoneVariants(String(shipping.phone)),
+        ]),
+      ];
+    }
+
+    if (!phonesToMatch.length) continue;
+
+    const phoneSet = new Set(phonesToMatch.map(normalizePhone));
+
+    const { data: conversations } = await supabase
       .from("whatsapp_conversations")
-      .select("id, outcome_extracted")
-      .eq("store_id", storeId)
-      .eq("customer_id", customerId)
+      .select("id, outcome_extracted, customer_phone, customer_id")
+      .eq("store_id", orderStoreId)
       .eq("outcome_extracted", false)
       .order("updated_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .limit(20);
+
+    const conv = conversations?.find((c) => {
+      const convPhones = phoneVariants(String(c.customer_phone ?? ""));
+      return convPhones.some((p) => phoneSet.has(normalizePhone(p)));
+    });
 
     if (!conv?.id) continue;
 
@@ -106,14 +142,21 @@ export async function findOutcomeExtractionCandidates(
     if (existing?.id) {
       await supabase
         .from("whatsapp_conversations")
-        .update({ outcome_extracted: true })
+        .update({ outcome_extracted: true, customer_id: customerId ?? conv.customer_id })
         .eq("id", conv.id);
       continue;
     }
 
+    if (customerId && !conv.customer_id) {
+      await supabase
+        .from("whatsapp_conversations")
+        .update({ customer_id: customerId })
+        .eq("id", conv.id);
+    }
+
     candidates.push({
       conversationId: conv.id as string,
-      storeId,
+      storeId: orderStoreId,
       orderId: order.id as string,
     });
   }
@@ -190,12 +233,15 @@ export async function extractOutcomeForConversation(
   return { ok: true };
 }
 
-export async function runOutcomeExtractionBatch(limit = 20): Promise<{
+export async function runOutcomeExtractionBatch(
+  limit = 20,
+  storeId?: string
+): Promise<{
   processed: number;
   succeeded: number;
   failed: Array<{ conversationId: string; error: string }>;
 }> {
-  const candidates = await findOutcomeExtractionCandidates(limit);
+  const candidates = await findOutcomeExtractionCandidates(limit, storeId);
   let succeeded = 0;
   const failed: Array<{ conversationId: string; error: string }> = [];
 

@@ -44,6 +44,7 @@ export function OutcomesPanel() {
   const [success, setSuccess] = useState<string | null>(null);
   const [promotingId, setPromotingId] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [extracting, setExtracting] = useState(false);
 
   const promotedOutcomeIds = useMemo(
     () =>
@@ -84,6 +85,35 @@ export function OutcomesPanel() {
   useEffect(() => {
     load();
   }, [load]);
+
+  async function handleExtractNow() {
+    setExtracting(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const res = await fetch("/api/outcomes/run-extract", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Extraction failed");
+      if (data.succeeded > 0) {
+        setSuccess(
+          `Extracted ${data.succeeded} closed deal${data.succeeded === 1 ? "" : "s"}.`
+        );
+      } else if (data.processed === 0) {
+        setSuccess(
+          "No new confirmed WhatsApp orders found to analyze. Orders must be status confirmed and source WhatsApp AI."
+        );
+      } else {
+        setSuccess(
+          `Processed ${data.processed} conversation(s); none extracted successfully. Check Gemini API key in Admin → AI Defaults.`
+        );
+      }
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Extraction failed");
+    } finally {
+      setExtracting(false);
+    }
+  }
 
   async function handlePromote(outcomeId: string) {
     setPromotingId(outcomeId);
@@ -223,21 +253,35 @@ export function OutcomesPanel() {
       )}
 
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-200 px-4 py-3">
-          <h3 className="font-semibold text-slate-900">Closed deal outcomes</h3>
-          <p className="text-sm text-slate-600">
-            Learnings from confirmed WhatsApp orders. Promote the best ones into
-            the live agent prompt.
-          </p>
+        <div className="border-b border-slate-200 px-4 py-3 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="font-semibold text-slate-900">Closed deal outcomes</h3>
+            <p className="text-sm text-slate-600">
+              Learnings from confirmed WhatsApp orders. Promote the best ones into
+              the live agent prompt.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleExtractNow}
+            disabled={extracting}
+            className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
+          >
+            {extracting ? "Analyzing…" : "Analyze closed deals"}
+          </button>
         </div>
 
         {loading ? (
           <p className="px-4 py-8 text-sm text-slate-600">Loading…</p>
         ) : outcomes.length === 0 ? (
-          <p className="px-4 py-8 text-sm text-slate-600">
-            No extracted outcomes yet. Confirmed WhatsApp orders are analyzed
-            hourly once migration 033 is applied.
-          </p>
+          <div className="px-4 py-8 text-sm text-slate-600 space-y-2">
+            <p>No extracted outcomes yet.</p>
+            <p>
+              After a WhatsApp AI order is <strong>confirmed</strong>, click{" "}
+              <strong>Analyze closed deals</strong> above (or wait for the daily
+              cron). Requires migration 033 in Supabase.
+            </p>
+          </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="min-w-full text-left text-sm">

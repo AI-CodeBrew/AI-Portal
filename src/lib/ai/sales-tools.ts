@@ -1029,6 +1029,13 @@ export async function executeSalesTool(
           return { result: { error: created.error } };
         }
 
+        if (customerId && created.order_id) {
+          await supabase
+            .from("whatsapp_conversations")
+            .update({ customer_id: customerId })
+            .eq("id", conversationId);
+        }
+
         return {
           result: {
             success: true,

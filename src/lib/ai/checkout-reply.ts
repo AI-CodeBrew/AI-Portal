@@ -6,6 +6,7 @@ import {
 import {
   findProductRefFromHistory,
   looksLikeCheckoutMessage,
+  looksLikeProductQuestion,
   parseCheckoutDetails,
   validateCheckoutMessage,
   type CheckoutValidationIssue,
@@ -114,6 +115,8 @@ export async function tryDirectCheckoutReply(
       validateCheckoutMessage(latestUserMessage, ctx.customerPhone).ok);
 
   if (!shouldTry) return null;
+
+  if (looksLikeProductQuestion(latestUserMessage)) return null;
 
   const validation = validateCheckoutMessage(
     latestUserMessage,
