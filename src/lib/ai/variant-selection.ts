@@ -1,0 +1,157 @@
+type VariantRow = {
+  id?: string;
+  title?: string;
+  sku?: string | null;
+  price?: string;
+  price_formatted?: string;
+  option_values?: Record<string, string>;
+};
+
+type ProductWithVariants = {
+  title?: string;
+  sku?: string;
+  options?: Array<{ name?: string; values?: string[] }>;
+  variants?: VariantRow[];
+};
+
+const VARIANT_WORDS =
+  /\b(color|colors|colour|colours|size|sizes|variant|variants|option|options)\b/i;
+
+const FILLER =
+  /\b(i|want|to|order|buy|in|the|a|an|please|this|that|one|need|get|take|with|for|me|is|it|do|you|have|can|would|like)\b/gi;
+
+export function assistantAskedWhichVariant(
+  history: Array<{ role: "user" | "assistant"; content: string }>
+): boolean {
+  const recent = history
+    .filter((m) => m.role === "assistant")
+    .slice(-8)
+    .map((m) => m.content)
+    .join("\n");
+  return (
+    /which (color|colour|size|variant|one)\b/i.test(recent) ||
+    /which size\/color/i.test(recent) ||
+    /Options:\s*(Color|Colour|Size)/i.test(recent) ||
+    /comes in:/i.test(recent)
+  );
+}
+
+/** User is picking a color/size/variant for a product already shown in chat. */
+export function looksLikeVariantSelection(
+  message: string,
+  history: Array<{ role: "user" | "assistant"; content: string }>
+): boolean {
+  const t = message.trim();
+  if (t.length < 2 || t.length > 140) return false;
+
+  const discussed = history.some(
+    (m) =>
+      m.role === "assistant" &&
+      (/\[Ref:\s*[^\]]+\]/i.test(m.content) ||
+        /Options:\s*/i.test(m.content) ||
+        /(?:—|-)\s*(?:Rs\.?|PKR|AED|\$|€)/i.test(m.content))
+  );
+  if (!discussed) return false;
+
+  if (assistantAskedWhichVariant(history) && t.split(/\s+/).length <= 6) {
+    return true;
+  }
+
+  if (!VARIANT_WORDS.test(t)) return false;
+
+  if (/\b(want|order|buy|take|get|need)\b/i.test(t)) return true;
+  if (/\b(in|the)\s+\w+\s+(color|colour|size)\b/i.test(t)) return true;
+  return false;
+}
+
+function selectionTokens(message: string): string[] {
+  const cleaned = message
+    .replace(FILLER, " ")
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+  return cleaned
+    .split(/\s+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length >= 2);
+}
+
+function variantHaystack(variant: VariantRow): string {
+  const parts = [variant.title ?? "", ...Object.values(variant.option_values ?? {})];
+  return parts.join(" ").toLowerCase();
+}
+
+export function matchVariantFromMessage(
+  product: ProductWithVariants,
+  message: string
+): VariantRow | null {
+  const tokens = selectionTokens(message);
+  if (!tokens.length) return null;
+
+  const realVariants = (product.variants ?? []).filter(
+    (v) => v.title && v.title !== "Default"
+  );
+  if (!realVariants.length) return null;
+
+  let best: VariantRow | null = null;
+  let bestScore = 0;
+
+  for (const variant of realVariants) {
+    const hay = variantHaystack(variant);
+    let score = 0;
+    for (const token of tokens) {
+      if (hay === token) score += 5;
+      else if (hay.includes(token) || token.includes(hay)) score += 3;
+      else if (hay.split(/\s*\/\s*/).some((part) => part.trim() === token)) {
+        score += 4;
+      }
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      best = variant;
+    }
+  }
+
+  if (best && bestScore >= 3) return best;
+
+  for (const opt of product.options ?? []) {
+    for (const value of opt.values ?? []) {
+      const valLower = value.toLowerCase();
+      if (!tokens.some((t) => valLower.includes(t) || t.includes(valLower))) {
+        continue;
+      }
+      const match = realVariants.find((v) => {
+        const hay = variantHaystack(v);
+        return hay.includes(valLower);
+      });
+      if (match) return match;
+    }
+  }
+
+  return null;
+}
+
+export function formatVariantSelectionReply(
+  product: ProductWithVariants,
+  variant: VariantRow,
+  currency?: string | null
+): string {
+  const title = product.title ?? "Product";
+  const variantLabel =
+    variant.title && variant.title !== "Default" ? variant.title : title;
+  const price =
+    variant.price_formatted ??
+    (variant.price && currency ? `${variant.price} ${currency}` : variant.price);
+
+  const lines = [
+    `[Ref: ${variant.id}]`,
+    `*${title}* — *${variantLabel}*`,
+    price ? `Price: ${price}` : null,
+    "In stock ✅",
+    "",
+    "Perfect — share your *phone* & *delivery address* to confirm this order (name optional).",
+  ].filter(Boolean);
+
+  return lines.join("\n");
+}

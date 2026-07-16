@@ -11,7 +11,7 @@ import {
   getPendingOrdersHintForPhone,
   type AgentContext,
 } from "./sales-tools";
-import { tryDirectProductReply, tryDirectProductImageReply } from "./product-reply";
+import { tryDirectProductReply, tryDirectProductImageReply, tryDirectVariantSelectionReply } from "./product-reply";
 import { tryDirectCheckoutReply } from "./checkout-reply";
 import {
   tryDirectSalesRecoveryReply,
@@ -123,6 +123,17 @@ export async function runSalesAgent(
     if (imageReply) return imageReply;
   } catch (err) {
     console.error("[run-sales-agent] product image failed:", err);
+  }
+
+  try {
+    const variantReply = await tryDirectVariantSelectionReply(
+      enrichedCtx,
+      latestUser,
+      history
+    );
+    if (variantReply) return variantReply;
+  } catch (err) {
+    console.error("[run-sales-agent] variant selection failed:", err);
   }
 
   try {

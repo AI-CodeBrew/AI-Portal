@@ -96,6 +96,18 @@ function orderTotalQty(order: Order): number {
   );
 }
 
+function formatOrderItemsSummary(order: Order): string {
+  const items = order.items ?? [];
+  if (!items.length) return "—";
+  return items
+    .map((item) => {
+      const qty = Math.max(1, Number(item.quantity) || 1);
+      const title = item.title?.trim() || "Item";
+      return qty > 1 ? `${title} ×${qty}` : title;
+    })
+    .join(", ");
+}
+
 function recoveryDealBadge(order: Order): string | null {
   if (order.recovery_deal_type === "discount") {
     const pct = order.recovery_discount_percent;
@@ -1531,6 +1543,9 @@ export function OrdersList() {
                     Address
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-slate-600">
+                    Products
+                  </th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-slate-600">
                     Qty
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-slate-600">
@@ -1586,6 +1601,9 @@ export function OrdersList() {
                           className="line-clamp-2"
                         />
                       </span>
+                    </td>
+                    <td className="max-w-[220px] px-4 py-3 text-xs text-slate-700">
+                      <span className="line-clamp-2">{formatOrderItemsSummary(order)}</span>
                     </td>
                     <td className="px-4 py-3 text-sm text-slate-700">
                       {orderTotalQty(order) || "—"}
@@ -1666,6 +1684,9 @@ export function OrdersList() {
                       <p className="text-xs text-slate-500">
                         {order.customers?.name ?? "Customer"} ·{" "}
                         {formatShortDate(order.created_at)}
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        {formatOrderItemsSummary(order)}
                       </p>
                       <p className="text-xs text-slate-500">
                         Qty: {orderTotalQty(order) || "—"}

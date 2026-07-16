@@ -116,7 +116,7 @@ export async function tryDirectCheckoutReply(
 
   if (!shouldTry) return null;
 
-  if (looksLikeProductQuestion(latestUserMessage)) return null;
+  if (looksLikeProductQuestion(latestUserMessage, history)) return null;
 
   const validation = validateCheckoutMessage(
     latestUserMessage,

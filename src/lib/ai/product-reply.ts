@@ -8,6 +8,11 @@ import {
 import { executeSalesTool, type AgentContext } from "./sales-tools";
 import { parseCheckoutDetails } from "./checkout-parse";
 import { looksLikeCasualGreeting, looksLikeOffTopicChat } from "./greeting-reply";
+import {
+  formatVariantSelectionReply,
+  looksLikeVariantSelection,
+  matchVariantFromMessage,
+} from "./variant-selection";
 
 export type SearchProduct = {
   title?: string;
@@ -373,7 +378,11 @@ export function formatProductsReply(products: SearchProduct[]): string {
         : null;
 
     const refId =
-      realVariants[0]?.id || defaultVariant?.id || p.variants?.[0]?.id || null;
+      realVariants.length === 1
+        ? realVariants[0]?.id || defaultVariant?.id || p.variants?.[0]?.id || null
+        : realVariants.length === 0
+          ? defaultVariant?.id || p.variants?.[0]?.id || null
+          : null;
 
     const optionsLine = (p.options ?? [])
       .filter((o) => o.name && (o.values?.length ?? 0) > 0)
@@ -488,9 +497,13 @@ function filterRelevantProducts(
   return products.filter((p) => productMatchesQuery(p, query));
 }
 
-function shouldTryDirectProductLookup(message: string): boolean {
+function shouldTryDirectProductLookup(
+  message: string,
+  history: Array<{ role: "user" | "assistant"; content: string }> = []
+): boolean {
   const t = message.trim();
   if (t.length < 2) return false;
+  if (looksLikeVariantSelection(t, history)) return false;
   if (looksLikeCasualGreeting(t)) return false;
   if (looksLikeOffTopicChat(t)) return false;
   if (GREETING_ONLY.test(t)) return false;
@@ -528,8 +541,52 @@ function shouldTryDirectProductLookup(message: string): boolean {
 }
 
 /** True when the message is asking about a product (used to skip generic opening messages). */
-export function looksLikeProductInquiry(message: string): boolean {
-  return shouldTryDirectProductLookup(message);
+export function looksLikeProductInquiry(
+  message: string,
+  history: Array<{ role: "user" | "assistant"; content: string }> = []
+): boolean {
+  return shouldTryDirectProductLookup(message, history);
+}
+
+/** User chose a color/size variant for a product already in the chat. */
+export async function tryDirectVariantSelectionReply(
+  ctx: AgentContext,
+  latestUserMessage: string,
+  history: Array<{ role: "user" | "assistant"; content: string }>
+): Promise<string | null> {
+  if (!looksLikeVariantSelection(latestUserMessage, history)) return null;
+
+  const active = findActiveProductContext(history, latestUserMessage);
+  const query = active?.sku || active?.title;
+  if (!query) return null;
+
+  const { result } = await executeSalesTool(
+    "search_products",
+    { query },
+    ctx
+  );
+  const products = (
+    result && typeof result === "object" && "products" in result
+      ? (result as { products?: SearchProduct[] }).products
+      : []
+  ) as SearchProduct[];
+
+  if (!products.length) return null;
+
+  const product = pickBestProduct(products, active);
+  const variant = matchVariantFromMessage(product, latestUserMessage);
+
+  if (!variant?.id) {
+    const opts = (product.options ?? [])
+      .map((o) => `${o.name}: ${(o.values ?? []).slice(0, 8).join(", ")}`)
+      .join("\n");
+    const title = product.title ?? "this product";
+    return opts
+      ? `Which option for ${title}?\n${opts}\nReply with the color or size you want.`
+      : `Which version of ${title} do you want? Reply with the color or size.`;
+  }
+
+  return formatVariantSelectionReply(product, variant, ctx.storeCurrency);
 }
 
 /**
@@ -545,7 +602,7 @@ export async function tryDirectProductReply(
     looksLikeProductFollowUp(latestUserMessage) &&
     productDiscussedInHistory(history);
 
-  if (!shouldTryDirectProductLookup(latestUserMessage) && !followUp) {
+  if (!shouldTryDirectProductLookup(latestUserMessage, history) && !followUp) {
     return null;
   }
 
@@ -592,6 +649,16 @@ export async function tryDirectProductReply(
 
   const relevant = filterRelevantProducts(products, query);
   if (!relevant.length) {
+    if (looksLikeVariantSelection(latestUserMessage, history) && products.length) {
+      const product = pickBestProduct(products, active);
+      const variant = matchVariantFromMessage(product, latestUserMessage);
+      if (variant?.id) {
+        return {
+          reply: formatVariantSelectionReply(product, variant, ctx.storeCurrency),
+          products: [product],
+        };
+      }
+    }
     return {
       reply: formatProductNotFoundReply(query),
       products: [],

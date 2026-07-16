@@ -3,6 +3,7 @@ import {
   extractSkuFromText,
   extractProductSearchQuery,
 } from "@/lib/products/products-service";
+import { looksLikeVariantSelection } from "./variant-selection";
 
 const CHECKOUT_INTENT =
   /\b(place\s+(an\s+)?order|want\s+to\s+(order|buy)|order\s+(this|it|now)|buy\s+(this|it|now)|checkout|confirm\s+(my\s+)?order|i('m| am)?\s+(ready|ordering)|yes|yeah|yep|ok|okay|sure|deal)\b/i;
@@ -17,9 +18,13 @@ const ASKED_FOR_DETAILS =
   /\b(full name|share your|delivery address|reply like this|phone \(for confirmation\)|please share|i'll place the order|i'll confirm your order|discounted price|want to order|phone.*required|delivery address.*required|almost there)\b/i;
 
 /** Product/catalog question — not checkout contact details. */
-export function looksLikeProductQuestion(text: string): boolean {
+export function looksLikeProductQuestion(
+  text: string,
+  history: Array<{ role: "user" | "assistant"; content: string }> = []
+): boolean {
   const t = text.trim();
   if (t.length < 3) return false;
+  if (looksLikeVariantSelection(t, history)) return false;
   if (PRODUCT_INQUIRY_PATTERN.test(t)) return true;
   if (extractSkuFromText(t)) return true;
   const query = extractProductSearchQuery(t);
@@ -64,7 +69,7 @@ export function looksLikeCheckoutMessage(
   if (t.length < 8) return false;
 
   // New product question — never treat as checkout, even mid order flow
-  if (looksLikeProductQuestion(t)) return false;
+  if (looksLikeProductQuestion(t, history ?? [])) return false;
 
   const digits = t.replace(/\D/g, "");
   const hasPhone = digits.length >= 8;
@@ -84,7 +89,7 @@ export function looksLikeCheckoutMessage(
   ) {
     // Only continue checkout if they're sending contact details or accepting
     if (HAS_CONTACT_HINT.test(t) || digits.length >= 10) return true;
-    if (CHECKOUT_INTENT.test(t) && !looksLikeProductQuestion(t)) return true;
+    if (CHECKOUT_INTENT.test(t) && !looksLikeProductQuestion(t, history ?? [])) return true;
     return false;
   }
 
@@ -93,7 +98,11 @@ export function looksLikeCheckoutMessage(
     return true;
   }
 
-  if (CHECKOUT_INTENT.test(t) && t.length >= 10 && !looksLikeProductQuestion(t)) {
+  if (
+    CHECKOUT_INTENT.test(t) &&
+    t.length >= 10 &&
+    !looksLikeProductQuestion(t, history ?? [])
+  ) {
     return true;
   }
 

@@ -358,6 +358,36 @@ export function ProductsPanel() {
                 <p className="mt-2 text-sm font-semibold text-slate-800">
                   {Number(p.price).toLocaleString()} {p.currency}
                 </p>
+                {(p.options ?? []).some((o) => (o.values?.length ?? 0) > 0) && (
+                  <div className="mt-2 space-y-1">
+                    {(p.options ?? []).map((o) => (
+                      <p key={o.name} className="text-xs text-slate-600">
+                        <span className="font-medium text-slate-700">{o.name}:</span>{" "}
+                        {(o.values ?? []).join(", ")}
+                      </p>
+                    ))}
+                  </div>
+                )}
+                {(p.variants ?? []).filter((v) => v.title && v.title !== "Default")
+                  .length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {(p.variants ?? [])
+                      .filter((v) => v.title && v.title !== "Default")
+                      .slice(0, 8)
+                      .map((v) => (
+                        <span
+                          key={v.id}
+                          className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-700"
+                          title={v.sku ?? undefined}
+                        >
+                          {v.title}
+                          {v.price != null && v.price !== p.price
+                            ? ` · ${Number(v.price).toLocaleString()} ${p.currency}`
+                            : ""}
+                        </span>
+                      ))}
+                  </div>
+                )}
                 {p.ad_link?.whatsapp_url && (
                   <p className="mt-2 truncate text-xs text-slate-400">
                     Legacy link available
