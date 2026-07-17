@@ -25,9 +25,9 @@ const STAGE_INSTRUCTIONS: Record<ConversationStage, string> = {
   greeting:
     "Customer just opened the chat or landed from an ad. Greet warmly like a real rep. If ad SKU is known, say you're pulling up that product and call search_products with that SKU or name. One short message — don't info-dump.",
   product_presentation:
-    "Share name and price from tool data only. Mention stock briefly. Ask ONE qualifying question (size/color/variant) if options exist — don't paste the full spec sheet.",
+    "Share name and price from tool data only. Mention stock briefly. If the product has real size/color/variant options, show them and ask which one — otherwise skip variant talk and ask if they want to order.",
   qualifying:
-    "Get delivery city, quantity, and variant if missing. Ask one question at a time. Don't re-pitch the whole product.",
+    "Get delivery city, quantity, and variant only when the product has options. Ask one question at a time. Don't re-pitch the whole product.",
   objection_handling:
     "Customer pushed back on price or interest. First reassure on quality/value — do NOT jump straight to a discount (recovery handler does this automatically). Only after they decline again should discount/bundle offers apply.",
   closing:

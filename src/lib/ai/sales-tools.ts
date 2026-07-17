@@ -626,6 +626,7 @@ export async function executeSalesTool(
           );
           shopifyMapped = products.map((p) => ({
             ...p,
+            imageUrl: p.imageUrl ?? null,
             source: "shopify",
             currency,
             variants: p.variants.map((v) => ({
@@ -728,7 +729,7 @@ export async function executeSalesTool(
             message:
               combined.length === 0
                 ? "No matching products in portal or Shopify catalog."
-                : "Share name, price_formatted, description, options (size/color), and EVERY variant with its price_formatted when variants exist. Do not refuse products based on inventory — if it is in the catalog, the customer can order. Then ask if they want to buy and collect name, phone, and full address. Prefer portal matches when SKU/name is known.",
+                : "Share name, price_formatted, and description. If the product has multiple colors/sizes/variants, include options and every variant with price_formatted. If it is a single product with no real options, skip variant lines and go straight to checkout (name, phone, full address). Do not refuse products based on inventory — if it is in the catalog, the customer can order. Prefer portal matches when SKU/name is known.",
           },
         };
       }

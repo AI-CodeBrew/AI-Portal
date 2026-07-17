@@ -6,6 +6,11 @@ import {
   sampleActiveCatalogProducts,
   skuMatchKey,
 } from "@/lib/products/products-service";
+import {
+  isPlaceholderVariantTitle,
+  isRealVariantTitle,
+  productHasSelectableVariants,
+} from "@/lib/products/variant-titles";
 import { getShopCurrency, listShopifyCatalogProducts } from "@/lib/shopify";
 import { formatMoney } from "@/lib/currency";
 import { executeSalesTool, type AgentContext } from "./sales-tools";
@@ -294,17 +299,23 @@ export function formatProductFollowUpReply(
   const askSize = /\b(size|sizes)\b/i.test(userMessage);
 
   const options = product.options ?? [];
-  const realVariants = (product.variants ?? []).filter(
-    (v) => v.title && v.title !== "Default"
-  );
+  const realVariants = meaningfulVariants(product);
+  const hasVariants = productHasSelectableVariants(product);
   const refId =
-    ctx?.ref ||
-    realVariants[0]?.id ||
-    product.variants?.[0]?.id ||
-    null;
+    !hasVariants
+      ? ctx?.ref ||
+        realVariants[0]?.id ||
+        product.variants?.[0]?.id ||
+        null
+      : null;
 
   const title = product.title || ctx?.title || "this product";
   const prefix = refId ? `[Ref: ${refId}]\n` : "";
+  const imagePrefix = productImageLine(product);
+
+  if (!hasVariants) {
+    return `${imagePrefix}${prefix}Just one version for ${title} — no extra options 👍`;
+  }
 
   const colorOption = options.find((o) =>
     /color|colour/i.test(o.name ?? "")
@@ -356,7 +367,7 @@ export function formatProductFollowUpReply(
     const lines = options
       .slice(0, 4)
       .map((o) => `${o.name}: ${(o.values ?? []).slice(0, 6).join(", ")}`);
-    return `${prefix}${lines.join("\n")}\n\nWhich option do you need?`;
+    return `${imagePrefix}${prefix}${lines.join("\n")}\n\nWhich option do you need?`;
   }
 
   if (realVariants.length > 1) {
@@ -364,10 +375,91 @@ export function formatProductFollowUpReply(
       const price = v.price_formatted ? ` — ${v.price_formatted}` : "";
       return `• ${v.title}${price}`;
     });
-    return `${prefix}Options:\n${lines.join("\n")}\n\nWhich one?`;
+    return `${imagePrefix}${prefix}Options:\n${lines.join("\n")}\n\nWhich one?`;
   }
 
-  return `${prefix}Just one version for ${title} — no extra color/size options 👍`;
+  return `${imagePrefix}${prefix}Which option do you need?`;
+}
+
+function productImageLine(product: SearchProduct): string {
+  const url = getPrimaryProductImageUrl(product);
+  return url ? `[Image: ${url}]\n` : "";
+}
+
+function meaningfulVariants(product: SearchProduct) {
+  return (product.variants ?? []).filter((v) =>
+    isRealVariantTitle(v.title ?? null)
+  );
+}
+
+function formatVariantPriceLabel(variant: {
+  price_formatted?: string;
+}): string | null {
+  const raw = variant.price_formatted;
+  if (!raw || /see store for price/i.test(raw) || raw === "0") return null;
+  return raw;
+}
+
+function buildOptionsLine(p: SearchProduct): string | null {
+  const parts = (p.options ?? [])
+    .filter((o) => o.name && (o.values?.length ?? 0) > 0)
+    .slice(0, 3)
+    .map((o) => `${o.name}: ${(o.values ?? []).slice(0, 8).join(", ")}`);
+  return parts.length ? `Options: ${parts.join(" · ")}` : null;
+}
+
+function productCloseLine(p: SearchProduct): string {
+  return productHasSelectableVariants(p)
+    ? "Which size/color do you need?"
+    : "Want it? Share your phone & delivery address.";
+}
+
+/** Build one product card — price shown once, image when available. */
+function formatSingleProductBlock(p: SearchProduct): string {
+  const imageLine = productImageLine(p);
+  const hasVariants = productHasSelectableVariants(p);
+  const meaningful = meaningfulVariants(p);
+  const allVariants = p.variants ?? [];
+  const defaultVariant =
+    allVariants.find((v) => isPlaceholderVariantTitle(v.title)) ??
+    allVariants[0];
+
+  const priceSource = meaningful[0] ?? defaultVariant;
+  const basePrice = priceSource ? formatVariantPriceLabel(priceSource) : null;
+
+  const refId = !hasVariants
+    ? meaningful[0]?.id || defaultVariant?.id || null
+    : meaningful.length === 1
+      ? meaningful[0]?.id || null
+      : null;
+
+  const optionsLine = hasVariants ? buildOptionsLine(p) : null;
+  const showVariantBullets =
+    hasVariants && !optionsLine && meaningful.length > 1;
+
+  const titleLine =
+    showVariantBullets && basePrice
+      ? `${p.title || "Product"}`
+      : `${p.title || "Product"}${basePrice ? ` — ${basePrice}` : ""}`;
+
+  const variantLines = showVariantBullets
+    ? meaningful.slice(0, 6).map((v) => {
+        const label = v.title || "Variant";
+        const price = formatVariantPriceLabel(v);
+        return `• ${label}${price ? ` — ${price}` : ""}`;
+      })
+    : [];
+
+  const body = [
+    refId ? `[Ref: ${refId}]` : null,
+    titleLine,
+    optionsLine,
+    variantLines.length ? variantLines.join("\n") : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  return `${imageLine}${body}`;
 }
 
 function findProductTitleInHistory(
@@ -382,83 +474,13 @@ export function formatProductsReply(products: SearchProduct[]): string {
     return "Couldn't find that product. Send the name or SKU again?";
   }
 
-  const imageMarkers: string[] = [];
+  const blocks = products.slice(0, 2).map((p) => formatSingleProductBlock(p));
 
-  const blocks = products.slice(0, 2).map((p) => {
-    const imageUrl = getPrimaryProductImageUrl(p);
-    if (
-      imageUrl &&
-      imageMarkers.length < 2 &&
-      !imageMarkers.some((m) => m.includes(imageUrl))
-    ) {
-      imageMarkers.push(`[Image: ${imageUrl}]`);
-    }
+  if (products.length > 1) {
+    return `${blocks.join("\n\n")}\n\nI found a couple matches — which one did you mean?`;
+  }
 
-    const realVariants = (p.variants ?? []).filter(
-      (v) => v.title && v.title !== "Default"
-    );
-    const defaultVariant = (p.variants ?? []).find(
-      (v) => !v.title || v.title === "Default"
-    );
-    const basePriceRaw =
-      realVariants[0]?.price_formatted ||
-      defaultVariant?.price_formatted ||
-      p.variants?.[0]?.price_formatted;
-    const basePrice =
-      basePriceRaw &&
-      !/see store for price/i.test(basePriceRaw) &&
-      basePriceRaw !== "0"
-        ? basePriceRaw
-        : null;
-
-    const refId =
-      realVariants.length === 1
-        ? realVariants[0]?.id || defaultVariant?.id || p.variants?.[0]?.id || null
-        : realVariants.length === 0
-          ? defaultVariant?.id || p.variants?.[0]?.id || null
-          : null;
-
-    const optionsLine = (p.options ?? [])
-      .filter((o) => o.name && (o.values?.length ?? 0) > 0)
-      .slice(0, 3)
-      .map((o) => `${o.name}: ${(o.values ?? []).slice(0, 6).join(", ")}`)
-      .join(" · ");
-
-    const variantLines =
-      realVariants.length > 0
-        ? realVariants.slice(0, 3).map((v) => {
-            const label = v.title || "Variant";
-            const price = v.price_formatted ? ` — ${v.price_formatted}` : "";
-            return `• ${label}${price}`;
-          })
-        : [];
-
-    return [
-      refId ? `[Ref: ${refId}]` : null,
-      `${p.title || "Product"}${basePrice ? ` — ${basePrice}` : ""}`,
-      optionsLine ? `Options: ${optionsLine}` : null,
-      variantLines.length === 1 ? variantLines[0].replace(/^•\s*/, "") : null,
-    ]
-      .filter(Boolean)
-      .join("\n");
-  });
-
-  const multi =
-    products.length > 1
-      ? `\n\nI found a couple matches — which one did you mean?`
-      : "";
-
-  const hasVariants = products.some((p) =>
-    (p.variants ?? []).some((v) => v.title && v.title !== "Default")
-  );
-
-  const prefix = imageMarkers.length ? `${imageMarkers.join("\n")}\n` : "";
-
-  const closeLine = hasVariants
-    ? "Which size/color do you need?"
-    : "Want it? Share your phone & delivery address.";
-
-  return `${prefix}${blocks.join("\n\n")}${multi}${multi ? "" : `\n\n${closeLine}`}`;
+  return `${blocks[0]}\n\n${productCloseLine(products[0]!)}`;
 }
 
 /** Customer wants to browse the catalog — not a specific product name. */
@@ -691,6 +713,8 @@ export async function tryDirectVariantSelectionReply(
   if (!products.length) return null;
 
   const product = pickBestProduct(products, active);
+  if (!productHasSelectableVariants(product)) return null;
+
   const variant = matchVariantFromMessage(product, latestUserMessage);
 
   if (!variant?.id) {

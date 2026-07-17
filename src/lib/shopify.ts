@@ -334,6 +334,7 @@ export async function searchProducts(
     id: number;
     title: string;
     description: string | null;
+    imageUrl: string | null;
     variants: Array<{
       id: number;
       title: string;
@@ -347,6 +348,7 @@ export async function searchProducts(
     id: string;
     title: string;
     description?: string | null;
+    featuredImage?: { url?: string | null } | null;
     variants: {
       edges: Array<{
         node: {
@@ -364,6 +366,7 @@ export async function searchProducts(
     description: node.description
       ? stripHtml(node.description).slice(0, 500)
       : null,
+    imageUrl: node.featuredImage?.url?.trim() || null,
     variants: node.variants.edges.map(({ node: v }) => ({
       id: Number(parseShopifyGid(v.id)),
       title: v.title,
@@ -381,6 +384,9 @@ export async function searchProducts(
             id
             title
             description
+            featuredImage {
+              url
+            }
             variants(first: 20) {
               edges {
                 node {
@@ -435,7 +441,7 @@ export async function searchProducts(
   const res = await shopifyAdminFetch(
     shopDomain,
     encryptedToken,
-    "/products.json?limit=100&status=active&fields=id,title,body_html,variants"
+    "/products.json?limit=100&status=active&fields=id,title,body_html,image,images,variants"
   );
   if (!res.ok) {
     throw new Error(`Product search failed: ${await res.text()}`);
@@ -446,6 +452,8 @@ export async function searchProducts(
       id: number;
       title: string;
       body_html?: string;
+      image?: { src?: string } | null;
+      images?: Array<{ src?: string }>;
       variants: Array<{
         id: number;
         title: string;
@@ -471,6 +479,7 @@ export async function searchProducts(
       id: p.id,
       title: p.title,
       description: p.body_html ? stripHtml(p.body_html).slice(0, 500) : null,
+      imageUrl: p.image?.src ?? p.images?.[0]?.src ?? null,
       variants: p.variants.map((v) => ({
         id: v.id,
         title: v.title,

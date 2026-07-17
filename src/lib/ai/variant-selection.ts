@@ -1,3 +1,5 @@
+import { isRealVariantTitle } from "@/lib/products/variant-titles";
+
 type VariantRow = {
   id?: string;
   title?: string;
@@ -10,6 +12,9 @@ type VariantRow = {
 type ProductWithVariants = {
   title?: string;
   sku?: string;
+  imageUrl?: string | null;
+  image_url?: string | null;
+  image_urls?: string[] | null;
   options?: Array<{ name?: string; values?: string[] }>;
   variants?: VariantRow[];
 };
@@ -89,8 +94,8 @@ export function matchVariantFromMessage(
   const tokens = selectionTokens(message);
   if (!tokens.length) return null;
 
-  const realVariants = (product.variants ?? []).filter(
-    (v) => v.title && v.title !== "Default"
+  const realVariants = (product.variants ?? []).filter((v) =>
+    isRealVariantTitle(v.title ?? null)
   );
   if (!realVariants.length) return null;
 
@@ -139,10 +144,19 @@ export function formatVariantSelectionReply(
 ): string {
   const title = product.title ?? "Product";
   const variantLabel =
-    variant.title && variant.title !== "Default" ? variant.title : title;
+    variant.title && isRealVariantTitle(variant.title)
+      ? variant.title
+      : title;
   const price =
     variant.price_formatted ??
     (variant.price && currency ? `${variant.price} ${currency}` : variant.price);
+
+  const imageUrl =
+    product.imageUrl ??
+    product.image_url ??
+    product.image_urls?.[0] ??
+    null;
+  const imageLine = imageUrl ? `[Image: ${imageUrl}]\n` : "";
 
   const lines = [
     `[Ref: ${variant.id}]`,
@@ -152,5 +166,5 @@ export function formatVariantSelectionReply(
     "Perfect — share your *phone* & *delivery address* to confirm this order (name optional).",
   ].filter(Boolean);
 
-  return lines.join("\n");
+  return `${imageLine}${lines.join("\n")}`;
 }
