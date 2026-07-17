@@ -8,11 +8,22 @@ import {
 } from "@/lib/shopify";
 import { getAuthUser } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { assertShopifyPlanAllowed } from "@/lib/store/plan-access";
 
 export async function GET(request: NextRequest) {
   const user = await getAuthUser();
   if (!user || user.role !== "reseller" || !user.storeId) {
     return NextResponse.redirect(new URL("/login", request.url));
+  }
+
+  const planCheck = await assertShopifyPlanAllowed(user.storeId);
+  if (!planCheck.ok) {
+    return NextResponse.redirect(
+      new URL(
+        `/dashboard/integrations/shopify?error=plan_required`,
+        request.url
+      )
+    );
   }
 
   const supabase = createAdminClient();

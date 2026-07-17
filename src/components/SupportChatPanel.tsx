@@ -3,9 +3,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SupportMessage } from "@/lib/support/chat";
 
+import { PlanUpgradeLink } from "@/components/PlanFeaturesList";
+
 export function SupportChatPanel() {
   const [messages, setMessages] = useState<SupportMessage[]>([]);
   const [loading, setLoading] = useState(true);
+  const [locked, setLocked] = useState(false);
   const [sending, setSending] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [content, setContent] = useState("");
@@ -17,7 +20,14 @@ export function SupportChatPanel() {
     try {
       const res = await fetch("/api/store/support-chat");
       const data = await res.json();
+      if (res.status === 403) {
+        setLocked(true);
+        setMessages([]);
+        setError(data.error ?? null);
+        return;
+      }
       if (!res.ok) throw new Error(data.error ?? "Failed to load chat");
+      setLocked(false);
       setMessages(data.messages ?? []);
       setError(null);
     } catch (err) {
@@ -92,6 +102,23 @@ export function SupportChatPanel() {
 
   return (
     <div className="flex h-[min(70vh,640px)] flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      {locked ? (
+        <div className="flex flex-1 flex-col items-center justify-center p-8 text-center">
+          <p className="text-lg font-bold text-slate-900">Enterprise feature</p>
+          <p className="mt-2 max-w-md text-sm text-slate-600">
+            Direct chat with the platform admin is included on the Enterprise
+            plan — unlimited products, dedicated support, custom integrations,
+            and live onboarding sessions.
+          </p>
+          {error && (
+            <p className="mt-3 text-sm text-amber-800">{error}</p>
+          )}
+          <div className="mt-6">
+            <PlanUpgradeLink />
+          </div>
+        </div>
+      ) : (
+        <>
       <div className="flex items-start justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3">
         <div>
           <p className="font-semibold text-slate-900">Support chat</p>
@@ -177,6 +204,8 @@ export function SupportChatPanel() {
           {sending ? "Sending..." : "Send"}
         </button>
       </form>
+        </>
+      )}
     </div>
   );
 }

@@ -3,8 +3,11 @@ import {
   extractProductSearchQuery,
   getPrimaryProductImageUrl,
   productSearchTokens,
+  sampleActiveCatalogProducts,
   skuMatchKey,
 } from "@/lib/products/products-service";
+import { getShopCurrency, listShopifyCatalogProducts } from "@/lib/shopify";
+import { formatMoney } from "@/lib/currency";
 import { executeSalesTool, type AgentContext } from "./sales-tools";
 import { parseCheckoutDetails } from "./checkout-parse";
 import { looksLikeCasualGreeting, looksLikeOffTopicChat } from "./greeting-reply";
@@ -54,6 +57,37 @@ const IMAGE_ASK_PATTERN =
 
 const IMAGE_ASK_VERB =
   /\b(send|share|show|see|want|need)\b.*\b(image|images|photo|photos|picture|pictures|pic)\b|\b(image|photo|picture)s?\s+(please|pls|of\s+(it|this|the\s+product))\b/i;
+
+const CATALOG_BROWSE_PATTERN =
+  /\b(show\s+(me\s+)?(your\s+)?products|what\s+(can\s+)?(i|we)\s+buy|what\s+(do\s+you\s+)?(have|sell)|what\s+products|your\s+(catalog|products)|browse|something\s+to\s+buy|recommend\s+(me\s+)?something|any\s+suggestions?)\b/i;
+
+const CATALOG_BROWSE_GENERIC = new Set([
+  "product",
+  "products",
+  "buy",
+  "something",
+  "catalog",
+  "shop",
+  "store",
+  "your",
+  "me",
+  "show",
+  "what",
+  "can",
+  "i",
+  "we",
+  "have",
+  "sell",
+  "recommend",
+  "suggestion",
+  "suggestions",
+  "browse",
+  "anything",
+  "any",
+  "the",
+  "a",
+  "an",
+]);
 
 function looksLikeImageRequest(message: string): boolean {
   const t = message.trim();
@@ -395,19 +429,13 @@ export function formatProductsReply(products: SearchProduct[]): string {
         ? realVariants.slice(0, 3).map((v) => {
             const label = v.title || "Variant";
             const price = v.price_formatted ? ` — ${v.price_formatted}` : "";
-            const stock = v.in_stock === false ? " (out of stock)" : "";
-            return `• ${label}${price}${stock}`;
+            return `• ${label}${price}`;
           })
         : [];
-
-    const outOfStock =
-      realVariants.length > 0 &&
-      realVariants.every((v) => v.in_stock === false);
 
     return [
       refId ? `[Ref: ${refId}]` : null,
       `${p.title || "Product"}${basePrice ? ` — ${basePrice}` : ""}`,
-      outOfStock ? "Out of stock right now" : "In stock",
       optionsLine ? `Options: ${optionsLine}` : null,
       variantLines.length === 1 ? variantLines[0].replace(/^•\s*/, "") : null,
     ]
@@ -426,28 +454,116 @@ export function formatProductsReply(products: SearchProduct[]): string {
 
   const prefix = imageMarkers.length ? `${imageMarkers.join("\n")}\n` : "";
 
-  const anyOutOfStock = products.some((p) => {
-    const rv = (p.variants ?? []).filter(
-      (v) => v.title && v.title !== "Default"
-    );
-    return (
-      rv.length > 0 && rv.every((v) => v.in_stock === false)
-    );
-  });
-
-  const closeLine = anyOutOfStock
-    ? "It's out of stock right now — want a similar item?"
-    : hasVariants
-      ? "Which size/color do you need?"
-      : "Want it? Share name, phone & delivery address.";
+  const closeLine = hasVariants
+    ? "Which size/color do you need?"
+    : "Want it? Share your phone & delivery address.";
 
   return `${prefix}${blocks.join("\n\n")}${multi}${multi ? "" : `\n\n${closeLine}`}`;
+}
+
+/** Customer wants to browse the catalog — not a specific product name. */
+export function looksLikeCatalogBrowseRequest(message: string): boolean {
+  const t = message.trim();
+  if (t.length < 6 || !CATALOG_BROWSE_PATTERN.test(t)) return false;
+  if (extractSkuFromText(t)) return false;
+
+  const query = extractProductSearchQuery(t);
+  if (!query) return true;
+
+  const tokens = productSearchTokens(query).filter(
+    (token) => !CATALOG_BROWSE_GENERIC.has(token.toLowerCase())
+  );
+  return tokens.length === 0;
+}
+
+async function loadCatalogSampleProducts(
+  ctx: AgentContext,
+  count = 2
+): Promise<SearchProduct[]> {
+  const portalHits = await sampleActiveCatalogProducts(ctx.store.id, count);
+  const mapped: SearchProduct[] = portalHits.map((hit) => ({
+    title: hit.title,
+    sku: hit.sku,
+    description: hit.description,
+    imageUrl: hit.imageUrl,
+    image_urls: hit.image_urls,
+    options: hit.options,
+    variants:
+      hit.variants.length > 0
+        ? hit.variants.map((v) => ({
+            id: v.id,
+            title: v.title,
+            sku: v.sku,
+            price_formatted: formatMoney(Number(v.price), hit.currency),
+          }))
+        : [
+            {
+              id: hit.id,
+              title: "Default",
+              price_formatted: formatMoney(Number(hit.price), hit.currency),
+            },
+          ],
+  }));
+
+  if (mapped.length >= count) return mapped.slice(0, count);
+
+  const shopDomain = ctx.store.shop_domain;
+  const token = ctx.store.shopify_access_token;
+  if (!shopDomain || !token) return mapped;
+
+  try {
+    let currency = ctx.storeCurrency;
+    if (!currency) {
+      currency = await getShopCurrency(shopDomain, token);
+    }
+    const { products } = await listShopifyCatalogProducts(shopDomain, token, {
+      limit: 30,
+    });
+    const shuffled = [...products].sort(() => Math.random() - 0.5);
+    for (const p of shuffled) {
+      if (mapped.length >= count) break;
+      const price = p.priceFrom ?? "0";
+      const productCurrency = p.currency ?? currency ?? "USD";
+      mapped.push({
+        title: p.title,
+        description: p.description,
+        imageUrl: p.imageUrl,
+        variants: [
+          {
+            id: String(p.id),
+            title: "Default",
+            price_formatted: formatMoney(Number(price), productCurrency),
+          },
+        ],
+      });
+    }
+  } catch (err) {
+    console.error("[catalog-browse] shopify sample failed:", err);
+  }
+
+  return mapped.slice(0, count);
+}
+
+/** Show a couple of random catalog picks when the customer asks what they can buy. */
+export async function tryDirectCatalogBrowseReply(
+  ctx: AgentContext,
+  latestUserMessage: string
+): Promise<string | null> {
+  if (!looksLikeCatalogBrowseRequest(latestUserMessage)) return null;
+
+  const products = await loadCatalogSampleProducts(ctx, 2);
+  if (!products.length) {
+    return "Our catalog is being updated — send a product name or SKU and I'll look it up for you.";
+  }
+
+  const intro = "Here are a couple of things you can order from us 👇";
+  return `${intro}\n\n${formatProductsReply(products)}`;
 }
 
 function formatProductNotFoundReply(query: string): string {
   const label = query.trim() || "that";
   return [
-    `I checked our catalog — we don't have *${label}* available right now.`,
+    `I couldn't find *${label}* in our catalog.`,
     `Try a different spelling, another product name, or send a SKU and I'll look again.`,
   ].join("\n");
 }
@@ -503,6 +619,7 @@ function shouldTryDirectProductLookup(
 ): boolean {
   const t = message.trim();
   if (t.length < 2) return false;
+  if (looksLikeCatalogBrowseRequest(t)) return false;
   if (looksLikeVariantSelection(t, history)) return false;
   if (looksLikeCasualGreeting(t)) return false;
   if (looksLikeOffTopicChat(t)) return false;

@@ -2,23 +2,25 @@ import { NextResponse } from "next/server";
 import { requireResellerStore } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getPlatformMetaPublic } from "@/lib/platform/meta-settings";
+import { getStoreProductQuota } from "@/lib/store/plan-access";
 
 export async function GET() {
   try {
     const { storeId } = await requireResellerStore();
     const supabase = createAdminClient();
 
-    const [{ data: store }, platform] = await Promise.all([
+    const [{ data: store }, platform, quota] = await Promise.all([
       supabase
         .from("stores")
         .select(
           `id, store_name, shop_domain, shopify_api_key, shopify_api_secret, shopify_scopes,
            shopify_access_token, meta_app_id, meta_app_secret, meta_config_id, whatsapp_verify_token,
-           whatsapp_phone_number_id, whatsapp_waba_id, whatsapp_access_token, whatsapp_display_phone, created_at`
+           whatsapp_phone_number_id, whatsapp_waba_id, whatsapp_access_token, whatsapp_display_phone, plan_id, created_at`
         )
         .eq("id", storeId)
         .single(),
       getPlatformMetaPublic(),
+      getStoreProductQuota(storeId),
     ]);
 
     if (!store) {
@@ -50,6 +52,16 @@ export async function GET() {
         whatsapp_connected: Boolean(
           store.whatsapp_phone_number_id && store.whatsapp_access_token
         ),
+        plan_id: store.plan_id ?? "basic",
+        plan: {
+          id: quota.planId,
+          name: quota.planName,
+          productCount: quota.productCount,
+          productLimit: quota.productLimit,
+          canAddProduct: quota.canAddProduct,
+          shopifyAllowed: quota.shopifyAllowed,
+          adminChatAllowed: quota.adminChatAllowed,
+        },
         created_at: store.created_at,
       },
     });

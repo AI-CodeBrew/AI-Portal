@@ -1,6 +1,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getBulkStoreAiUsage, type StoreAiUsage } from "@/lib/ai/quota";
 import type { PlanId } from "@/lib/ai/plans";
+import { normalizePlanId } from "@/lib/ai/plans";
 import { getBulkStoreOrderTotals } from "@/lib/orders/store-order-totals";
 import { countStoreProducts } from "@/lib/products/products-service";
 
@@ -166,7 +167,7 @@ export async function getAdminResellers(): Promise<{
               shopify_access_token: store.shopify_access_token,
               whatsapp_phone_number_id: store.whatsapp_phone_number_id,
               owner_email: store.owner_email,
-              plan_id: (store.plan_id ?? "basic") as PlanId,
+              plan_id: normalizePlanId(store.plan_id as string | null),
               ai_agent_name: store.ai_agent_name ?? null,
               created_at: store.created_at,
             }

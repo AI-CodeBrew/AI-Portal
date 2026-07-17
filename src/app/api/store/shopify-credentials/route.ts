@@ -4,10 +4,15 @@ import { requireResellerStore } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { DEFAULT_SHOPIFY_SCOPES } from "@/lib/shopify";
 import { clearStoreShopifyOrders } from "@/lib/orders/clear-shopify-orders";
+import { assertShopifyPlanAllowed } from "@/lib/store/plan-access";
 
 export async function POST(request: NextRequest) {
   try {
     const { storeId } = await requireResellerStore();
+    const planCheck = await assertShopifyPlanAllowed(storeId);
+    if (!planCheck.ok) {
+      return NextResponse.json({ error: planCheck.error }, { status: 403 });
+    }
     const body = (await request.json()) as {
       storeName?: string;
       shopDomain?: string;

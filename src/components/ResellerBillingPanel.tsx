@@ -2,13 +2,16 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { PlanUsageCard } from "@/components/PlanUsageCard";
-import { AI_PLANS, PLAN_ORDER, type PlanId } from "@/lib/ai/plans";
+import { AI_PLANS, PLAN_ORDER, PLAN_PRICES_AED, type PlanId } from "@/lib/ai/plans";
+import {
+  PlanFeaturesList,
+  PlanPriceLabel,
+} from "@/components/PlanFeaturesList";
 import {
   AI_TOPUP_PACKS,
   TOPUP_PACK_ORDER,
   type TopupPackId,
 } from "@/lib/ai/topup";
-import { PLAN_PRICES_AED } from "@/lib/payments/paytabs";
 import { formatMoney } from "@/lib/currency";
 
 type PaymentRow = {
@@ -29,6 +32,7 @@ export function ResellerBillingPanel() {
   const [topupLoading, setTopupLoading] = useState<TopupPackId | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [currentPlanId, setCurrentPlanId] = useState<PlanId>("basic");
   const [lastCheckout, setLastCheckout] = useState<{
     planName: string;
     amount: number;
@@ -46,6 +50,11 @@ export function ResellerBillingPanel() {
       setAvailable(Boolean(data.billing?.available));
       setCurrency(data.billing?.currency || "AED");
       setPayments(data.payments ?? []);
+      const usageRes = await fetch("/api/store/ai-usage");
+      const usageData = await usageRes.json();
+      if (usageData.usage?.planId) {
+        setCurrentPlanId(usageData.usage.planId as PlanId);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load");
     } finally {
@@ -181,14 +190,15 @@ export function ResellerBillingPanel() {
       <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="text-base font-bold text-slate-900">Choose a plan</h2>
         <p className="mt-1 text-sm text-slate-600">
-          Select Pro or Max to open PayTabs checkout and pay. Basic is free —
-          use top-ups above for more AI messages without upgrading.
+          Compare what&apos;s included. Pay with PayTabs checkout on Growth or
+          Pro, or ask your platform admin to assign Enterprise.
         </p>
 
         {!loading && !available && (
           <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
             Online checkout is not available yet. Ask your platform admin to
-            connect PayTabs under Admin → Billing.
+            connect PayTabs under Admin → Billing. Admins can still upgrade your
+            plan manually.
           </div>
         )}
 
@@ -205,54 +215,81 @@ export function ResellerBillingPanel() {
             <p className="mt-2 text-xs text-blue-800/90">
               PayTabs hosted payment page will open automatically once the
               platform connects the live payment API. Your request is saved as
-              pending.
+              pending until an admin confirms payment.
             </p>
           </div>
         )}
 
-        <div className="mt-4 grid gap-4 sm:grid-cols-3">
+        <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {PLAN_ORDER.map((id) => {
             const plan = AI_PLANS[id];
             const price = PLAN_PRICES_AED[id];
-            const isPaid = id !== "basic";
+            const isCurrent = id === currentPlanId;
+            const isPaidCheckout = plan.selfCheckout;
+            const featured = id === "pro";
+
             return (
               <div
                 key={id}
-                className="flex flex-col rounded-lg border border-slate-200 p-4"
+                className={`relative flex flex-col rounded-xl border p-4 ${
+                  isCurrent
+                    ? "border-blue-400 bg-blue-50/40 ring-1 ring-blue-200"
+                    : featured
+                      ? "border-emerald-300 bg-emerald-50/30"
+                      : "border-slate-200 bg-white"
+                }`}
               >
-                <p className="text-lg font-bold text-slate-900">{plan.name}</p>
-                <p className="mt-1 text-2xl font-bold text-blue-600">
-                  {plan.monthlyLimit.toLocaleString()} AI requests
-                  <span className="text-sm font-normal text-slate-600">
-                    {" "}
-                    / month
+                {featured && !isCurrent && (
+                  <span className="absolute -top-2.5 left-4 rounded-full bg-emerald-500 px-2 py-0.5 text-[10px] font-bold uppercase text-white">
+                    Popular
                   </span>
+                )}
+                {isCurrent && (
+                  <span className="absolute -top-2.5 right-4 rounded-full bg-blue-600 px-2 py-0.5 text-[10px] font-bold uppercase text-white">
+                    Current
+                  </span>
+                )}
+                <p className="text-lg font-bold text-slate-900">{plan.name}</p>
+                <p className="mt-0.5 text-xs text-slate-500">{plan.tagline}</p>
+                <p className="mt-2 text-xl font-bold text-emerald-700">
+                  <PlanPriceLabel planId={id} plan={plan} currency={currency} />
                 </p>
-                <p className="mt-1 text-sm font-semibold text-emerald-700">
-                  {price === 0
-                    ? "Free"
-                    : `${formatMoney(price, currency)}/mo`}
+                <p className="mt-1 text-xs text-slate-600">
+                  {plan.monthlyLimit.toLocaleString()} AI replies / month
                 </p>
-                <p className="mt-2 flex-1 text-sm text-slate-600">
-                  {plan.description}
-                </p>
-                {isPaid ? (
+                <div className="mt-3 flex-1">
+                  <PlanFeaturesList plan={plan} compact />
+                </div>
+                {id === "basic" ? (
+                  <p className="mt-4 text-center text-xs font-medium text-slate-500">
+                    Default for new stores
+                  </p>
+                ) : id === "enterprise" ? (
+                  <p className="mt-4 text-center text-xs leading-relaxed text-slate-600">
+                    Custom pricing — your platform admin assigns this plan and
+                    unlocks admin chat & unlimited products.
+                  </p>
+                ) : (
                   <button
                     type="button"
-                    disabled={!available || checkoutLoading === id}
+                    disabled={
+                      !available ||
+                      checkoutLoading === id ||
+                      isCurrent
+                    }
                     onClick={() => selectPlan(id)}
                     className="mt-4 w-full rounded-lg bg-emerald-600 px-3 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
                   >
-                    {checkoutLoading === id
-                      ? "Opening checkout..."
-                      : available
-                        ? "Select & pay"
-                        : "Checkout unavailable"}
+                    {isCurrent
+                      ? "Current plan"
+                      : checkoutLoading === id
+                        ? "Opening checkout..."
+                        : available
+                          ? isPaidCheckout
+                            ? `Upgrade · ${formatMoney(price, currency)}/mo`
+                            : "Select & pay"
+                          : "Checkout unavailable"}
                   </button>
-                ) : (
-                  <p className="mt-4 text-center text-xs font-medium text-slate-500">
-                    Included by default
-                  </p>
                 )}
               </div>
             );

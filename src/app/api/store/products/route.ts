@@ -4,16 +4,20 @@ import {
   createStoreProduct,
   listStoreProducts,
 } from "@/lib/products/products-service";
+import { getStoreProductQuota } from "@/lib/store/plan-access";
 import type { ProductInput } from "@/lib/products/types";
 
 export async function GET() {
   try {
     const { storeId } = await requireResellerStore();
-    const result = await listStoreProducts(storeId);
+    const [result, quota] = await Promise.all([
+      listStoreProducts(storeId),
+      getStoreProductQuota(storeId),
+    ]);
     if (result.error) {
       return NextResponse.json({ error: result.error }, { status: 500 });
     }
-    return NextResponse.json({ products: result.products });
+    return NextResponse.json({ products: result.products, quota });
   } catch {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

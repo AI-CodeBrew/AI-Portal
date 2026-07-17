@@ -6,6 +6,16 @@ import type {
   ProductOptionInput,
   StoreProduct,
 } from "@/lib/products/types";
+import { PlanUpgradeLink } from "@/components/PlanFeaturesList";
+import Link from "next/link";
+
+type ProductQuota = {
+  planId: string;
+  planName: string;
+  productCount: number;
+  productLimit: number | null;
+  canAddProduct: boolean;
+};
 
 const CURRENCIES = ["AED", "SAR", "USD", "EUR", "MAD", "EGP", "QAR", "KWD"];
 const COUNTRIES = [
@@ -101,6 +111,7 @@ export function ProductsPanel() {
   const [uploading, setUploading] = useState(false);
   const [createdLink, setCreatedLink] = useState<string | null>(null);
   const [skuTouched, setSkuTouched] = useState(false);
+  const [quota, setQuota] = useState<ProductQuota | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -110,6 +121,7 @@ export function ProductsPanel() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to load products");
       setProducts(data.products ?? []);
+      setQuota(data.quota ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load");
     } finally {
@@ -127,6 +139,7 @@ export function ProductsPanel() {
   );
 
   function openCreate() {
+    if (quota && !quota.canAddProduct) return;
     setEditing(null);
     setForm(emptyForm());
     setTab("basics");
@@ -284,19 +297,48 @@ export function ProductsPanel() {
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <p className="text-sm text-slate-600">
-          Create products and upload images. Each product gets a unique global
-          SKU so the AI can identify it in chats (
-          <code className="text-xs">(ref: SKU)</code>).
-        </p>
+        <div>
+          <p className="text-sm text-slate-600">
+            Create products and upload images. Each product gets a unique global
+            SKU so the AI can identify it in chats (
+            <code className="text-xs">(ref: SKU)</code>).
+          </p>
+          {quota && (
+            <p className="mt-1 text-xs font-medium text-slate-700">
+              {quota.productLimit == null
+                ? `${quota.productCount} products · ${quota.planName} plan (unlimited)`
+                : `${quota.productCount} / ${quota.productLimit} products on ${quota.planName}`}
+            </p>
+          )}
+        </div>
         <button
           type="button"
           onClick={openCreate}
-          className="rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-emerald-400"
+          disabled={quota != null && !quota.canAddProduct}
+          className="rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
         >
           + Add product
         </button>
       </div>
+
+      {quota && !quota.canAddProduct && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+          <p className="font-semibold">Product limit reached</p>
+          <p className="mt-1 text-amber-900">
+            Your {quota.planName} plan allows up to {quota.productLimit} products
+            on the site. Upgrade to add more.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <PlanUpgradeLink />
+            <Link
+              href="/dashboard/plan"
+              className="inline-flex items-center rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm font-semibold text-amber-900 hover:bg-amber-100"
+            >
+              View plans
+            </Link>
+          </div>
+        </div>
+      )}
 
       {error && !modalOpen && (
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">

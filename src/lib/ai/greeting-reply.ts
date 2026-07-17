@@ -3,6 +3,17 @@ import type { AgentContext } from "./sales-tools";
 const GREETING_ONLY =
   /^(hi+|hey+|heya+|hello+|hola+|yo+|sup+|thanks+|thank\s*you+|ok+|okay+|yes+|no+|assalam+|salam+|assalamu+|good morning|good evening|good afternoon|good night)[\s!.?,]*$/i;
 
+/** "How are you?" / small talk before sales — not a product lookup. */
+export function looksLikeHowAreYou(text: string): boolean {
+  const t = text.trim();
+  if (t.length < 4) return false;
+  return (
+    /\bhow\s+(are\s+you|are\s+u|r\s+u|is\s+it\s+going|you\s+doing)\b/i.test(t) ||
+    /\bhow('s|s)\s+(it\s+going|things|your\s+day|everything)\b/i.test(t) ||
+    /\bhow\s+(you|u)\s+doing\b/i.test(t)
+  );
+}
+
 /** Casual openers that are not product lookups — "hi whats up", "hey there", "heyyy", etc. */
 export function looksLikeCasualGreeting(text: string): boolean {
   const t = text.trim();
@@ -60,10 +71,22 @@ export function buildCasualGreetingReply(ctx: AgentContext): string {
   const agent = agentLabel(ctx, store);
   const variants = [
     `Hey 👋 ${agent} here from ${store}. What product are you looking for?`,
-    `Hi! I'm ${agent} at ${store} — send me a product name or SKU and I'll check price & stock for you.`,
+    `Hi! I'm ${agent} at ${store} — send me a product name or SKU and I'll share prices & details.`,
     `Hey, good to hear from you! I'm ${agent} from ${store} — what can I help you find today?`,
   ];
   const idx = Math.abs(store.length + agent.length) % variants.length;
+  return variants[idx]!;
+}
+
+export function buildHowAreYouReply(ctx: AgentContext): string {
+  const store = storeLabel(ctx);
+  const agent = agentLabel(ctx, store);
+  const variants = [
+    `I'm doing well, thanks for asking! 😊 How about you? If you need anything from ${store}, just tell me what you're looking for.`,
+    `All good here, thank you! ${agent} from ${store} — how are you doing today? Happy to help you find something to order.`,
+    `I'm fine, thanks! Hope you're doing great too 🙌 Need any products from ${store}? Send a name or SKU and I'll help.`,
+  ];
+  const idx = Math.abs(store.length + agent.length + 1) % variants.length;
   return variants[idx]!;
 }
 
@@ -71,6 +94,9 @@ export function tryDirectGreetingReply(
   ctx: AgentContext,
   latestUserMessage: string
 ): string | null {
+  if (looksLikeHowAreYou(latestUserMessage)) {
+    return buildHowAreYouReply(ctx);
+  }
   if (!looksLikeCasualGreeting(latestUserMessage)) return null;
   return buildCasualGreetingReply(ctx);
 }

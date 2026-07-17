@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import type { AdminResellerRow } from "@/lib/admin/resellers";
-import { AI_PLANS, PLAN_ORDER, type PlanId } from "@/lib/ai/plans";
+import { AI_PLANS, PLAN_ORDER, normalizePlanId, type PlanId } from "@/lib/ai/plans";
 
 type PlanFilter = "all" | PlanId;
 
@@ -43,9 +43,14 @@ export function AdminSubscriptionsPanel({
   const [message, setMessage] = useState<string | null>(null);
 
   const counts = useMemo(() => {
-    const c: Record<PlanId, number> = { basic: 0, pro: 0, max: 0 };
+    const c: Record<PlanId, number> = {
+      basic: 0,
+      growth: 0,
+      pro: 0,
+      enterprise: 0,
+    };
     for (const r of resellers) {
-      const id = (r.store?.plan_id ?? "basic") as PlanId;
+      const id = normalizePlanId(r.store?.plan_id);
       c[id] = (c[id] ?? 0) + 1;
     }
     return c;
@@ -54,7 +59,7 @@ export function AdminSubscriptionsPanel({
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return resellers.filter((r) => {
-      const planId = (r.store?.plan_id ?? "basic") as PlanId;
+      const planId = normalizePlanId(r.store?.plan_id);
       if (planFilter !== "all" && planId !== planFilter) return false;
       if (!q) return true;
       return (
@@ -222,7 +227,7 @@ export function AdminSubscriptionsPanel({
                 </tr>
               ) : (
                 filtered.map((r) => {
-                  const planId = (r.store?.plan_id ?? "basic") as PlanId;
+                  const planId = normalizePlanId(r.store?.plan_id);
                   const used = r.aiUsage?.used ?? 0;
                   const limit =
                     r.aiUsage?.limit ?? AI_PLANS[planId].monthlyLimit;

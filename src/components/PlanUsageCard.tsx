@@ -218,7 +218,7 @@ export function PlanUsageCard({ compact }: { compact?: boolean }) {
       )}
 
       {!compact && (
-        <div className="mt-5 grid gap-2 sm:grid-cols-3">
+        <div className="mt-5 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
           {PLAN_ORDER.map((id) => {
             const plan = AI_PLANS[id];
             const current = id === usage.planId;
@@ -233,7 +233,11 @@ export function PlanUsageCard({ compact }: { compact?: boolean }) {
               >
                 <p className="font-semibold text-slate-900">{plan.name}</p>
                 <p className="mt-1 text-xs text-slate-600">
-                  {plan.monthlyLimit.toLocaleString()} AI requests / month
+                  {plan.productLimit == null
+                    ? "Unlimited products"
+                    : `Up to ${plan.productLimit} products`}
+                  {" · "}
+                  {plan.monthlyLimit.toLocaleString()} AI / mo
                 </p>
                 {current && (
                   <p className="mt-1 text-xs font-semibold text-blue-700">

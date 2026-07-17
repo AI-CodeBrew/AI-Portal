@@ -10,6 +10,7 @@ import {
 import { BrandIconBox } from "@/components/BrandIcons";
 import { useStoreStatus } from "@/hooks/useStoreStatus";
 import { clearOrdersListCache } from "@/lib/orders-list-cache";
+import { PlanUpgradeLink } from "@/components/PlanFeaturesList";
 
 const ERROR_MESSAGES: Record<string, string> = {
   missing_credentials:
@@ -22,10 +23,13 @@ const ERROR_MESSAGES: Record<string, string> = {
     "Could not complete Shopify connection. Check your API key/secret and redirect URL in Shopify Partners.",
   oauth_mismatch: "Session mismatch during OAuth. Please try connecting again.",
   shop_taken: "This shop is already linked to another account.",
+  plan_required:
+    "Shopify integration requires Growth plan or higher. Upgrade under Plan & Usage.",
 };
 
 export function ShopifyIntegrationPanel({ appUrl }: { appUrl: string }) {
   const { store, refresh: refreshStore } = useStoreStatus();
+  const shopifyLocked = store?.plan?.shopifyAllowed === false;
   const [storeName, setStoreName] = useState("");
   const [shopDomain, setShopDomain] = useState("");
   const [apiKey, setApiKey] = useState("");
@@ -187,6 +191,21 @@ export function ShopifyIntegrationPanel({ appUrl }: { appUrl: string }) {
       </div>
 
       <div className="space-y-6 p-6">
+        {shopifyLocked && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+            <p className="font-semibold text-amber-950">
+              Shopify integration is locked on your plan
+            </p>
+            <p className="mt-1 text-sm text-amber-900">
+              The Basic plan includes up to 3 portal products only. Upgrade to
+              Growth (49 AED/mo) or higher to connect Shopify and sync orders.
+            </p>
+            <div className="mt-3">
+              <PlanUpgradeLink />
+            </div>
+          </div>
+        )}
+
         {message && (
           <div className={`rounded-lg border px-4 py-3 text-sm font-medium ${msgStyles[message.type]}`}>
             {message.text}
@@ -212,7 +231,7 @@ export function ShopifyIntegrationPanel({ appUrl }: { appUrl: string }) {
           </div>
         )}
 
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className={`grid gap-4 sm:grid-cols-2 ${shopifyLocked ? "pointer-events-none opacity-50" : ""}`}>
           <div className="sm:col-span-2">
             <label className="mb-1 block text-sm font-medium text-slate-700">Store name</label>
             <input
@@ -259,7 +278,7 @@ export function ShopifyIntegrationPanel({ appUrl }: { appUrl: string }) {
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-2">
+        <div className={`flex flex-wrap gap-2 ${shopifyLocked ? "pointer-events-none opacity-50" : ""}`}>
           <button
             type="button"
             onClick={() => saveCredentials()}

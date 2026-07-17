@@ -2,6 +2,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import {
   currentPeriodMonth,
   getPlan,
+  normalizePlanId,
   type PlanId,
   type AiPlan,
 } from "./plans";
@@ -45,7 +46,7 @@ export async function getStoreAiUsage(storeId: string): Promise<StoreAiUsage> {
     .eq("id", storeId)
     .maybeSingle();
 
-  const planId = (store?.plan_id ?? "basic") as PlanId;
+  const planId = normalizePlanId(store?.plan_id as string | null);
   const plan = getPlan(planId);
   const topupCredits = Number(store?.ai_topup_credits ?? 0);
   const limit = plan.monthlyLimit + Math.max(0, topupCredits);
@@ -101,7 +102,7 @@ export async function tryConsumeAiQuota(storeId: string): Promise<{
   }
 
   const result = data as QuotaRpcResult;
-  const planId = (result.plan_id ?? "basic") as PlanId;
+  const planId = normalizePlanId(result.plan_id as string | null);
   const plan = getPlan(planId);
   const used = result.used ?? 0;
   const limit = result.limit ?? plan.monthlyLimit;

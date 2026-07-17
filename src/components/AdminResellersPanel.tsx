@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { AI_PLANS, PLAN_ORDER, type PlanId } from "@/lib/ai/plans";
+import { AI_PLANS, PLAN_ORDER, normalizePlanId, type PlanId } from "@/lib/ai/plans";
 import type { AdminResellerRow } from "@/lib/admin/resellers";
 
 function ConnectionBadge({
@@ -98,7 +98,7 @@ function ResellerDetailModal({
   onClose: () => void;
   onPlanUpdated: (storeId: string, planId: PlanId) => void;
 }) {
-  const planId = reseller.store?.plan_id ?? "basic";
+  const planId = normalizePlanId(reseller.store?.plan_id);
   const storeId = reseller.store_id;
 
   return (
@@ -414,7 +414,7 @@ export function AdminResellersPanel({
                     {r.store_id ? (
                       <PlanSelect
                         storeId={r.store_id}
-                        currentPlan={r.store?.plan_id ?? "basic"}
+                        currentPlan={normalizePlanId(r.store?.plan_id)}
                         onUpdated={(planId) =>
                           handlePlanUpdated(r.store_id!, planId)
                         }
@@ -501,7 +501,7 @@ export function AdminResellersPanel({
               <div className="mt-3">
                 <PlanSelect
                   storeId={r.store_id}
-                  currentPlan={r.store?.plan_id ?? "basic"}
+                  currentPlan={normalizePlanId(r.store?.plan_id)}
                   onUpdated={(planId) => handlePlanUpdated(r.store_id!, planId)}
                 />
               </div>

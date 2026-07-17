@@ -1,8 +1,14 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { encrypt, decrypt } from "@/lib/crypto";
-import type { PlanId } from "@/lib/ai/plans";
-import { AI_PLANS } from "@/lib/ai/plans";
+import {
+  AI_PLANS,
+  PLAN_PRICES_AED,
+  planAllowsSelfCheckout,
+  type PlanId,
+} from "@/lib/ai/plans";
 import { getAppUrl } from "@/lib/app-url";
+
+export { PLAN_PRICES_AED };
 
 export type PayTabsRegion = "ARE" | "SAU" | "EGY" | "OMN" | "JOR" | "GLOBAL";
 
@@ -18,12 +24,6 @@ export const PAYTABS_REGIONS: Array<{
   { id: "JOR", label: "Jordan (JOR)", apiHost: "https://secure-jordan.paytabs.com" },
   { id: "GLOBAL", label: "Global", apiHost: "https://secure-global.paytabs.com" },
 ];
-
-export const PLAN_PRICES_AED: Record<PlanId, number> = {
-  basic: 0,
-  pro: 299,
-  max: 799,
-};
 
 export interface PayTabsCredentialsPublic {
   connected: boolean;
@@ -250,6 +250,13 @@ export async function createPlanCheckout(
 
   if (planId === "basic") {
     return { error: "Basic plan is free — no payment required." };
+  }
+
+  if (!planAllowsSelfCheckout(planId)) {
+    return {
+      error:
+        "Enterprise is customized — contact the platform admin to upgrade your plan.",
+    };
   }
 
   const amount = PLAN_PRICES_AED[planId];

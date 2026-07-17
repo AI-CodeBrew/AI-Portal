@@ -4,6 +4,10 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ArabiaAILogo } from "@/components/ArabiaAILogo";
 import { AI_PLANS, PLAN_ORDER } from "@/lib/ai/plans";
+import {
+  PlanFeaturesList,
+  PlanPriceLabel,
+} from "@/components/PlanFeaturesList";
 
 const NAV = [
   { href: "#product", label: "Product" },
@@ -365,13 +369,13 @@ export function LandingPage() {
             Pricing
           </p>
           <h2 className="mt-3 text-center font-[family-name:var(--font-landing-display)] text-3xl font-medium tracking-tight text-slate-900 sm:text-4xl">
-            Plans that match your WhatsApp volume
+            Plans for every stage of growth
           </h2>
-          <p className="mx-auto mt-3 max-w-lg text-center text-sm text-slate-600">
-            Each AI reply to a customer message counts as one use. Limits reset
-            every month.
+          <p className="mx-auto mt-3 max-w-xl text-center text-sm text-slate-600">
+            Portal products, Shopify sync, and AI reply limits — pick what fits
+            your store. Upgrade anytime from the reseller dashboard.
           </p>
-          <div className="mt-12 grid gap-6 md:grid-cols-3">
+          <div className="mt-12 grid gap-6 sm:grid-cols-2 xl:grid-cols-4">
             {PLAN_ORDER.map((id) => {
               const plan = AI_PLANS[id];
               const featured = id === "pro";
@@ -390,16 +394,16 @@ export function LandingPage() {
                     </span>
                   )}
                   <h3 className="text-lg font-bold text-slate-900">{plan.name}</h3>
-                  <p className="mt-1 text-3xl font-bold tracking-tight text-slate-900">
-                    {plan.monthlyLimit.toLocaleString()} AI requests
-                    <span className="text-base font-medium text-slate-500">
-                      {" "}
-                      / month
-                    </span>
+                  <p className="mt-0.5 text-xs text-slate-500">{plan.tagline}</p>
+                  <p className="mt-2 text-2xl font-bold tracking-tight text-slate-900">
+                    <PlanPriceLabel planId={id} plan={plan} />
                   </p>
-                  <p className="mt-3 flex-1 text-sm text-slate-600">
-                    {plan.description}
+                  <p className="mt-1 text-sm text-slate-600">
+                    {plan.monthlyLimit.toLocaleString()} AI replies / month
                   </p>
+                  <div className="mt-4 flex-1">
+                    <PlanFeaturesList plan={plan} compact />
+                  </div>
                   <Link
                     href="/signup"
                     className={`mt-6 block rounded-xl py-2.5 text-center text-sm font-semibold transition ${
@@ -408,7 +412,7 @@ export function LandingPage() {
                         : "border border-slate-300 bg-white text-slate-800 hover:bg-slate-50"
                     }`}
                   >
-                    Get started
+                    {id === "enterprise" ? "Contact sales" : "Get started"}
                   </Link>
                 </div>
               );

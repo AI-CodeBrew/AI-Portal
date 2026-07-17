@@ -1,5 +1,11 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
+  getPlan,
+  getProductLimit,
+  productLimitMessage,
+} from "@/lib/ai/plans";
+import { getStorePlanId } from "@/lib/store/plan-access";
+import {
   getStoreWhatsAppCredentials,
   getWhatsAppDisplayPhone,
 } from "@/lib/whatsapp";
@@ -451,6 +457,13 @@ export async function createStoreProduct(
   storeId: string,
   input: ProductInput
 ): Promise<{ product: StoreProduct; whatsapp_url?: string } | { error: string }> {
+  const planId = await getStorePlanId(storeId);
+  const count = await countStoreProducts(storeId);
+  const limit = getProductLimit(planId);
+  if (limit != null && count >= limit) {
+    return { error: productLimitMessage(planId, count) };
+  }
+
   const sku = await allocateUniqueProductSku(input.sku || input.name);
   if (!input.name.trim()) return { error: "Product name is required." };
   if (input.price < 0) return { error: "Price must be 0 or greater." };
@@ -958,4 +971,17 @@ export async function searchPortalProducts(
   });
 
   return ranked.slice(0, 10).map(mapStoreProductToSearchHit);
+}
+
+/** Random active portal products for "show me what you sell" style requests. */
+export async function sampleActiveCatalogProducts(
+  storeId: string,
+  count = 2
+): Promise<PortalProductSearchHit[]> {
+  const rows = await fetchActiveProductRows(storeId, null, 50);
+  if (!rows.length) return [];
+  const shuffled = [...rows].sort(() => Math.random() - 0.5);
+  return shuffled
+    .slice(0, Math.min(Math.max(1, count), shuffled.length))
+    .map(mapStoreProductToSearchHit);
 }

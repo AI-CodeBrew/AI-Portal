@@ -8,10 +8,26 @@ import {
   markConversationRead,
   sendMessage,
 } from "@/lib/support/chat";
+import { getStorePlanId } from "@/lib/store/plan-access";
+import { planAllowsAdminChat } from "@/lib/ai/plans";
+
+function enterpriseRequiredResponse() {
+  return NextResponse.json(
+    {
+      error:
+        "Direct admin chat is included on the Enterprise plan. Upgrade via Plan & Usage or ask your platform admin.",
+    },
+    { status: 403 }
+  );
+}
 
 export async function GET() {
   try {
     const { storeId } = await requireResellerStore();
+    const planId = await getStorePlanId(storeId);
+    if (!planAllowsAdminChat(planId)) {
+      return enterpriseRequiredResponse();
+    }
     const conversation = await getConversationForStore(storeId);
     if (!conversation) {
       return NextResponse.json({ conversation: null, messages: [] });
@@ -34,6 +50,11 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const { user, storeId } = await requireResellerStore();
+    const planId = await getStorePlanId(storeId);
+    if (!planAllowsAdminChat(planId)) {
+      return enterpriseRequiredResponse();
+    }
+
     const body = (await request.json()) as {
       content?: string;
       action?: "clear";

@@ -11,7 +11,7 @@ import {
   getPendingOrdersHintForPhone,
   type AgentContext,
 } from "./sales-tools";
-import { tryDirectProductReply, tryDirectProductImageReply, tryDirectVariantSelectionReply } from "./product-reply";
+import { tryDirectProductReply, tryDirectProductImageReply, tryDirectVariantSelectionReply, tryDirectCatalogBrowseReply } from "./product-reply";
 import { tryDirectCheckoutReply } from "./checkout-reply";
 import {
   tryDirectSalesRecoveryReply,
@@ -123,6 +123,16 @@ export async function runSalesAgent(
     if (imageReply) return imageReply;
   } catch (err) {
     console.error("[run-sales-agent] product image failed:", err);
+  }
+
+  try {
+    const catalogBrowse = await tryDirectCatalogBrowseReply(
+      enrichedCtx,
+      latestUser
+    );
+    if (catalogBrowse) return catalogBrowse;
+  } catch (err) {
+    console.error("[run-sales-agent] catalog browse failed:", err);
   }
 
   try {

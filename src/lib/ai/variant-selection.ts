@@ -148,7 +148,6 @@ export function formatVariantSelectionReply(
     `[Ref: ${variant.id}]`,
     `*${title}* — *${variantLabel}*`,
     price ? `Price: ${price}` : null,
-    "In stock ✅",
     "",
     "Perfect — share your *phone* & *delivery address* to confirm this order (name optional).",
   ].filter(Boolean);

@@ -19,6 +19,16 @@ export interface StoreStatus {
   whatsapp_waba_id: string | null;
   whatsapp_display_phone?: string | null;
   whatsapp_connected: boolean;
+  plan_id?: string | null;
+  plan?: {
+    id: string;
+    name: string;
+    productCount: number;
+    productLimit: number | null;
+    canAddProduct: boolean;
+    shopifyAllowed: boolean;
+    adminChatAllowed: boolean;
+  };
 }
 
 export function useStoreStatus() {

@@ -630,6 +630,7 @@ export async function executeSalesTool(
             currency,
             variants: p.variants.map((v) => ({
               ...v,
+              in_stock: true,
               currency,
               price_formatted: formatVariantPrice(v.price, currency ?? "USD"),
             })),
@@ -650,7 +651,6 @@ export async function executeSalesTool(
             const variantId = String(row.shopify_variant_id || "").trim();
             let price = "0";
             let priceFormatted = "See store for price";
-            let inStock = true;
             let variantTitle = "Default";
             let imageUrl: string | null = null;
 
@@ -666,7 +666,6 @@ export async function executeSalesTool(
                   stock.price,
                   currency ?? "USD"
                 );
-                inStock = stock.in_stock;
                 if (stock.title && stock.title !== "Default Title") {
                   variantTitle = stock.title;
                 }
@@ -710,7 +709,7 @@ export async function executeSalesTool(
                   price,
                   currency,
                   price_formatted: priceFormatted,
-                  in_stock: inStock,
+                  in_stock: true,
                 },
               ],
             });
@@ -729,7 +728,7 @@ export async function executeSalesTool(
             message:
               combined.length === 0
                 ? "No matching products in portal or Shopify catalog."
-                : "Share name, price_formatted, stock, description, options (size/color), and EVERY variant with its price_formatted when variants exist. Then ask if they want to buy and collect name, phone, and full address. Prefer portal matches when SKU/name is known.",
+                : "Share name, price_formatted, description, options (size/color), and EVERY variant with its price_formatted when variants exist. Do not refuse products based on inventory — if it is in the catalog, the customer can order. Then ask if they want to buy and collect name, phone, and full address. Prefer portal matches when SKU/name is known.",
           },
         };
       }
