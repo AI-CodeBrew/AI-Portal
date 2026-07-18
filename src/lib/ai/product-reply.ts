@@ -4,7 +4,6 @@ import {
   getPrimaryProductImageUrl,
   looksLikeCatalogBrowseMoreRequest,
   looksLikeCatalogBrowseRequest,
-  looksLikeObjectionPhrase,
   productSearchTokens,
   sampleActiveCatalogProducts,
   skuMatchKey,
@@ -19,8 +18,7 @@ import {
 import { getShopCurrency, listShopifyCatalogProducts } from "@/lib/shopify";
 import { formatMoney } from "@/lib/currency";
 import { executeSalesTool, type AgentContext } from "./sales-tools";
-import { parseCheckoutDetails } from "./checkout-parse";
-import { looksLikeCasualGreeting, looksLikeOffTopicChat } from "./greeting-reply";
+import { resolveExactDirectRoute } from "./exact-routes";
 import {
   formatVariantSelectionReply,
   looksLikeVariantSelection,
@@ -49,18 +47,6 @@ export type SearchProduct = {
     option_values?: Record<string, string>;
   }>;
 };
-
-const ORDER_ONLY_PATTERN =
-  /\b(order|tracking|delivery|shipped|where is my|my order|order status|dispatch)\b/i;
-
-const PRODUCT_ASK_PATTERN =
-  /\b(price|cost|how much|do you have|available|in stock|product|products|buy|sell|show me|looking for|details|about|sku|want this|variant|variants|option|options|size|sizes|color|colors|colour|colours)\b/i;
-
-const GREETING_ONLY =
-  /^(hi|hello|hey|thanks|thank you|ok|okay|yes|no|assalam|salam)[\s!.]*$/i;
-
-const CHECKOUT_HIJACK =
-  /\b(place\s+(an\s+)?order|want\s+to\s+(order|buy)|my name|address|phone|checkout|deliver)\b/i;
 
 const IMAGE_ASK_PATTERN =
   /\b(image|images|photo|photos|picture|pictures|pics|pic)\b/i;
@@ -602,6 +588,37 @@ async function loadCatalogSampleProducts(
   return mapped.slice(0, count);
 }
 
+/** Build catalog browse reply for AI tools (no regex gate). */
+export async function buildCatalogBrowseReplyForAgent(
+  ctx: AgentContext,
+  history: Array<{ role: "user" | "assistant"; content: string }>,
+  options?: { isMore?: boolean }
+): Promise<{ products: SearchProduct[]; reply: string } | null> {
+  const isMore = options?.isMore ?? false;
+  const shown = extractCatalogBrowseShownProducts(history);
+  const products = await loadCatalogSampleProducts(ctx, 2, shown);
+
+  if (!products.length) {
+    if (isMore) {
+      return {
+        products: [],
+        reply:
+          "That's everything in our catalog right now 👍 Reply with a product name from above, or send a SKU.",
+      };
+    }
+    return null;
+  }
+
+  const intro = isMore
+    ? "Here are a couple more you can order 👇"
+    : "Here are a couple of things you can order from us 👇";
+
+  return {
+    products,
+    reply: `${intro}\n\n${formatCatalogBrowseReply(products)}`,
+  };
+}
+
 /** Show catalog picks when the customer asks what they can buy; paginate on "more/other". */
 export async function tryDirectCatalogBrowseReply(
   ctx: AgentContext,
@@ -612,21 +629,11 @@ export async function tryDirectCatalogBrowseReply(
   const isBrowse = looksLikeCatalogBrowseRequest(latestUserMessage);
   if (!isBrowse && !isMore) return null;
 
-  const shown = extractCatalogBrowseShownProducts(history);
-  const products = await loadCatalogSampleProducts(ctx, 2, shown);
-
-  if (!products.length) {
-    if (isMore) {
-      return "That's everything in our catalog right now 👍 Reply with a product name from above, or send a SKU.";
-    }
+  const built = await buildCatalogBrowseReplyForAgent(ctx, history, { isMore });
+  if (!built) {
     return "Our catalog is being updated — send a product name or SKU and I'll look it up for you.";
   }
-
-  const intro = isMore
-    ? "Here are a couple more you can order 👇"
-    : "Here are a couple of things you can order from us 👇";
-
-  return `${intro}\n\n${formatCatalogBrowseReply(products)}`;
+  return built.reply;
 }
 
 function formatProductNotFoundReply(query: string): string {
@@ -686,45 +693,12 @@ function shouldTryDirectProductLookup(
   message: string,
   history: Array<{ role: "user" | "assistant"; content: string }> = []
 ): boolean {
-  const t = message.trim();
-  if (t.length < 2) return false;
-  if (looksLikeObjectionPhrase(t)) return false;
-  if (looksLikeCatalogBrowseRequest(t)) return false;
-  if (looksLikeVariantSelection(t, history)) return false;
-  if (looksLikeCasualGreeting(t)) return false;
-  if (looksLikeOffTopicChat(t)) return false;
-  if (GREETING_ONLY.test(t)) return false;
-  // Full contact block → checkout handler, not catalog lookup
-  if (parseCheckoutDetails(t)) return false;
-  if (CHECKOUT_HIJACK.test(t) && /\d{8,}/.test(t.replace(/\D/g, ""))) {
-    return false;
-  }
-  if (CHECKOUT_HIJACK.test(t) && /\b(name|address|phone)\b/i.test(t)) {
-    return false;
-  }
-  if (ORDER_ONLY_PATTERN.test(t) && !PRODUCT_ASK_PATTERN.test(t)) return false;
-  // SKU always wins — even if they say "I want to order AA-…"
-  if (extractSkuFromText(t)) return true;
-
-  const query = extractProductSearchQuery(t);
-
-  // "I want to order storage rack" / "do you have X" — catalog lookup, not checkout yet
-  if (
-    CHECKOUT_HIJACK.test(t) &&
-    !parseCheckoutDetails(t) &&
-    query &&
-    (PRODUCT_ASK_PATTERN.test(t) || query.length >= 3)
-  ) {
-    return true;
-  }
-
-  if (PRODUCT_ASK_PATTERN.test(t) && !CHECKOUT_HIJACK.test(t)) return true;
-
-  if (!query) return false;
-  if (t.length <= 80 && !ORDER_ONLY_PATTERN.test(t) && !CHECKOUT_HIJACK.test(t)) {
-    return true;
-  }
-  return false;
+  const route = resolveExactDirectRoute(message, history);
+  return (
+    route === "sku_search" ||
+    route === "named_product_search" ||
+    route === "variant_selection"
+  );
 }
 
 /** True when the message is asking about a product (used to skip generic opening messages). */

@@ -38,7 +38,7 @@ export async function getStoreAiSettingsRaw(
   const { data } = await supabase
     .from("stores")
     .select(
-      "ai_agent_name, ai_opening_message, ai_reply_length, ai_order_template_id, ai_general_template_id, whatsapp_order_template_id, whatsapp_sales_instructions, shopify_confirm_instructions, auto_confirm_orders, auto_follow_up_template_id, ai_chat_history_limit, ai_session_window_hours, ai_recovery_discount_percent, ai_recovery_bundle_discount_percent, ai_conversation_reply_limit, ai_conversation_reply_window_hours"
+      "ai_agent_name, ai_opening_message, ai_send_opening_message, ai_reply_length, ai_order_template_id, ai_general_template_id, whatsapp_order_template_id, whatsapp_sales_instructions, shopify_confirm_instructions, auto_confirm_orders, auto_follow_up_template_id, ai_chat_history_limit, ai_session_window_hours, ai_recovery_discount_percent, ai_recovery_bundle_discount_percent, ai_conversation_reply_limit, ai_conversation_reply_window_hours"
     )
     .eq("id", storeId)
     .single();
@@ -52,6 +52,7 @@ export async function getStoreAiSettingsRaw(
   return {
     agentName: (data?.ai_agent_name as string | null) ?? null,
     openingMessage: (data?.ai_opening_message as string | null) ?? null,
+    sendOpeningMessage: data?.ai_send_opening_message !== false,
     replyLength: (data?.ai_reply_length as AiReplyLength) ?? "medium",
     orderTemplateId: (data?.ai_order_template_id as string | null) ?? null,
     generalTemplateId: (data?.ai_general_template_id as string | null) ?? null,
@@ -126,6 +127,7 @@ export async function resolveStoreAiConfig(
   return {
     agentName: settings.agentName,
     openingMessage: settings.openingMessage,
+    sendOpeningMessage: settings.sendOpeningMessage,
     replyLength: settings.replyLength,
     tone: settings.tone,
     orderTemplateId: settings.orderTemplateId,
@@ -168,6 +170,9 @@ export async function updateStoreAiSettings(
   }
   if (input.openingMessage !== undefined) {
     payload.ai_opening_message = input.openingMessage?.trim() || null;
+  }
+  if (input.sendOpeningMessage !== undefined) {
+    payload.ai_send_opening_message = Boolean(input.sendOpeningMessage);
   }
   if (input.replyLength !== undefined) {
     payload.ai_reply_length = input.replyLength;
@@ -289,8 +294,9 @@ export async function updateStoreAiSettings(
       error.message.includes("whatsapp_sales_instructions") ||
       error.message.includes("auto_confirm_orders") ||
       error.message.includes("ai_chat_history_limit") ||
-      error.message.includes("ai_recovery")
-        ? " — Run migrations 009 / 020 / 026 in Supabase"
+      error.message.includes("ai_recovery") ||
+      error.message.includes("ai_send_opening_message")
+        ? " — Run migrations 009 / 020 / 026 / 035 in Supabase"
         : "";
     return { error: error.message + hint };
   }

@@ -31,6 +31,7 @@ export function AiSettingsPanel() {
     useState<StoreAiSettings | null>(null);
 
   const [agentName, setAgentName] = useState("");
+  const [sendOpeningMessage, setSendOpeningMessage] = useState(true);
   const [openingMessage, setOpeningMessage] = useState("");
   const [replyLength, setReplyLength] = useState<AiReplyLength>("medium");
   const [whatsappOrderTemplateId, setWhatsappOrderTemplateId] = useState<
@@ -64,6 +65,7 @@ export function AiSettingsPanel() {
       setApprovedWaTemplates(data.approvedWhatsAppTemplates ?? []);
       setPlatformDefaults(data.platformDefaults ?? null);
       setAgentName(s.agentName ?? "");
+      setSendOpeningMessage(s.sendOpeningMessage !== false);
       setOpeningMessage(s.openingMessage ?? "");
       setReplyLength(s.replyLength ?? "medium");
       setWhatsappOrderTemplateId(s.whatsappOrderTemplateId ?? null);
@@ -109,6 +111,7 @@ export function AiSettingsPanel() {
   function resetGeneral() {
     if (!settings) return;
     setAgentName(settings.agentName ?? "");
+    setSendOpeningMessage(settings.sendOpeningMessage !== false);
     setOpeningMessage(settings.openingMessage ?? "");
     setReplyLength(settings.replyLength ?? "medium");
     setWhatsappOrderTemplateId(settings.whatsappOrderTemplateId ?? null);
@@ -164,6 +167,7 @@ export function AiSettingsPanel() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           agentName: agentName || null,
+          sendOpeningMessage,
           openingMessage: openingMessage || null,
           replyLength,
           whatsappOrderTemplateId: whatsappOrderTemplateId || null,
@@ -319,7 +323,8 @@ export function AiSettingsPanel() {
               </p>
             </div>
 
-            {(!settings?.agentName || !settings?.openingMessage) &&
+            {sendOpeningMessage &&
+              (!settings?.agentName || !settings?.openingMessage) &&
               platformDefaults && (
                 <div className="mb-5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-900">
                   <p className="font-semibold">Using platform defaults</p>
@@ -351,6 +356,36 @@ export function AiSettingsPanel() {
               </div>
 
               <div>
+                <div className="flex items-start gap-3">
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={sendOpeningMessage}
+                    onClick={() => setSendOpeningMessage((v) => !v)}
+                    className={`relative mt-0.5 h-6 w-11 shrink-0 rounded-full transition-colors ${
+                      sendOpeningMessage ? "bg-emerald-500" : "bg-slate-300"
+                    }`}
+                  >
+                    <span
+                      className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
+                        sendOpeningMessage ? "translate-x-5" : "translate-x-0"
+                      }`}
+                    />
+                  </button>
+                  <div className="flex-1">
+                    <p className="text-sm font-semibold text-slate-900">
+                      Send opening message
+                    </p>
+                    <p className="mt-0.5 text-xs text-slate-600">
+                      {sendOpeningMessage
+                        ? "New customers get your opening message on their first chat (uses your text below, or admin default if empty)."
+                        : "Disabled — no opening message is sent, even if admin set a platform default."}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className={sendOpeningMessage ? "" : "opacity-50"}>
                 <label className="mb-1.5 block text-sm font-semibold text-slate-900">
                   Opening message
                 </label>
@@ -358,13 +393,15 @@ export function AiSettingsPanel() {
                   value={openingMessage}
                   onChange={(e) => setOpeningMessage(e.target.value)}
                   rows={3}
+                  disabled={!sendOpeningMessage}
                   placeholder={
                     platformDefaults?.openingMessage || DEFAULT_OPENING
                   }
-                  className="w-full rounded-lg border border-slate-200 px-3.5 py-2.5 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100"
+                  className="w-full rounded-lg border border-slate-200 px-3.5 py-2.5 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-slate-50"
                 />
                 <p className="mt-1.5 text-xs text-slate-500">
-                  Sent to new customers on their first message. Use{" "}
+                  Sent to new customers on their first message when opening
+                  messages are enabled. Use{" "}
                   <code className="rounded bg-slate-100 px-1">
                     {"{agent_name}"}
                   </code>{" "}
@@ -374,7 +411,7 @@ export function AiSettingsPanel() {
                   </code>
                   .
                 </p>
-                {!openingMessage && (
+                {sendOpeningMessage && !openingMessage && (
                   <button
                     type="button"
                     onClick={() => setOpeningMessage(DEFAULT_OPENING)}

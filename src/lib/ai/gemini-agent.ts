@@ -10,7 +10,7 @@ import {
   extractSkuFromText,
   extractProductSearchQuery,
 } from "@/lib/products/products-service";
-import { looksLikeCasualGreeting } from "./greeting-reply";
+import { pickInitialCatalogTool } from "./shopping-intent";
 import {
   DEFAULT_GEMINI_MODEL,
   normalizeGeminiModel,
@@ -18,12 +18,6 @@ import {
 
 const GEMINI_API_BASE =
   "https://generativelanguage.googleapis.com/v1beta/models";
-
-const PRODUCT_QUERY_PATTERN =
-  /\b(price|cost|how much|do you have|available|in stock|product|buy|sell|show me|looking for|details|about|sku|want this|variant|variants|size|sizes|color|colors|colour|option|options)\b/i;
-
-const ORDER_QUERY_PATTERN =
-  /\b(order|tracking|delivery|shipped|where is my|my order|order status|dispatch)\b/i;
 
 type GeminiPart =
   | { text: string }
@@ -51,24 +45,12 @@ function lastUserMessage(
   return "";
 }
 
-function looksLikeProductQuery(text: string): boolean {
-  const t = text.trim();
-  if (t.length < 2) return false;
-  if (looksLikeCasualGreeting(t)) return false;
-  if (ORDER_QUERY_PATTERN.test(t)) return false;
-  if (extractSkuFromText(t)) return true;
-  if (PRODUCT_QUERY_PATTERN.test(t)) return true;
-  return (
-    t.length <= 80 &&
-    !!extractProductSearchQuery(t) &&
-    !/^(hi+|hello+|hey+|thanks|thank you|ok+|yes+|no+)\b/i.test(t)
-  );
-}
-
-function looksLikeOrderQuery(text: string): boolean {
-  const t = text.trim();
-  if (/\bplace\s+(an\s+)?order\b/i.test(t)) return false;
-  return ORDER_QUERY_PATTERN.test(t);
+function toolFormattedReply(result: unknown): string | null {
+  if (result && typeof result === "object" && "formatted_reply" in result) {
+    const text = (result as { formatted_reply?: string }).formatted_reply?.trim();
+    return text || null;
+  }
+  return null;
 }
 
 function toGeminiContents(
@@ -114,7 +96,7 @@ async function geminiGenerate(params: {
   model: string;
   systemPrompt: string;
   contents: GeminiContent[];
-  forceSearchProducts?: boolean;
+  forceToolName?: string;
 }): Promise<GeminiResponse> {
   const body: Record<string, unknown> = {
     systemInstruction: { parts: [{ text: params.systemPrompt }] },
@@ -126,11 +108,11 @@ async function geminiGenerate(params: {
     },
   };
 
-  if (params.forceSearchProducts) {
+  if (params.forceToolName) {
     body.toolConfig = {
       functionCallingConfig: {
         mode: "ANY",
-        allowedFunctionNames: ["search_products"],
+        allowedFunctionNames: [params.forceToolName],
       },
     };
   } else {
@@ -174,10 +156,12 @@ export async function runSalesAgentWithGemini(
     ctx.aiConfig?.effectiveChatHistoryLimit ?? CHAT_HISTORY_LIMIT;
   const trimmedHistory = history.slice(-historyLimit);
   const model = normalizeGeminiModel(options.model);
+  const agentCtx: AgentContext = { ...ctx, chatHistory: trimmedHistory };
 
   const skuHint = extractSkuFromText(latestUser);
   const nameHint = extractProductSearchQuery(latestUser);
   const searchHint = skuHint || nameHint;
+  const initialTool = pickInitialCatalogTool(latestUser, trimmedHistory);
 
   const systemPrompt = await buildSalesSystemPromptWithExamples({
     storeId: ctx.store.id,
@@ -191,8 +175,6 @@ export async function runSalesAgentWithGemini(
 
   const contents = mergeGeminiContents(toGeminiContents(trimmedHistory));
   const maxIterations = 8;
-  const forceSearch =
-    looksLikeProductQuery(latestUser) && !looksLikeOrderQuery(latestUser);
   let usedSearchProducts = false;
   let lastSearchProducts: Array<{
     title?: string;
@@ -214,7 +196,7 @@ export async function runSalesAgentWithGemini(
       model,
       systemPrompt,
       contents,
-      forceSearchProducts: forceSearch && i === 0,
+      forceToolName: i === 0 ? (initialTool ?? undefined) : undefined,
     });
 
     const candidate = response.candidates?.[0];
@@ -266,10 +248,15 @@ export async function runSalesAgentWithGemini(
         input = { ...input, query: searchHint };
       }
 
-      const { result, escalated } = await executeSalesTool(name, input, ctx);
+      const { result, escalated } = await executeSalesTool(name, input, agentCtx);
 
       if (escalated) {
         return "Got it — someone from our team will message you shortly 👍";
+      }
+
+      const formatted = toolFormattedReply(result);
+      if (name === "browse_catalog" && formatted) {
+        return formatted;
       }
 
       if (name === "search_products") {

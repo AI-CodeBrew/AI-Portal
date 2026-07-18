@@ -99,6 +99,7 @@ export async function getPlatformAiDefaults(): Promise<PlatformAiDefaults> {
     return {
       agentName: "Max",
       openingMessage: FALLBACK_OPENING,
+      sendOpeningMessage: true,
       replyLength: "medium",
       tone: "friendly",
       orderTemplateId: DEFAULT_ORDER_TEMPLATE_ID,
@@ -120,6 +121,7 @@ export async function getPlatformAiDefaults(): Promise<PlatformAiDefaults> {
     agentName: (data.ai_agent_name as string | null) ?? "Max",
     openingMessage:
       (data.ai_opening_message as string | null) ?? FALLBACK_OPENING,
+    sendOpeningMessage: true,
     replyLength: (data.ai_reply_length as AiReplyLength) ?? "medium",
     tone: isTone(data.ai_tone) ? data.ai_tone : "friendly",
     orderTemplateId:
@@ -252,6 +254,7 @@ export async function updatePlatformAiDefaults(
 export async function resolveEffectiveAiSettings(storeSettings: {
   agentName: string | null;
   openingMessage: string | null;
+  sendOpeningMessage?: boolean;
   replyLength: AiReplyLength | null;
   orderTemplateId: string | null;
   generalTemplateId: string | null;
@@ -313,6 +316,7 @@ export async function resolveEffectiveAiSettings(storeSettings: {
   return {
     agentName,
     openingMessage,
+    sendOpeningMessage: storeSettings.sendOpeningMessage !== false,
     replyLength,
     tone: platform.tone,
     orderTemplateId,

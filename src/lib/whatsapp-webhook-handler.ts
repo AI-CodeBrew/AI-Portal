@@ -404,18 +404,23 @@ export async function handleWhatsAppWebhookMessage(
           if (isNewConversation && !looksLikeProductInquiry(inboundText)) {
             try {
               const aiSettings = await resolveStoreAiConfig(activeStore.id);
-              const opening = aiSettings.openingMessage?.trim();
-              if (opening) {
+              if (
+                aiSettings.sendOpeningMessage &&
+                aiSettings.openingMessage?.trim()
+              ) {
                 const storeName =
                   activeStore.store_name ||
                   activeStore.shop_domain?.replace(/\.myshopify\.com$/i, "") ||
                   "our store";
                 const agentName =
                   aiSettings.agentName?.trim() || storeName;
-                const openingText = personalizeOpeningMessage(opening, {
-                  agentName,
-                  storeName,
-                });
+                const openingText = personalizeOpeningMessage(
+                  aiSettings.openingMessage.trim(),
+                  {
+                    agentName,
+                    storeName,
+                  }
+                );
                 const openingResult = await sendReply(
                   activeStore,
                   customerPhone,

@@ -11,14 +11,20 @@ import {
   getPendingOrdersHintForPhone,
   type AgentContext,
 } from "./sales-tools";
-import { tryDirectProductReply, tryDirectProductImageReply, tryDirectVariantSelectionReply, tryDirectCatalogBrowseReply } from "./product-reply";
-import { tryDirectCheckoutReply } from "./checkout-reply";
 import {
-  tryDirectSalesRecoveryReply,
-  looksLikeOrderDecline,
-  productOfferedInHistory,
-} from "./sales-recovery";
-import { tryDirectGreetingReply, tryDirectOffTopicReply, buildCasualGreetingReply } from "./greeting-reply";
+  tryDirectProductReply,
+  tryDirectVariantSelectionReply,
+  tryDirectCatalogBrowseReply,
+} from "./product-reply";
+import { tryDirectCheckoutReply } from "./checkout-reply";
+import { tryDirectSalesRecoveryReply } from "./sales-recovery";
+import {
+  buildCasualGreetingReply,
+  buildHowAreYouReply,
+  tryDirectGreetingReply,
+  tryDirectOffTopicReply,
+} from "./greeting-reply";
+import { resolveExactDirectRoute } from "./exact-routes";
 
 export type { AgentContext } from "./sales-tools";
 
@@ -65,27 +71,71 @@ async function enrichAgentContext(ctx: AgentContext): Promise<AgentContext> {
   return next;
 }
 
+/** Regex handlers only when resolveExactDirectRoute matches — else AI decides. */
+async function tryExactDirectReply(
+  ctx: AgentContext,
+  latestUser: string,
+  history: Array<{ role: "user" | "assistant"; content: string }>,
+  route: ReturnType<typeof resolveExactDirectRoute>
+): Promise<string | null> {
+  if (!route) return null;
+
+  switch (route) {
+    case "checkout": {
+      return tryDirectCheckoutReply(ctx, latestUser, history);
+    }
+    case "catalog_browse":
+    case "catalog_more": {
+      return tryDirectCatalogBrowseReply(ctx, latestUser, history);
+    }
+    case "greeting_only": {
+      return tryDirectGreetingReply(ctx, latestUser);
+    }
+    case "how_are_you": {
+      return buildHowAreYouReply(ctx);
+    }
+    case "off_topic": {
+      return tryDirectOffTopicReply(ctx, latestUser);
+    }
+    case "variant_selection": {
+      return tryDirectVariantSelectionReply(ctx, latestUser, history);
+    }
+    case "sku_search":
+    case "named_product_search": {
+      const direct = await tryDirectProductReply(ctx, latestUser, history);
+      return direct?.reply ?? null;
+    }
+    default:
+      return null;
+  }
+}
+
 export async function runSalesAgent(
   ctx: AgentContext,
   history: Array<{ role: "user" | "assistant"; content: string }>
 ): Promise<string> {
-  const enrichedCtx = await enrichAgentContext(ctx);
+  const enrichedCtx = await enrichAgentContext({
+    ...ctx,
+    chatHistory: history,
+  });
   const latestUser =
     [...history].reverse().find((m) => m.role === "user")?.content ?? "";
 
-  // Place-order + name/phone/address → create & confirm before the LLM
+  const exactRoute = resolveExactDirectRoute(latestUser, history);
+
   try {
-    const checkout = await tryDirectCheckoutReply(
+    const exact = await tryExactDirectReply(
       enrichedCtx,
       latestUser,
-      history
+      history,
+      exactRoute
     );
-    if (checkout) return checkout;
+    if (exact) return exact;
   } catch (err) {
-    console.error("[run-sales-agent] checkout failed:", err);
+    console.error("[run-sales-agent] exact direct reply failed:", err);
   }
 
-  // Decline after product pitch → discount, then bundle, then stop
+  // Recovery uses its own exact decline patterns + pitch detection
   try {
     const recovery = await tryDirectSalesRecoveryReply(
       enrichedCtx,
@@ -95,74 +145,6 @@ export async function runSalesAgent(
     if (recovery) return recovery;
   } catch (err) {
     console.error("[run-sales-agent] sales recovery failed:", err);
-  }
-
-  // Casual hi / what's up — human greeting, not catalog lookup
-  try {
-    const greeting = tryDirectGreetingReply(enrichedCtx, latestUser);
-    if (greeting) return greeting;
-  } catch (err) {
-    console.error("[run-sales-agent] greeting reply failed:", err);
-  }
-
-  // "Are you AI?", jokes, etc. — before catalog lookup
-  try {
-    const offTopic = tryDirectOffTopicReply(enrichedCtx, latestUser);
-    if (offTopic) return offTopic;
-  } catch (err) {
-    console.error("[run-sales-agent] off-topic reply failed:", err);
-  }
-
-  // Catalog lookup by SKU or product name (incl. variants)
-  try {
-    const imageReply = await tryDirectProductImageReply(
-      enrichedCtx,
-      latestUser,
-      history
-    );
-    if (imageReply) return imageReply;
-  } catch (err) {
-    console.error("[run-sales-agent] product image failed:", err);
-  }
-
-  try {
-    const catalogBrowse = await tryDirectCatalogBrowseReply(
-      enrichedCtx,
-      latestUser,
-      history
-    );
-    if (catalogBrowse) return catalogBrowse;
-  } catch (err) {
-    console.error("[run-sales-agent] catalog browse failed:", err);
-  }
-
-  try {
-    const variantReply = await tryDirectVariantSelectionReply(
-      enrichedCtx,
-      latestUser,
-      history
-    );
-    if (variantReply) return variantReply;
-  } catch (err) {
-    console.error("[run-sales-agent] variant selection failed:", err);
-  }
-
-  try {
-    const direct = await tryDirectProductReply(enrichedCtx, latestUser, history);
-    if (direct) return direct.reply;
-  } catch (err) {
-    console.error("[run-sales-agent] product prefetch failed:", err);
-  }
-
-  // Objection after a product pitch — recovery handler only (no LLM double-reply)
-  if (
-    productOfferedInHistory(history) &&
-    looksLikeOrderDecline(latestUser)
-  ) {
-    console.log(
-      "[run-sales-agent] objection after pitch — skipping LLM (recovery handles this path)"
-    );
-    return "Got it 👍 No pressure from my side — message anytime if you change your mind.";
   }
 
   const llm = await getActiveLlmConfig();
@@ -180,8 +162,6 @@ export async function runSalesAgent(
         });
       } catch (err) {
         console.error("[run-sales-agent] Gemini agent error:", err);
-        const greeting = tryDirectGreetingReply(enrichedCtx, latestUser);
-        if (greeting) return greeting;
       }
     }
   }
@@ -194,13 +174,15 @@ export async function runSalesAgent(
       });
     } catch (err) {
       console.error("[run-sales-agent] Groq agent error:", err);
-      const greeting = tryDirectGreetingReply(enrichedCtx, latestUser);
-      if (greeting) return greeting;
     }
   }
 
   if (process.env.ANTHROPIC_API_KEY) {
-    return runSalesAgentWithAnthropic(enrichedCtx, history);
+    try {
+      return runSalesAgentWithAnthropic(enrichedCtx, history);
+    } catch (err) {
+      console.error("[run-sales-agent] Anthropic agent error:", err);
+    }
   }
 
   return buildCasualGreetingReply(enrichedCtx);

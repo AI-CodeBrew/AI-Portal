@@ -19,12 +19,15 @@ import {
   extractSkuFromText,
   extractProductSearchQuery,
   getPrimaryProductImageUrl,
+  looksLikeCatalogBrowseMoreRequest,
 } from "@/lib/products/products-service";
 
 export const SALES_TOOL_RULES = `Operational rules for tools:
-- search_products searches BOTH portal catalog and Shopify for THIS store only.
-- If the customer gives a SKU (e.g. AA-…), pass that exact SKU as query.
+- Understand the customer's intent FIRST, then call the right tool (do not guess product names from filler words).
+- browse_catalog — when they want to see what they can buy without naming a product ("something to buy", "show me products", "what do you have"). Shows 2 items; if they say "more" or "other", call browse_catalog again for the next 2.
+- search_products — when they name a product, keyword, or SKU (e.g. AA-…). Searches portal + Shopify for THIS store only.
 - Prefer portal matches when SKU/ref is known.
+- Never treat price objections ("too expensive", "no thanks") as a product search query.
 - create_draft_order requires phone + full delivery address before calling (name is optional).
 - Portal products: pass sku and/or UUID variant_id from search_products.
 - Shopify products: pass numeric variant_id.
@@ -46,6 +49,8 @@ export interface AgentContext {
   adProductContext?: AdProductContext | null;
   /** Injected pending Shopify orders for this phone */
   pendingOrdersHint?: string | null;
+  /** Recent chat — used by browse_catalog and other tools */
+  chatHistory?: Array<{ role: "user" | "assistant"; content: string }>;
 }
 
 function formatVariantPrice(price: string, currency: string) {
@@ -57,6 +62,24 @@ function normalizeOrderNumber(value: string): string {
 }
 
 export const OPENAI_SALES_TOOLS = [
+  {
+    type: "function" as const,
+    function: {
+      name: "browse_catalog",
+      description:
+        "Show 2 products from the store catalog when the customer wants to browse or buy something without naming a specific item (e.g. 'show me products', 'I want to buy something', 'what can I get'). Call again when they ask for 'more' or 'other' options.",
+      parameters: {
+        type: "object",
+        properties: {
+          more: {
+            type: "boolean",
+            description:
+              "True when the customer wants different/more products after a previous browse_catalog result",
+          },
+        },
+      },
+    },
+  },
   {
     type: "function" as const,
     function: {
@@ -460,6 +483,7 @@ export async function executeSalesTool(
   if (
     name !== "escalate_to_human" &&
     name !== "search_products" &&
+    name !== "browse_catalog" &&
     name !== "confirm_order" &&
     name !== "cancel_order" &&
     name !== "lookup_customer_orders" &&
@@ -489,6 +513,47 @@ export async function executeSalesTool(
 
   try {
     switch (name) {
+      case "browse_catalog": {
+        const { buildCatalogBrowseReplyForAgent } = await import(
+          "./product-reply"
+        );
+        const history = ctx.chatHistory ?? [];
+        const latestUser =
+          [...history].reverse().find((m) => m.role === "user")?.content ?? "";
+        const isMore =
+          Boolean(input.more) ||
+          (latestUser
+            ? looksLikeCatalogBrowseMoreRequest(latestUser, history)
+            : false);
+
+        const built = await buildCatalogBrowseReplyForAgent(
+          ctx,
+          history,
+          { isMore }
+        );
+
+        if (!built) {
+          return {
+            result: {
+              products: [],
+              formatted_reply:
+                "Our catalog is being updated — send a product name or SKU and I'll look it up.",
+              message: "Catalog empty.",
+            },
+          };
+        }
+
+        return {
+          result: {
+            products: built.products,
+            formatted_reply: built.reply,
+            count: built.products.length,
+            message:
+              "Relay formatted_reply to the customer. Do not invent extra products or prices.",
+          },
+        };
+      }
+
       case "search_products": {
         const rawQuery = String(input.query ?? "").trim();
         if (!rawQuery) {

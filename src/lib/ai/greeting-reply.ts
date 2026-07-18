@@ -3,6 +3,11 @@ import type { AgentContext } from "./sales-tools";
 const GREETING_ONLY =
   /^(hi+|hey+|heya+|hello+|hola+|yo+|sup+|thanks+|thank\s*you+|ok+|okay+|yes+|no+|assalam+|salam+|assalamu+|good morning|good evening|good afternoon|good night)[\s!.?,]*$/i;
 
+/** Whole-message greeting only — exact match, not "hey there" or "hi whats up". */
+export function looksLikeExactGreetingOnly(text: string): boolean {
+  return GREETING_ONLY.test(text.trim());
+}
+
 /** "How are you?" / small talk before sales — not a product lookup. */
 export function looksLikeHowAreYou(text: string): boolean {
   const t = text.trim();
@@ -97,7 +102,7 @@ export function tryDirectGreetingReply(
   if (looksLikeHowAreYou(latestUserMessage)) {
     return buildHowAreYouReply(ctx);
   }
-  if (!looksLikeCasualGreeting(latestUserMessage)) return null;
+  if (!looksLikeExactGreetingOnly(latestUserMessage)) return null;
   return buildCasualGreetingReply(ctx);
 }
 

@@ -25,6 +25,8 @@ export interface AiPromptTemplate {
 export interface StoreAiSettings {
   agentName: string | null;
   openingMessage: string | null;
+  /** When false, no opening message is sent (admin default is ignored). */
+  sendOpeningMessage: boolean;
   replyLength: AiReplyLength;
   orderTemplateId: string | null;
   generalTemplateId: string | null;

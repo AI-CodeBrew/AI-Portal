@@ -10,16 +10,10 @@ import {
   extractSkuFromText,
   extractProductSearchQuery,
 } from "@/lib/products/products-service";
-import { looksLikeCasualGreeting } from "./greeting-reply";
+import { pickInitialCatalogTool } from "./shopping-intent";
 
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 const DEFAULT_MODEL = "llama-3.3-70b-versatile";
-
-const PRODUCT_QUERY_PATTERN =
-  /\b(price|cost|how much|do you have|available|in stock|product|buy|sell|show me|looking for|details|about|sku|want this|variant|variants|size|sizes|color|colors|colour|option|options)\b/i;
-
-const ORDER_QUERY_PATTERN =
-  /\b(order|tracking|delivery|shipped|where is my|my order|order status|dispatch)\b/i;
 
 function lastUserMessage(
   history: Array<{ role: "user" | "assistant"; content: string }>
@@ -30,24 +24,12 @@ function lastUserMessage(
   return "";
 }
 
-function looksLikeProductQuery(text: string): boolean {
-  const t = text.trim();
-  if (t.length < 2) return false;
-  if (looksLikeCasualGreeting(t)) return false;
-  if (ORDER_QUERY_PATTERN.test(t)) return false;
-  if (extractSkuFromText(t)) return true;
-  if (PRODUCT_QUERY_PATTERN.test(t)) return true;
-  return (
-    t.length <= 80 &&
-    !!extractProductSearchQuery(t) &&
-    !/^(hi+|hello+|hey+|thanks|thank you|ok+|yes+|no+)\b/i.test(t)
-  );
-}
-
-function looksLikeOrderQuery(text: string): boolean {
-  const t = text.trim();
-  if (/\bplace\s+(an\s+)?order\b/i.test(t)) return false;
-  return ORDER_QUERY_PATTERN.test(t);
+function toolFormattedReply(result: unknown): string | null {
+  if (result && typeof result === "object" && "formatted_reply" in result) {
+    const text = (result as { formatted_reply?: string }).formatted_reply?.trim();
+    return text || null;
+  }
+  return null;
 }
 
 type ChatMessage =
@@ -84,7 +66,11 @@ interface GroqResponse {
 
 async function groqChat(
   messages: ChatMessage[],
-  opts?: { forceSearchProducts?: boolean; apiKey: string; model: string }
+  opts?: {
+    forceToolName?: string;
+    apiKey: string;
+    model: string;
+  }
 ): Promise<GroqResponse> {
   const apiKey = opts?.apiKey;
   if (!apiKey) {
@@ -101,8 +87,8 @@ async function groqChat(
       model: opts?.model || DEFAULT_MODEL,
       messages,
       tools: OPENAI_SALES_TOOLS,
-      tool_choice: opts?.forceSearchProducts
-        ? { type: "function", function: { name: "search_products" } }
+      tool_choice: opts?.forceToolName
+        ? { type: "function", function: { name: opts.forceToolName } }
         : "auto",
       max_tokens: 1024,
       temperature: 0.35,
@@ -126,10 +112,12 @@ export async function runSalesAgentWithGroq(
   const historyLimit =
     ctx.aiConfig?.effectiveChatHistoryLimit ?? CHAT_HISTORY_LIMIT;
   const trimmedHistory = history.slice(-historyLimit);
+  const agentCtx: AgentContext = { ...ctx, chatHistory: trimmedHistory };
 
   const skuHint = extractSkuFromText(latestUser);
   const nameHint = extractProductSearchQuery(latestUser);
   const searchHint = skuHint || nameHint;
+  const initialTool = pickInitialCatalogTool(latestUser, trimmedHistory);
 
   const systemPrompt = await buildSalesSystemPromptWithExamples({
     storeId: ctx.store.id,
@@ -153,8 +141,6 @@ export async function runSalesAgentWithGroq(
   ];
 
   const maxIterations = 8;
-  const forceSearch =
-    looksLikeProductQuery(latestUser) && !looksLikeOrderQuery(latestUser);
   let usedSearchProducts = false;
   let lastSearchProducts: Array<{
     title?: string;
@@ -174,7 +160,7 @@ export async function runSalesAgentWithGroq(
 
   for (let i = 0; i < maxIterations; i++) {
     const response = await groqChat(messages, {
-      forceSearchProducts: forceSearch && i === 0,
+      forceToolName: i === 0 ? (initialTool ?? undefined) : undefined,
       apiKey: options.apiKey,
       model: groqModel,
     });
@@ -233,11 +219,16 @@ export async function runSalesAgentWithGroq(
         const { result, escalated } = await executeSalesTool(
           toolCall.function.name,
           input,
-          ctx
+          agentCtx
         );
 
         if (escalated) {
           return "Got it — someone from our team will message you shortly 👍";
+        }
+
+        const formatted = toolFormattedReply(result);
+        if (toolCall.function.name === "browse_catalog" && formatted) {
+          return formatted;
         }
 
         if (toolCall.function.name === "search_products") {

@@ -1,10 +1,10 @@
 import { normalizePhone, validateOrderPhone } from "@/lib/phone";
 import {
   extractSkuFromText,
-  extractProductSearchQuery,
   looksLikeObjectionPhrase,
 } from "@/lib/products/products-service";
 import { looksLikeVariantSelection } from "./variant-selection";
+import { looksLikeExactNamedProductQuery } from "./exact-routes";
 
 const CHECKOUT_INTENT =
   /\b(place\s+(an\s+)?order|want\s+to\s+(order|buy)|order\s+(this|it|now)|buy\s+(this|it|now)|checkout|confirm\s+(my\s+)?order|i('m| am)?\s+(ready|ordering)|yes|yeah|yep|ok|okay|sure|deal)\b/i;
@@ -12,13 +12,10 @@ const CHECKOUT_INTENT =
 const HAS_CONTACT_HINT =
   /\b(name|naam|phone|ph|mobile|whatsapp|address|addr|city|deliver)\b/i;
 
-const PRODUCT_INQUIRY_PATTERN =
-  /\b(do you have|have you got|got any|looking for|searching for|show me|tell me about|how much|what about|do u have|any\s+\w+\s+available|price|cost|available|in stock)\b/i;
-
 const ASKED_FOR_DETAILS =
   /\b(full name|share your|delivery address|reply like this|phone \(for confirmation\)|please share|i'll place the order|i'll confirm your order|discounted price|want to order|phone.*required|delivery address.*required|almost there)\b/i;
 
-/** Product/catalog question — not checkout contact details. */
+/** Product/catalog question — not checkout contact details. Exact patterns only. */
 export function looksLikeProductQuestion(
   text: string,
   history: Array<{ role: "user" | "assistant"; content: string }> = []
@@ -27,11 +24,8 @@ export function looksLikeProductQuestion(
   if (t.length < 3) return false;
   if (looksLikeObjectionPhrase(t)) return false;
   if (looksLikeVariantSelection(t, history)) return false;
-  if (PRODUCT_INQUIRY_PATTERN.test(t)) return true;
   if (extractSkuFromText(t)) return true;
-  const query = extractProductSearchQuery(t);
-  const digitCount = t.replace(/\D/g, "").length;
-  return !!(query && digitCount < 8 && !HAS_CONTACT_HINT.test(t));
+  return looksLikeExactNamedProductQuery(t);
 }
 
 export type CheckoutDetails = {
