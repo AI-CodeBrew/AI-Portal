@@ -845,6 +845,21 @@ export function productSearchTokens(query: string): string[] {
     "afternoon",
     "night",
     "good",
+    "very",
+    "really",
+    "quite",
+    "so",
+    "its",
+    "it's",
+    "expensive",
+    "expens",
+    "costly",
+    "pricey",
+    "afford",
+    "budget",
+    "cheap",
+    "overpriced",
+    "worth",
   ]);
 
   const isGreetingToken = (token: string) =>
@@ -866,10 +881,111 @@ export function productSearchTokens(query: string): string[] {
   ).slice(0, 6);
 }
 
+/** Price pushback / refusal — not a catalog search (e.g. "no it's very expensive"). */
+export function looksLikeObjectionPhrase(text: string): boolean {
+  const t = text.trim();
+  if (t.length < 2) return false;
+  return /\b(don'?t\s+want|dont\s+want|do\s+not\s+want|not\s+(interested|now|today|ordering|buying|want)|no\s+thanks|no\s+thank\s+you|nah+|nope|not\s+for\s+me|maybe\s+later|skip|cancel|i'?ll\s+pass|no\s+order|won'?t\s+(order|buy)|expens\w*|xpens\w*|too\s+(much|pricey|costly|expensive)|can'?t\s+afford|\bbudget\b|over\s+budget|out\s+of\s+(my\s+)?budget|overpriced|not\s+worth)\b/i.test(
+    t
+  );
+}
+
+const CATALOG_BROWSE_PATTERN =
+  /\b(?:show\s+(?:me\s+)?(?:(?:some|your|a\s+few|any)\s+)?products(?:\s+(?:which|that|i\s+can\s+)?(?:i\s+can\s+)?buy)?|show\s+(?:me\s+)?(?:what\s+(?:you\s+)?(?:have|sell)|something\s+(?:i\s+can\s+)?buy)|what\s+(?:can\s+)?(?:i|we)\s+(?:can\s+)?buy|what\s+(?:do\s+you\s+)?(?:have|sell)|what\s+products|your\s+(?:catalog|products)|browse(?:\s+the\s+catalog)?|recommend\s+(?:me\s+)?something|any\s+suggestions?|something\s+to\s+buy)\b/i;
+
+const CATALOG_BROWSE_MORE_PATTERN =
+  /\b(?:(?:show\s+(?:me\s+)?)?(?:some\s+)?(?:other|more|different|another)(?:\s+products?)?|something\s+else|anything\s+else|what\s+else|next\s+(?:ones?|products?|options?)?|any\s+others?|different\s+ones?|more\s+options?)\b/i;
+
+export const CATALOG_BROWSE_INTRO =
+  /Here are a couple of things you can order from us/i;
+export const CATALOG_BROWSE_MORE_INTRO =
+  /Here are a couple more you can order/i;
+
+const CATALOG_BROWSE_GENERIC = new Set([
+  "product",
+  "products",
+  "buy",
+  "something",
+  "catalog",
+  "shop",
+  "store",
+  "your",
+  "me",
+  "show",
+  "what",
+  "can",
+  "i",
+  "we",
+  "have",
+  "sell",
+  "recommend",
+  "suggestion",
+  "suggestions",
+  "browse",
+  "anything",
+  "any",
+  "the",
+  "a",
+  "an",
+  "some",
+  "which",
+  "that",
+  "else",
+  "other",
+  "more",
+  "different",
+  "another",
+  "next",
+  "ones",
+  "options",
+  "order",
+  "from",
+  "us",
+  "please",
+]);
+
+/** Customer wants to browse the catalog — not a specific product name. */
+export function looksLikeCatalogBrowseRequest(message: string): boolean {
+  const t = message.trim();
+  if (t.length < 6 || !CATALOG_BROWSE_PATTERN.test(t)) return false;
+  if (extractSkuFromText(t)) return false;
+
+  const tokens = productSearchTokens(t).filter(
+    (token) => !CATALOG_BROWSE_GENERIC.has(token.toLowerCase())
+  );
+  return tokens.length === 0;
+}
+
+export function catalogBrowseActiveInHistory(
+  history: Array<{ role: "user" | "assistant"; content: string }>
+): boolean {
+  return history.some(
+    (m) =>
+      m.role === "assistant" &&
+      (CATALOG_BROWSE_INTRO.test(m.content) ||
+        CATALOG_BROWSE_MORE_INTRO.test(m.content))
+  );
+}
+
+/** "Show me other / more products" after a catalog browse reply. */
+export function looksLikeCatalogBrowseMoreRequest(
+  message: string,
+  history: Array<{ role: "user" | "assistant"; content: string }> = []
+): boolean {
+  if (!catalogBrowseActiveInHistory(history)) return false;
+  const t = message.trim();
+  if (t.length < 3) return false;
+  if (looksLikeCatalogBrowseRequest(t)) return false;
+  return CATALOG_BROWSE_MORE_PATTERN.test(t);
+}
+
 /**
  * Extract a catalog search string from free text (SKU preferred, else name words).
  */
 export function extractProductSearchQuery(text: string): string | null {
+  if (looksLikeObjectionPhrase(text)) return null;
+  if (looksLikeCatalogBrowseRequest(text)) return null;
+
   const sku = extractSkuFromText(text);
   if (sku) return sku;
 
@@ -890,7 +1006,10 @@ export function extractProductSearchQuery(text: string): string | null {
     // "want to order storage rack" → skip leading order phrasing
     phrase = phrase.replace(/^to\s+(?:order|buy)\s+/i, "").trim();
     const tokens = productSearchTokens(phrase);
-    if (tokens.length) return tokens.join(" ").slice(0, 80);
+    const meaningful = tokens.filter(
+      (token) => !CATALOG_BROWSE_GENERIC.has(token.toLowerCase())
+    );
+    if (meaningful.length) return meaningful.join(" ").slice(0, 80);
   }
 
   const tokens = productSearchTokens(text);
@@ -976,12 +1095,35 @@ export async function searchPortalProducts(
 /** Random active portal products for "show me what you sell" style requests. */
 export async function sampleActiveCatalogProducts(
   storeId: string,
-  count = 2
+  count = 2,
+  options?: { excludeSkus?: string[]; excludeTitles?: string[] }
 ): Promise<PortalProductSearchHit[]> {
   const rows = await fetchActiveProductRows(storeId, null, 50);
   if (!rows.length) return [];
-  const shuffled = [...rows].sort(() => Math.random() - 0.5);
-  return shuffled
-    .slice(0, Math.min(Math.max(1, count), shuffled.length))
+
+  const excludeSku = new Set(
+    (options?.excludeSkus ?? [])
+      .map((s) => skuMatchKey(s))
+      .filter(Boolean)
+  );
+  const excludeTitle = new Set(
+    (options?.excludeTitles ?? [])
+      .map((s) => skuMatchKey(s))
+      .filter(Boolean)
+  );
+
+  const available = rows.filter((row) => {
+    const hit = mapStoreProductToSearchHit(row);
+    if (hit.sku && excludeSku.has(skuMatchKey(hit.sku))) return false;
+    if (hit.title && excludeTitle.has(skuMatchKey(hit.title))) return false;
+    return true;
+  });
+
+  const sorted = [...available].sort((a, b) =>
+    (a.name ?? "").localeCompare(b.name ?? "")
+  );
+
+  return sorted
+    .slice(0, Math.min(Math.max(1, count), sorted.length))
     .map(mapStoreProductToSearchHit);
 }

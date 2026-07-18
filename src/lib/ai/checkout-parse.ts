@@ -2,6 +2,7 @@ import { normalizePhone, validateOrderPhone } from "@/lib/phone";
 import {
   extractSkuFromText,
   extractProductSearchQuery,
+  looksLikeObjectionPhrase,
 } from "@/lib/products/products-service";
 import { looksLikeVariantSelection } from "./variant-selection";
 
@@ -24,6 +25,7 @@ export function looksLikeProductQuestion(
 ): boolean {
   const t = text.trim();
   if (t.length < 3) return false;
+  if (looksLikeObjectionPhrase(t)) return false;
   if (looksLikeVariantSelection(t, history)) return false;
   if (PRODUCT_INQUIRY_PATTERN.test(t)) return true;
   if (extractSkuFromText(t)) return true;

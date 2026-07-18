@@ -128,7 +128,8 @@ export async function runSalesAgent(
   try {
     const catalogBrowse = await tryDirectCatalogBrowseReply(
       enrichedCtx,
-      latestUser
+      latestUser,
+      history
     );
     if (catalogBrowse) return catalogBrowse;
   } catch (err) {

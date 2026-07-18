@@ -2,9 +2,14 @@ import {
   extractSkuFromText,
   extractProductSearchQuery,
   getPrimaryProductImageUrl,
+  looksLikeCatalogBrowseMoreRequest,
+  looksLikeCatalogBrowseRequest,
+  looksLikeObjectionPhrase,
   productSearchTokens,
   sampleActiveCatalogProducts,
   skuMatchKey,
+  CATALOG_BROWSE_INTRO,
+  CATALOG_BROWSE_MORE_INTRO,
 } from "@/lib/products/products-service";
 import {
   isPlaceholderVariantTitle,
@@ -62,37 +67,6 @@ const IMAGE_ASK_PATTERN =
 
 const IMAGE_ASK_VERB =
   /\b(send|share|show|see|want|need)\b.*\b(image|images|photo|photos|picture|pictures|pic)\b|\b(image|photo|picture)s?\s+(please|pls|of\s+(it|this|the\s+product))\b/i;
-
-const CATALOG_BROWSE_PATTERN =
-  /\b(show\s+(me\s+)?(your\s+)?products|what\s+(can\s+)?(i|we)\s+buy|what\s+(do\s+you\s+)?(have|sell)|what\s+products|your\s+(catalog|products)|browse|something\s+to\s+buy|recommend\s+(me\s+)?something|any\s+suggestions?)\b/i;
-
-const CATALOG_BROWSE_GENERIC = new Set([
-  "product",
-  "products",
-  "buy",
-  "something",
-  "catalog",
-  "shop",
-  "store",
-  "your",
-  "me",
-  "show",
-  "what",
-  "can",
-  "i",
-  "we",
-  "have",
-  "sell",
-  "recommend",
-  "suggestion",
-  "suggestions",
-  "browse",
-  "anything",
-  "any",
-  "the",
-  "a",
-  "an",
-]);
 
 function looksLikeImageRequest(message: string): boolean {
   const t = message.trim();
@@ -483,26 +457,68 @@ export function formatProductsReply(products: SearchProduct[]): string {
   return `${blocks[0]}\n\n${productCloseLine(products[0]!)}`;
 }
 
-/** Customer wants to browse the catalog — not a specific product name. */
-export function looksLikeCatalogBrowseRequest(message: string): boolean {
-  const t = message.trim();
-  if (t.length < 6 || !CATALOG_BROWSE_PATTERN.test(t)) return false;
-  if (extractSkuFromText(t)) return false;
+function extractCatalogBrowseShownProducts(
+  history: Array<{ role: "user" | "assistant"; content: string }>
+): { skus: string[]; titles: string[] } {
+  const skus = new Set<string>();
+  const titles = new Set<string>();
 
-  const query = extractProductSearchQuery(t);
-  if (!query) return true;
+  for (const msg of history) {
+    if (msg.role !== "assistant") continue;
+    if (
+      !CATALOG_BROWSE_INTRO.test(msg.content) &&
+      !CATALOG_BROWSE_MORE_INTRO.test(msg.content)
+    ) {
+      continue;
+    }
 
-  const tokens = productSearchTokens(query).filter(
-    (token) => !CATALOG_BROWSE_GENERIC.has(token.toLowerCase())
-  );
-  return tokens.length === 0;
+    for (const m of msg.content.matchAll(
+      /(?:^|\n)([^\n]+?)\s*(?:—|-)\s*(?:Rs\.?|PKR|AED|\$|€)/gim
+    )) {
+      const title = m[1]
+        ?.replace(/\*([^*]+)\*/g, "$1")
+        .replace(/^\[Ref:[^\]]+\]\s*/i, "")
+        .replace(/^\[Image:[^\]]+\]\s*/i, "")
+        .trim();
+      if (title && title.length >= 2 && title.length <= 120) {
+        titles.add(title);
+      }
+    }
+
+    for (const m of msg.content.matchAll(/\bSKU:\s*([^\n]+)/gi)) {
+      const sku = m[1]?.trim();
+      if (sku) skus.add(sku);
+    }
+  }
+
+  return { skus: [...skus], titles: [...titles] };
+}
+
+function formatCatalogBrowseReply(products: SearchProduct[]): string {
+  const blocks = products.slice(0, 2).map((p) => formatSingleProductBlock(p));
+  const pickLine =
+    products.length > 1
+      ? "Which one interests you?"
+      : productCloseLine(products[0]!);
+  const moreLine = "Say *more* or *other* to see different products.";
+  const body = blocks.join("\n\n");
+
+  if (products.length > 1) {
+    return `${body}\n\n${pickLine}\n\n${moreLine}`;
+  }
+
+  return `${body}\n\n${pickLine}\n\n${moreLine}`;
 }
 
 async function loadCatalogSampleProducts(
   ctx: AgentContext,
-  count = 2
+  count = 2,
+  exclude?: { skus: string[]; titles: string[] }
 ): Promise<SearchProduct[]> {
-  const portalHits = await sampleActiveCatalogProducts(ctx.store.id, count);
+  const portalHits = await sampleActiveCatalogProducts(ctx.store.id, count, {
+    excludeSkus: exclude?.skus,
+    excludeTitles: exclude?.titles,
+  });
   const mapped: SearchProduct[] = portalHits.map((hit) => ({
     title: hit.title,
     sku: hit.sku,
@@ -541,9 +557,29 @@ async function loadCatalogSampleProducts(
     const { products } = await listShopifyCatalogProducts(shopDomain, token, {
       limit: 30,
     });
-    const shuffled = [...products].sort(() => Math.random() - 0.5);
-    for (const p of shuffled) {
+    const excludeSku = new Set(
+      (exclude?.skus ?? []).map((s) => skuMatchKey(s)).filter(Boolean)
+    );
+    const excludeTitle = new Set(
+      (exclude?.titles ?? []).map((s) => skuMatchKey(s)).filter(Boolean)
+    );
+    const portalKeys = new Set(
+      mapped.flatMap((p) => [
+        p.sku ? skuMatchKey(p.sku) : "",
+        p.title ? skuMatchKey(p.title) : "",
+      ]).filter(Boolean)
+    );
+
+    const sorted = [...products].sort((a, b) =>
+      (a.title ?? "").localeCompare(b.title ?? "")
+    );
+
+    for (const p of sorted) {
       if (mapped.length >= count) break;
+      const titleKey = p.title ? skuMatchKey(p.title) : "";
+      if (titleKey && (excludeTitle.has(titleKey) || portalKeys.has(titleKey))) {
+        continue;
+      }
       const price = p.priceFrom ?? "0";
       const productCurrency = p.currency ?? currency ?? "USD";
       mapped.push({
@@ -566,20 +602,31 @@ async function loadCatalogSampleProducts(
   return mapped.slice(0, count);
 }
 
-/** Show a couple of random catalog picks when the customer asks what they can buy. */
+/** Show catalog picks when the customer asks what they can buy; paginate on "more/other". */
 export async function tryDirectCatalogBrowseReply(
   ctx: AgentContext,
-  latestUserMessage: string
+  latestUserMessage: string,
+  history: Array<{ role: "user" | "assistant"; content: string }> = []
 ): Promise<string | null> {
-  if (!looksLikeCatalogBrowseRequest(latestUserMessage)) return null;
+  const isMore = looksLikeCatalogBrowseMoreRequest(latestUserMessage, history);
+  const isBrowse = looksLikeCatalogBrowseRequest(latestUserMessage);
+  if (!isBrowse && !isMore) return null;
 
-  const products = await loadCatalogSampleProducts(ctx, 2);
+  const shown = extractCatalogBrowseShownProducts(history);
+  const products = await loadCatalogSampleProducts(ctx, 2, shown);
+
   if (!products.length) {
+    if (isMore) {
+      return "That's everything in our catalog right now 👍 Reply with a product name from above, or send a SKU.";
+    }
     return "Our catalog is being updated — send a product name or SKU and I'll look it up for you.";
   }
 
-  const intro = "Here are a couple of things you can order from us 👇";
-  return `${intro}\n\n${formatProductsReply(products)}`;
+  const intro = isMore
+    ? "Here are a couple more you can order 👇"
+    : "Here are a couple of things you can order from us 👇";
+
+  return `${intro}\n\n${formatCatalogBrowseReply(products)}`;
 }
 
 function formatProductNotFoundReply(query: string): string {
@@ -641,6 +688,7 @@ function shouldTryDirectProductLookup(
 ): boolean {
   const t = message.trim();
   if (t.length < 2) return false;
+  if (looksLikeObjectionPhrase(t)) return false;
   if (looksLikeCatalogBrowseRequest(t)) return false;
   if (looksLikeVariantSelection(t, history)) return false;
   if (looksLikeCasualGreeting(t)) return false;

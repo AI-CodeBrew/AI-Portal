@@ -28,8 +28,9 @@ const HARD_STOP_PATTERN =
 const ACCEPT_OFFER_PATTERN =
   /\b(yes|yeah|yep|ok|okay|sure|deal|fine|alright|i('ll| will)\s+take|interested|accept|go\s+ahead|order\s+(it|now|this)|book\s+it|let'?s\s+do\s+it)\b/i;
 
+/** Detect product pitch in assistant text (avoid \\b before [, ?, — — they break matching). */
 const PRODUCT_OFFERED_PATTERN =
-  /\b(would you like to order|want to order|want it\?|place the order|reply like this|share your full name|share name, phone|in stock|out of stock right now|SKU:|Price:|From:|\[Ref:|\[Objection|Deal 1\/2|Deal 2\/2|𝟮-𝗣𝗔𝗖𝗞|𝗙𝗟𝗔𝗧|FLAT.*OFF|—\s*(?:Rs\.?|PKR|AED|\$|€)\s*[\d,]+)\b/i;
+  /(?:\[(?:Ref|Objection)|want it\?|share your phone|delivery address|would you like to order|want to order|place the order|reply like this|share your full name|share name, phone|Deal 1\/2|Deal 2\/2|𝟮-𝗣𝗔𝗖𝗞|𝗙𝗟𝗔𝗧|FLAT.*OFF|(?:—|-)\s*(?:Rs\.?|PKR|AED|\$|€)\s*[\d,]+|\b(?:in stock|out of stock right now|SKU:|Price:|From:))/i;
 
 export function productOfferedInHistory(
   history: Array<{ role: "user" | "assistant"; content: string }>
