@@ -4,9 +4,11 @@ import { useCallback, useEffect, useState } from "react";
 import type { WhatsappConversation } from "@/lib/types";
 
 type CatalogProduct = {
+  key: string;
+  source: "portal" | "shopify";
   id: string;
   title: string;
-  sku: string;
+  sku: string | null;
   price: string;
   currency: string;
   imageUrl: string | null;
@@ -15,6 +17,7 @@ type CatalogProduct = {
     title: string;
     sku: string | null;
     price: string;
+    priceFormatted?: string;
   }>;
 };
 
@@ -55,13 +58,11 @@ export function InboxManualTools({
   onSent: () => Promise<void>;
   onError: (msg: string | null) => void;
 }) {
-  const [openSection, setOpenSection] = useState<"products" | "order" | null>(
-    "products"
-  );
+  const [modal, setModal] = useState<"products" | "order" | null>(null);
   const [query, setQuery] = useState("");
   const [products, setProducts] = useState<CatalogProduct[]>([]);
   const [productsLoading, setProductsLoading] = useState(false);
-  const [selectedProductId, setSelectedProductId] = useState("");
+  const [selectedKey, setSelectedKey] = useState("");
   const [selectedVariantId, setSelectedVariantId] = useState("");
   const [preview, setPreview] = useState<OrderPreview | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -71,12 +72,17 @@ export function InboxManualTools({
   const [city, setCity] = useState("");
   const [quantity, setQuantity] = useState(1);
   const [placing, setPlacing] = useState(false);
+  const [variantLoading, setVariantLoading] = useState(false);
+
+  const closeModal = useCallback(() => {
+    setModal(null);
+  }, []);
 
   const loadProducts = useCallback(
     async (search: string) => {
       setProductsLoading(true);
       try {
-        const params = new URLSearchParams({ limit: "8" });
+        const params = new URLSearchParams({ limit: "10" });
         if (search.trim()) params.set("q", search.trim());
         const res = await fetch(`/api/inbox/products?${params.toString()}`);
         const data = await res.json();
@@ -90,6 +96,45 @@ export function InboxManualTools({
         onError(err instanceof Error ? err.message : "Product search failed");
       } finally {
         setProductsLoading(false);
+      }
+    },
+    [onError]
+  );
+
+  const loadShopifyVariants = useCallback(
+    async (productId: string) => {
+      setVariantLoading(true);
+      try {
+        const res = await fetch(
+          `/api/inbox/products?shopifyProductId=${encodeURIComponent(productId)}`
+        );
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(
+            typeof data.error === "string"
+              ? data.error
+              : "Could not load product variants"
+          );
+        }
+        const full = Array.isArray(data.products)
+          ? (data.products[0] as CatalogProduct | undefined)
+          : undefined;
+        if (full) {
+          setProducts((prev) =>
+            prev.map((p) =>
+              p.source === "shopify" && p.id === productId ? full : p
+            )
+          );
+          setSelectedVariantId(
+            full.variants.length === 1 ? full.variants[0]!.id : ""
+          );
+        }
+      } catch (err) {
+        onError(
+          err instanceof Error ? err.message : "Could not load product variants"
+        );
+      } finally {
+        setVariantLoading(false);
       }
     },
     [onError]
@@ -122,32 +167,54 @@ export function InboxManualTools({
   }, [conversation.id, onError]);
 
   useEffect(() => {
-    if (openSection !== "products") return;
+    if (modal !== "products") return;
     const timer = setTimeout(() => {
       void loadProducts(query);
     }, 300);
     return () => clearTimeout(timer);
-  }, [query, openSection, loadProducts]);
+  }, [query, modal, loadProducts]);
 
   useEffect(() => {
-    if (openSection === "order") {
+    if (modal === "order") {
       void loadPreview();
     }
-  }, [openSection, loadPreview]);
+  }, [modal, loadPreview]);
 
   useEffect(() => {
     setQuery("");
     setProducts([]);
-    setSelectedProductId("");
+    setSelectedKey("");
     setSelectedVariantId("");
     setPreview(null);
-    setOpenSection("products");
+    setModal(null);
   }, [conversation.id]);
 
-  const selectedProduct = products.find((p) => p.id === selectedProductId);
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") closeModal();
+    }
+    if (modal) {
+      window.addEventListener("keydown", onKeyDown);
+      return () => window.removeEventListener("keydown", onKeyDown);
+    }
+  }, [modal, closeModal]);
+
+  const selectedProduct = products.find((p) => p.key === selectedKey);
+
+  async function selectProduct(product: CatalogProduct) {
+    setSelectedKey(product.key);
+    if (product.source === "shopify" && product.variants.length === 0) {
+      setSelectedVariantId("");
+      await loadShopifyVariants(product.id);
+      return;
+    }
+    setSelectedVariantId(
+      product.variants.length === 1 ? product.variants[0]!.id : ""
+    );
+  }
 
   async function sendProduct() {
-    if (!selectedProductId) {
+    if (!selectedProduct) {
       onError("Select a product to send");
       return;
     }
@@ -159,7 +226,8 @@ export function InboxManualTools({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           conversationId: conversation.id,
-          productId: selectedProductId,
+          source: selectedProduct.source,
+          productId: selectedProduct.id,
           variantId: selectedVariantId || undefined,
         }),
       });
@@ -169,6 +237,7 @@ export function InboxManualTools({
           typeof data.error === "string" ? data.error : "Failed to send product"
         );
       }
+      closeModal();
       await onSent();
     } catch (err) {
       onError(err instanceof Error ? err.message : "Failed to send product");
@@ -204,8 +273,15 @@ export function InboxManualTools({
           typeof data.error === "string" ? data.error : "Failed to place order"
         );
       }
+      closeModal();
       await onSent();
-      await loadPreview();
+      if (data.whatsappSent === false) {
+        onError(
+          typeof data.whatsappError === "string"
+            ? `Order placed, but WhatsApp confirmation failed: ${data.whatsappError}`
+            : "Order placed, but WhatsApp confirmation could not be sent. Use Follow up or a template."
+        );
+      }
     } catch (err) {
       onError(err instanceof Error ? err.message : "Failed to place order");
     } finally {
@@ -217,246 +293,275 @@ export function InboxManualTools({
   if (!windowOpen) return null;
 
   return (
-    <div className="mb-3 space-y-2 rounded-lg border border-violet-200 bg-violet-50/60 p-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-xs font-semibold uppercase tracking-wide text-violet-900">
-          Agent tools
-        </p>
-        <div className="flex gap-1">
-          <button
-            type="button"
-            onClick={() =>
-              setOpenSection((s) => (s === "products" ? null : "products"))
-            }
-            className={`rounded-md px-2.5 py-1 text-xs font-medium ${
-              openSection === "products"
-                ? "bg-violet-700 text-white"
-                : "bg-white text-violet-900 ring-1 ring-violet-200"
-            }`}
-          >
-            Send product
-          </button>
-          <button
-            type="button"
-            onClick={() => setOpenSection((s) => (s === "order" ? null : "order"))}
-            className={`rounded-md px-2.5 py-1 text-xs font-medium ${
-              openSection === "order"
-                ? "bg-violet-700 text-white"
-                : "bg-white text-violet-900 ring-1 ring-violet-200"
-            }`}
-          >
-            Place order
-          </button>
-        </div>
+    <>
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <span className="text-xs font-medium text-violet-900">Agent tools</span>
+        <button
+          type="button"
+          onClick={() => setModal("products")}
+          className="rounded-md border border-violet-200 bg-white px-2.5 py-1 text-xs font-medium text-violet-900 hover:bg-violet-50"
+        >
+          Send product
+        </button>
+        <button
+          type="button"
+          onClick={() => setModal("order")}
+          className="rounded-md border border-emerald-200 bg-white px-2.5 py-1 text-xs font-medium text-emerald-900 hover:bg-emerald-50"
+        >
+          Place order
+        </button>
       </div>
 
-      {openSection === "products" && (
-        <div className="space-y-2">
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search products by name or SKU..."
-            className="w-full rounded-md border border-violet-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-100"
-          />
-          <div className="max-h-44 space-y-1 overflow-y-auto rounded-md border border-violet-100 bg-white p-1">
-            {productsLoading ? (
-              <p className="px-2 py-3 text-xs text-slate-500">Searching...</p>
-            ) : products.length === 0 ? (
-              <p className="px-2 py-3 text-xs text-slate-500">
-                No products found. Try another search.
-              </p>
-            ) : (
-              products.map((product) => (
-                <button
-                  key={product.id}
-                  type="button"
-                  onClick={() => {
-                    setSelectedProductId(product.id);
-                    setSelectedVariantId(
-                      product.variants.length === 1
-                        ? product.variants[0]!.id
-                        : ""
-                    );
-                  }}
-                  className={`flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-violet-50 ${
-                    selectedProductId === product.id
-                      ? "bg-violet-100 ring-1 ring-violet-300"
-                      : ""
-                  }`}
-                >
-                  {product.imageUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={product.imageUrl}
-                      alt=""
-                      className="h-10 w-10 rounded object-cover"
-                    />
-                  ) : (
-                    <div className="flex h-10 w-10 items-center justify-center rounded bg-slate-100 text-[10px] text-slate-500">
-                      No img
-                    </div>
-                  )}
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate font-medium text-slate-900">
-                      {product.title}
-                    </span>
-                    <span className="block truncate text-xs text-slate-500">
-                      {product.sku} · {product.currency} {product.price}
-                    </span>
-                  </span>
-                </button>
-              ))
-            )}
-          </div>
-
-          {selectedProduct && selectedProduct.variants.length > 1 && (
-            <select
-              value={selectedVariantId}
-              onChange={(e) => setSelectedVariantId(e.target.value)}
-              className="w-full rounded-md border border-violet-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-violet-500 focus:outline-none"
-            >
-              <option value="">Select variant...</option>
-              {selectedProduct.variants.map((variant) => (
-                <option key={variant.id} value={variant.id}>
-                  {variant.title} · {variant.price}
-                </option>
-              ))}
-            </select>
-          )}
-
+      {modal && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
           <button
             type="button"
-            onClick={() => void sendProduct()}
-            disabled={
-              busy ||
-              !selectedProductId ||
-              (selectedProduct != null &&
-                selectedProduct.variants.length > 1 &&
-                !selectedVariantId)
-            }
-            className="rounded-md bg-violet-700 px-3 py-2 text-sm font-semibold text-white hover:bg-violet-800 disabled:opacity-50"
-          >
-            Send product card + image
-          </button>
-        </div>
-      )}
+            aria-label="Close agent tools"
+            className="absolute inset-0 bg-slate-900/30"
+            onClick={closeModal}
+          />
+          <div className="relative z-10 flex max-h-[min(70vh,640px)] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border border-slate-200 bg-white shadow-2xl sm:rounded-2xl">
+            <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+              <h3 className="text-sm font-semibold text-slate-900">
+                {modal === "products" ? "Send product card" : "Place order"}
+              </h3>
+              <button
+                type="button"
+                onClick={closeModal}
+                className="rounded-md px-2 py-1 text-sm text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+              >
+                Close
+              </button>
+            </div>
 
-      {openSection === "order" && (
-        <div className="space-y-3">
-          {previewLoading ? (
-            <p className="text-xs text-slate-600">Loading order details from chat...</p>
-          ) : (
-            <>
-              {preview?.product ? (
-                <div className="flex items-center gap-2 rounded-md border border-violet-100 bg-white p-2">
-                  {preview.product.imageUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={preview.product.imageUrl}
-                      alt=""
-                      className="h-12 w-12 rounded object-cover"
-                    />
-                  ) : null}
-                  <div className="min-w-0 text-sm">
-                    <p className="font-medium text-slate-900">
-                      {preview.product.title}
-                    </p>
-                    <p className="text-xs text-slate-500">
-                      {preview.product.sku ?? "No SKU"}
-                      {preview.product.priceFormatted
-                        ? ` · ${preview.product.priceFormatted}`
-                        : ""}
-                    </p>
+            <div className="flex-1 overflow-y-auto p-4">
+              {modal === "products" && (
+                <div className="space-y-3">
+                  <input
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder="Search portal + Shopify by name or SKU..."
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-100"
+                    autoFocus
+                  />
+                  <div className="max-h-56 space-y-1 overflow-y-auto rounded-lg border border-slate-200 p-1">
+                    {productsLoading ? (
+                      <p className="px-2 py-3 text-xs text-slate-500">Searching...</p>
+                    ) : products.length === 0 ? (
+                      <p className="px-2 py-3 text-xs text-slate-500">
+                        No products found in portal or Shopify.
+                      </p>
+                    ) : (
+                      products.map((product) => (
+                        <button
+                          key={product.key}
+                          type="button"
+                          onClick={() => void selectProduct(product)}
+                          className={`flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-violet-50 ${
+                            selectedKey === product.key
+                              ? "bg-violet-100 ring-1 ring-violet-300"
+                              : ""
+                          }`}
+                        >
+                          {product.imageUrl ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={product.imageUrl}
+                              alt=""
+                              className="h-10 w-10 rounded object-cover"
+                            />
+                          ) : (
+                            <div className="flex h-10 w-10 items-center justify-center rounded bg-slate-100 text-[10px] text-slate-500">
+                              No img
+                            </div>
+                          )}
+                          <span className="min-w-0 flex-1">
+                            <span className="flex items-center gap-1.5">
+                              <span className="truncate font-medium text-slate-900">
+                                {product.title}
+                              </span>
+                              <span
+                                className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${
+                                  product.source === "shopify"
+                                    ? "bg-green-100 text-green-800"
+                                    : "bg-blue-100 text-blue-800"
+                                }`}
+                              >
+                                {product.source}
+                              </span>
+                            </span>
+                            <span className="block truncate text-xs text-slate-500">
+                              {product.sku ?? "Shopify"}
+                              {" · "}
+                              {product.currency} {product.price}
+                            </span>
+                          </span>
+                        </button>
+                      ))
+                    )}
                   </div>
+
+                  {variantLoading && (
+                    <p className="text-xs text-slate-500">Loading variants...</p>
+                  )}
+
+                  {selectedProduct && selectedProduct.variants.length > 1 && (
+                    <select
+                      value={selectedVariantId}
+                      onChange={(e) => setSelectedVariantId(e.target.value)}
+                      className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-violet-500 focus:outline-none"
+                    >
+                      <option value="">Select variant...</option>
+                      {selectedProduct.variants.map((variant) => (
+                        <option key={variant.id} value={variant.id}>
+                          {variant.title}
+                          {variant.priceFormatted
+                            ? ` · ${variant.priceFormatted}`
+                            : variant.price
+                              ? ` · ${variant.price}`
+                              : ""}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => void sendProduct()}
+                    disabled={
+                      busy ||
+                      variantLoading ||
+                      !selectedProduct ||
+                      (selectedProduct.variants.length > 1 && !selectedVariantId)
+                    }
+                    className="w-full rounded-lg bg-violet-700 px-3 py-2.5 text-sm font-semibold text-white hover:bg-violet-800 disabled:opacity-50"
+                  >
+                    Send product card + image
+                  </button>
                 </div>
-              ) : (
-                <p className="rounded-md border border-amber-200 bg-amber-50 px-2 py-2 text-xs text-amber-900">
-                  No product detected in chat yet. Send a product card first, or ask
-                  the customer which item they want.
-                </p>
               )}
 
-              <div className="grid gap-2 sm:grid-cols-2">
-                <label className="block text-xs text-slate-600">
-                  Customer name
-                  <input
-                    value={customerName}
-                    onChange={(e) => setCustomerName(e.target.value)}
-                    className="mt-1 w-full rounded-md border border-violet-200 bg-white px-2 py-1.5 text-sm"
-                  />
-                </label>
-                <label className="block text-xs text-slate-600">
-                  Phone *
-                  <input
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    className="mt-1 w-full rounded-md border border-violet-200 bg-white px-2 py-1.5 text-sm"
-                  />
-                </label>
-                <label className="block text-xs text-slate-600 sm:col-span-2">
-                  Delivery address *
-                  <input
-                    value={address1}
-                    onChange={(e) => setAddress1(e.target.value)}
-                    className="mt-1 w-full rounded-md border border-violet-200 bg-white px-2 py-1.5 text-sm"
-                  />
-                </label>
-                <label className="block text-xs text-slate-600">
-                  City
-                  <input
-                    value={city}
-                    onChange={(e) => setCity(e.target.value)}
-                    className="mt-1 w-full rounded-md border border-violet-200 bg-white px-2 py-1.5 text-sm"
-                  />
-                </label>
-                <label className="block text-xs text-slate-600">
-                  Quantity
-                  <input
-                    type="number"
-                    min={1}
-                    value={quantity}
-                    onChange={(e) =>
-                      setQuantity(Math.max(1, Number(e.target.value) || 1))
-                    }
-                    className="mt-1 w-full rounded-md border border-violet-200 bg-white px-2 py-1.5 text-sm"
-                  />
-                </label>
-              </div>
+              {modal === "order" && (
+                <div className="space-y-3">
+                  {previewLoading ? (
+                    <p className="text-xs text-slate-600">
+                      Loading order details from chat...
+                    </p>
+                  ) : (
+                    <>
+                      {preview?.product ? (
+                        <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 p-2">
+                          {preview.product.imageUrl ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={preview.product.imageUrl}
+                              alt=""
+                              className="h-12 w-12 rounded object-cover"
+                            />
+                          ) : null}
+                          <div className="min-w-0 text-sm">
+                            <p className="font-medium text-slate-900">
+                              {preview.product.title}
+                            </p>
+                            <p className="text-xs text-slate-500">
+                              {preview.product.sku ?? "No SKU"}
+                              {preview.product.priceFormatted
+                                ? ` · ${preview.product.priceFormatted}`
+                                : ""}
+                            </p>
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                          No product detected in chat yet. Send a product card first.
+                        </p>
+                      )}
 
-              {preview?.discountPercent ? (
-                <p className="text-xs text-emerald-700">
-                  Recovery discount detected: {preview.discountPercent}% off
-                </p>
-              ) : null}
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <label className="block text-xs text-slate-600">
+                          Customer name
+                          <input
+                            value={customerName}
+                            onChange={(e) => setCustomerName(e.target.value)}
+                            className="mt-1 w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
+                          />
+                        </label>
+                        <label className="block text-xs text-slate-600">
+                          Phone *
+                          <input
+                            value={phone}
+                            onChange={(e) => setPhone(e.target.value)}
+                            className="mt-1 w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
+                          />
+                        </label>
+                        <label className="block text-xs text-slate-600 sm:col-span-2">
+                          Delivery address *
+                          <input
+                            value={address1}
+                            onChange={(e) => setAddress1(e.target.value)}
+                            className="mt-1 w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
+                          />
+                        </label>
+                        <label className="block text-xs text-slate-600">
+                          City
+                          <input
+                            value={city}
+                            onChange={(e) => setCity(e.target.value)}
+                            className="mt-1 w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
+                          />
+                        </label>
+                        <label className="block text-xs text-slate-600">
+                          Quantity
+                          <input
+                            type="number"
+                            min={1}
+                            value={quantity}
+                            onChange={(e) =>
+                              setQuantity(Math.max(1, Number(e.target.value) || 1))
+                            }
+                            className="mt-1 w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
+                          />
+                        </label>
+                      </div>
 
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => void placeOrder()}
-                  disabled={
-                    placing ||
-                    busy ||
-                    !preview?.product ||
-                    !phone.trim() ||
-                    !address1.trim()
-                  }
-                  className="rounded-md bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
-                >
-                  {placing ? "Placing order..." : "Confirm & place order"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void loadPreview()}
-                  disabled={previewLoading}
-                  className="rounded-md border border-violet-200 bg-white px-3 py-2 text-sm text-violet-900 hover:bg-violet-50 disabled:opacity-50"
-                >
-                  Refresh from chat
-                </button>
-              </div>
-            </>
-          )}
+                      {preview?.discountPercent ? (
+                        <p className="text-xs text-emerald-700">
+                          Recovery discount: {preview.discountPercent}% off
+                        </p>
+                      ) : null}
+
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void placeOrder()}
+                          disabled={
+                            placing ||
+                            busy ||
+                            !preview?.product ||
+                            !phone.trim() ||
+                            !address1.trim()
+                          }
+                          className="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                        >
+                          {placing ? "Placing order..." : "Confirm & place order"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void loadPreview()}
+                          disabled={previewLoading}
+                          className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 hover:bg-slate-50 disabled:opacity-50"
+                        >
+                          Refresh from chat
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
-    </div>
+    </>
   );
 }

@@ -8,6 +8,8 @@ import {
   useApprovedTemplates,
 } from "@/components/whatsapp-window/TemplatePicker";
 
+type FollowUpMode = "freeform" | "template";
+
 export function FollowUpButton({
   conversation,
   windowStatus,
@@ -22,6 +24,7 @@ export function FollowUpButton({
   className?: string;
 }) {
   const [open, setOpen] = useState(false);
+  const [mode, setMode] = useState<FollowUpMode>("freeform");
   const [message, setMessage] = useState("");
   const [templateId, setTemplateId] = useState("");
   const [sending, setSending] = useState(false);
@@ -29,11 +32,12 @@ export function FollowUpButton({
 
   const { templates, loading: templatesLoading } = useApprovedTemplates();
 
-  const isOpen = windowStatus.isOpen;
+  const windowOpen = windowStatus.isOpen;
 
   function openModal() {
     setError(null);
     setMessage("");
+    setMode(windowOpen ? "freeform" : "template");
     if (templates.length > 0 && !templateId) {
       setTemplateId(templates[0]!.id);
     }
@@ -44,7 +48,11 @@ export function FollowUpButton({
     setSending(true);
     setError(null);
     try {
-      if (isOpen) {
+      if (mode === "freeform") {
+        if (!windowOpen) {
+          setError("Messaging window closed — use a template instead.");
+          return;
+        }
         const text = message.trim();
         if (!text) {
           setError("Enter a follow-up message");
@@ -113,12 +121,10 @@ export function FollowUpButton({
             onClick={(e) => e.stopPropagation()}
           >
             <div className="border-b border-slate-200 px-5 py-4">
-              <h2 className="text-lg font-bold text-slate-900">
-                {isOpen ? "Free-form follow-up" : "Template follow-up"}
-              </h2>
+              <h2 className="text-lg font-bold text-slate-900">Follow up</h2>
               <p className="mt-0.5 text-xs text-slate-500">
-                {isOpen
-                  ? "Messaging window is open — send a free-text message."
+                {windowOpen
+                  ? "Send free text or pick an approved WhatsApp template."
                   : "Window closed — Meta requires an approved template."}
               </p>
             </div>
@@ -130,7 +136,34 @@ export function FollowUpButton({
                 </div>
               )}
 
-              {isOpen ? (
+              {windowOpen && (
+                <div className="flex gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1">
+                  <button
+                    type="button"
+                    onClick={() => setMode("freeform")}
+                    className={`flex-1 rounded-md px-3 py-1.5 text-xs font-semibold ${
+                      mode === "freeform"
+                        ? "bg-white text-slate-900 shadow-sm"
+                        : "text-slate-600 hover:text-slate-900"
+                    }`}
+                  >
+                    Free text
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMode("template")}
+                    className={`flex-1 rounded-md px-3 py-1.5 text-xs font-semibold ${
+                      mode === "template"
+                        ? "bg-white text-slate-900 shadow-sm"
+                        : "text-slate-600 hover:text-slate-900"
+                    }`}
+                  >
+                    Template
+                  </button>
+                </div>
+              )}
+
+              {mode === "freeform" && windowOpen ? (
                 <textarea
                   value={message}
                   onChange={(e) => setMessage(e.target.value)}

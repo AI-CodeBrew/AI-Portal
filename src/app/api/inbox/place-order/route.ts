@@ -10,6 +10,7 @@ import {
 } from "@/lib/inbox/manual-order";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Store } from "@/lib/types";
+import type { WindowType } from "@/lib/whatsapp-window/window-status";
 
 export async function POST(request: NextRequest) {
   try {
@@ -61,6 +62,8 @@ export async function POST(request: NextRequest) {
       conversationId,
       customerPhone: String(conversation.customer_phone),
       customerId: (conversation.customer_id as string | null) ?? null,
+      lastCustomerMessageAt: conversation.last_customer_message_at as string | null,
+      windowType: (conversation.window_type as WindowType | null) ?? "service",
       history,
       overrides: {
         customerName: body.customerName,
@@ -85,6 +88,8 @@ export async function POST(request: NextRequest) {
       orderNumber: result.orderNumber,
       totalFormatted: result.totalFormatted,
       confirmationText: result.confirmationText,
+      whatsappSent: result.whatsappSent,
+      whatsappError: result.whatsappError,
     });
   } catch (err) {
     const authRes = authErrorResponse(err);

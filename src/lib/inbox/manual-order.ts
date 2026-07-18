@@ -18,6 +18,11 @@ import {
   createWhatsAppAiOrder,
   resolveOrderLineFromChatRef,
 } from "@/lib/orders/whatsapp-create";
+import {
+  formatOrderConfirmationMessage,
+} from "@/lib/orders/notify";
+import { sendWhatsAppOutboundMessage } from "@/lib/inbox/send-whatsapp-outbound";
+import type { WindowType } from "@/lib/whatsapp-window/window-status";
 import type { Store } from "@/lib/types";
 
 export type ChatHistoryMessage = {
@@ -207,6 +212,8 @@ export async function placeManualInboxOrder(params: {
   conversationId: string;
   customerPhone: string;
   customerId: string | null;
+  lastCustomerMessageAt: string | null;
+  windowType: WindowType | null;
   history: ChatHistoryMessage[];
   overrides?: {
     customerName?: string;
@@ -226,6 +233,8 @@ export async function placeManualInboxOrder(params: {
       orderNumber: string;
       totalFormatted: string;
       confirmationText: string;
+      whatsappSent: boolean;
+      whatsappError?: string;
     }
   | { ok: false; error: string }
 > {
@@ -327,24 +336,46 @@ export async function placeManualInboxOrder(params: {
     return { ok: false, error: created.error };
   }
 
+  const itemTitle = preview.product?.title ?? "Order item";
+  const customerWhatsappText = formatOrderConfirmationMessage(
+    created.order_number,
+    [{ title: itemTitle, quantity }],
+    created.total,
+    created.currency,
+    customerName
+  );
+
   const confirmationText = [
     `✅ Order *${created.order_number}* confirmed`,
     quantity > 1 ? `Qty: ${quantity}` : null,
     discountPercent ? `${discountPercent}% off applied` : null,
     created.total_formatted ? `Total: ${created.total_formatted}` : null,
-    created.whatsapp_sent
-      ? `Confirmation sent to ${phone}`
-      : null,
   ]
     .filter(Boolean)
     .join("\n");
 
   const supabase = createAdminClient();
-  await supabase.from("whatsapp_messages").insert({
-    conversation_id: params.conversationId,
-    direction: "out",
-    content: confirmationText,
-  });
+  let whatsappSent = Boolean(created.whatsapp_sent);
+  let whatsappError = created.whatsapp_error;
+
+  if (!whatsappSent) {
+    const sendResult = await sendWhatsAppOutboundMessage({
+      conversationId: params.conversationId,
+      customerPhone: params.customerPhone,
+      store: params.store,
+      content: customerWhatsappText,
+      lastCustomerMessageAt: params.lastCustomerMessageAt,
+      windowType: params.windowType,
+    });
+    whatsappSent = sendResult.ok;
+    whatsappError = sendResult.ok ? undefined : sendResult.error;
+  } else {
+    await supabase.from("whatsapp_messages").insert({
+      conversation_id: params.conversationId,
+      direction: "out",
+      content: confirmationText,
+    });
+  }
 
   if (params.customerId && created.order_id) {
     await supabase
@@ -366,6 +397,8 @@ export async function placeManualInboxOrder(params: {
     orderId: created.order_id,
     orderNumber: created.order_number,
     totalFormatted: created.total_formatted,
-    confirmationText,
+    confirmationText: whatsappSent ? customerWhatsappText : confirmationText,
+    whatsappSent,
+    whatsappError,
   };
 }
