@@ -20,6 +20,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       language?: string;
       headerText?: string | null;
       headerFormat?: "TEXT" | "IMAGE" | null;
+      headerExampleImageUrl?: string | null;
       bodyText?: string;
       footerText?: string | null;
       buttonType?: "NONE" | "URL";
@@ -41,6 +42,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       language: body.language,
       headerText: body.headerText,
       headerFormat: body.headerFormat,
+      headerExampleImageUrl: body.headerExampleImageUrl,
       bodyText: body.bodyText,
       footerText: body.footerText,
       buttonType: body.buttonType,

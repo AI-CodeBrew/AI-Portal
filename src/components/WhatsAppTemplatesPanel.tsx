@@ -66,6 +66,7 @@ function emptyForm() {
     language: "en",
     headerText: "",
     headerFormat: "NONE" as "NONE" | "TEXT" | "IMAGE",
+    headerExampleImageUrl: "",
     bodyText: "",
     footerText: "",
     buttonType: "NONE" as "NONE" | "URL",
@@ -142,6 +143,7 @@ export function WhatsAppTemplatesPanel() {
       language: t.language,
       headerText: t.header_text ?? "",
       headerFormat: t.header_format ?? (t.header_text ? "TEXT" : "NONE"),
+      headerExampleImageUrl: t.header_example_image_url ?? "",
       bodyText: t.body_text,
       footerText: t.footer_text ?? "",
       buttonType: t.button_type ?? "NONE",
@@ -176,6 +178,10 @@ export function WhatsAppTemplatesPanel() {
               : form.headerFormat === "TEXT"
                 ? "TEXT"
                 : null,
+          headerExampleImageUrl:
+            form.headerFormat === "IMAGE"
+              ? form.headerExampleImageUrl || null
+              : null,
           bodyText: form.bodyText,
           footerText: form.footerText || null,
           buttonType: form.buttonType,
@@ -541,10 +547,30 @@ export function WhatsAppTemplatesPanel() {
               )}
 
               {form.headerFormat === "IMAGE" && (
-                <p className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-xs text-violet-900">
-                  When sending from inbox, pick a product — its image is attached
-                  automatically. Meta requires a sample image at approval time.
-                </p>
+                <>
+                  <p className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-xs text-violet-900">
+                    Meta requires a sample image at approval time. We upload it
+                    automatically when you submit — use a public JPG/PNG from
+                    your catalog below, or leave blank to use your latest product
+                    image.
+                  </p>
+                  <label className="block text-sm">
+                    <span className="font-medium text-slate-700">
+                      Sample image URL (optional)
+                    </span>
+                    <input
+                      value={form.headerExampleImageUrl}
+                      onChange={(e) =>
+                        setForm((f) => ({
+                          ...f,
+                          headerExampleImageUrl: e.target.value,
+                        }))
+                      }
+                      placeholder="https://cdn.example.com/product.jpg"
+                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                    />
+                  </label>
+                </>
               )}
 
               <label className="block text-sm">

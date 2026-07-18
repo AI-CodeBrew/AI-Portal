@@ -2,6 +2,10 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import {
   getStoreWhatsAppCredentials,
 } from "@/lib/whatsapp";
+import {
+  resolveTemplateSampleImageUrl,
+  uploadWhatsAppTemplateHeaderHandle,
+} from "@/lib/whatsapp/template-media-upload";
 
 const GRAPH_API = "https://graph.facebook.com/v21.0";
 
@@ -26,6 +30,7 @@ export interface WhatsAppMessageTemplate {
   header_text: string | null;
   header_format: "TEXT" | "IMAGE" | null;
   header_image_variable: boolean;
+  header_example_image_url: string | null;
   body_text: string;
   footer_text: string | null;
   button_type: "NONE" | "URL";
@@ -46,6 +51,7 @@ export interface CreateWaTemplateInput {
   language: string;
   headerText?: string | null;
   headerFormat?: "TEXT" | "IMAGE" | null;
+  headerExampleImageUrl?: string | null;
   bodyText: string;
   footerText?: string | null;
   buttonType?: "NONE" | "URL";
@@ -67,6 +73,8 @@ function mapRow(row: Record<string, unknown>): WhatsAppMessageTemplate {
       (row.header_format as "TEXT" | "IMAGE" | null) ??
       (row.header_text ? "TEXT" : null),
     header_image_variable: Boolean(row.header_image_variable),
+    header_example_image_url:
+      (row.header_example_image_url as string | null) ?? null,
     body_text: row.body_text as string,
     footer_text: (row.footer_text as string | null) ?? null,
     button_type: (row.button_type as "NONE" | "URL" | undefined) ?? "NONE",
@@ -141,10 +149,32 @@ async function getStoreWaContext(storeId: string): Promise<
   return { wabaId, accessToken: creds.accessToken };
 }
 
+function countBodyVariables(bodyText: string): number {
+  const matches = bodyText.match(/\{\{(\d+)\}\}/g) ?? [];
+  let max = 0;
+  for (const m of matches) {
+    const n = Number(m.replace(/\D/g, ""));
+    if (n > max) max = n;
+  }
+  return max;
+}
+
+function sampleBodyTextValues(varCount: number): string[] {
+  const pool = [
+    "Customer",
+    "Sample Product",
+    "Rs 1,999",
+    "sample-product",
+    "PKR",
+    "https://example.com",
+  ];
+  return Array.from({ length: varCount }, (_, i) => pool[i] ?? pool[pool.length - 1]!);
+}
+
 function buildMetaComponents(input: {
   headerText?: string | null;
   headerFormat?: "TEXT" | "IMAGE" | null;
-  headerExampleImageUrl?: string | null;
+  headerHandle?: string | null;
   bodyText: string;
   footerText?: string | null;
   buttonType?: "NONE" | "URL";
@@ -154,14 +184,16 @@ function buildMetaComponents(input: {
   const components: Array<Record<string, unknown>> = [];
 
   if (input.headerFormat === "IMAGE") {
+    if (!input.headerHandle?.trim()) {
+      throw new Error(
+        "IMAGE header templates require a Meta upload handle before submit."
+      );
+    }
     components.push({
       type: "HEADER",
       format: "IMAGE",
       example: {
-        header_url: [
-          input.headerExampleImageUrl?.trim() ||
-            "https://cdn.shopify.com/s/files/1/0533/2089/files/placeholder-images-image_large.png",
-        ],
+        header_handle: [input.headerHandle.trim()],
       },
     });
   } else if (input.headerText?.trim()) {
@@ -172,10 +204,17 @@ function buildMetaComponents(input: {
     });
   }
 
-  components.push({
+  const bodyVarCount = countBodyVariables(input.bodyText);
+  const bodyComponent: Record<string, unknown> = {
     type: "BODY",
     text: input.bodyText.trim(),
-  });
+  };
+  if (bodyVarCount > 0) {
+    bodyComponent.example = {
+      body_text: [sampleBodyTextValues(bodyVarCount)],
+    };
+  }
+  components.push(bodyComponent);
 
   if (input.footerText?.trim()) {
     components.push({
@@ -189,15 +228,18 @@ function buildMetaComponents(input: {
     input.buttonText?.trim() &&
     input.buttonUrlPattern?.trim()
   ) {
+    const urlPattern = input.buttonUrlPattern.trim();
+    const button: Record<string, unknown> = {
+      type: "URL",
+      text: input.buttonText.trim().slice(0, 25),
+      url: urlPattern,
+    };
+    if (/\{\{\d+\}\}/.test(urlPattern)) {
+      button.example = ["sample-product"];
+    }
     components.push({
       type: "BUTTONS",
-      buttons: [
-        {
-          type: "URL",
-          text: input.buttonText.trim().slice(0, 25),
-          url: input.buttonUrlPattern.trim(),
-        },
-      ],
+      buttons: [button],
     });
   }
 
@@ -282,6 +324,10 @@ export async function createWhatsAppTemplate(
       header_text: headerFormat === "TEXT" ? input.headerText?.trim() || null : null,
       header_format: headerFormat,
       header_image_variable: headerFormat === "IMAGE",
+      header_example_image_url:
+        headerFormat === "IMAGE"
+          ? input.headerExampleImageUrl?.trim() || null
+          : null,
       body_text: bodyText,
       footer_text: input.footerText?.trim() || null,
       button_type: buttonType,
@@ -358,6 +404,10 @@ export async function updateWhatsAppTemplate(
     if (input.headerFormat === "IMAGE") {
       payload.header_text = null;
     }
+  }
+  if (input.headerExampleImageUrl !== undefined) {
+    payload.header_example_image_url =
+      input.headerExampleImageUrl?.trim() || null;
   }
   if (input.bodyText !== undefined) {
     const body = input.bodyText.trim();
@@ -455,19 +505,62 @@ export async function submitWhatsAppTemplateToMeta(
   const ctx = await getStoreWaContext(storeId);
   if ("error" in ctx) return ctx;
 
-  const payload = {
-    name: existing.name,
-    language: existing.language,
-    category: existing.category,
-    components: buildMetaComponents({
+  const { data: storeRow } = await supabase
+    .from("stores")
+    .select("meta_app_id")
+    .eq("id", storeId)
+    .maybeSingle();
+
+  const appId =
+    (storeRow?.meta_app_id as string | null) ||
+    process.env.META_APP_ID ||
+    null;
+
+  let headerHandle: string | null = null;
+  if ((existing.header_format as string | null) === "IMAGE") {
+    if (!appId) {
+      return {
+        error:
+          "Meta App ID is required for image templates. Add it under Integrations, then submit again.",
+      };
+    }
+
+    const sampleUrl = await resolveTemplateSampleImageUrl(
+      storeId,
+      existing.header_example_image_url as string | null
+    );
+    const uploaded = await uploadWhatsAppTemplateHeaderHandle({
+      appId,
+      accessToken: ctx.accessToken,
+      imageUrl: sampleUrl,
+    });
+    if ("error" in uploaded) return uploaded;
+    headerHandle = uploaded.handle;
+  }
+
+  let components: Array<Record<string, unknown>>;
+  try {
+    components = buildMetaComponents({
       headerText: existing.header_text,
       headerFormat: (existing.header_format as "TEXT" | "IMAGE" | null) ?? null,
+      headerHandle,
       bodyText: existing.body_text,
       footerText: existing.footer_text,
       buttonType: (existing.button_type as "NONE" | "URL") ?? "NONE",
       buttonText: existing.button_text,
       buttonUrlPattern: existing.button_url_pattern,
-    }),
+    });
+  } catch (err) {
+    return {
+      error: err instanceof Error ? err.message : "Invalid template components",
+    };
+  }
+
+  const payload = {
+    name: existing.name,
+    language: existing.language,
+    category: existing.category,
+    components,
   };
 
   const res = await fetch(`${GRAPH_API}/${ctx.wabaId}/message_templates`, {

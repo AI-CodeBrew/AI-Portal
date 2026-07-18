@@ -50,6 +50,7 @@ export async function POST(request: NextRequest) {
       language?: string;
       headerText?: string | null;
       headerFormat?: "TEXT" | "IMAGE" | null;
+      headerExampleImageUrl?: string | null;
       bodyText?: string;
       footerText?: string | null;
       buttonType?: "NONE" | "URL";
@@ -63,6 +64,7 @@ export async function POST(request: NextRequest) {
       language: body.language ?? "en",
       headerText: body.headerText,
       headerFormat: body.headerFormat,
+      headerExampleImageUrl: body.headerExampleImageUrl,
       bodyText: body.bodyText ?? "",
       footerText: body.footerText,
       buttonType: body.buttonType,
