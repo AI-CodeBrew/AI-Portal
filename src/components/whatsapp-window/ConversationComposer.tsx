@@ -8,6 +8,7 @@ import {
   TemplatePicker,
   useApprovedTemplates,
 } from "@/components/whatsapp-window/TemplatePicker";
+import { InboxManualTools } from "@/components/whatsapp-window/InboxManualTools";
 
 export function ConversationComposer({
   conversation,
@@ -137,6 +138,16 @@ export function ConversationComposer({
           Human mode: reply below. The AI will not respond until you switch back
           to AI.
         </p>
+      )}
+      {isManual && (
+        <InboxManualTools
+          conversation={conversation}
+          windowOpen={windowOpen}
+          busy={sending}
+          onBusyChange={onSendingChange}
+          onSent={onSent}
+          onError={onError}
+        />
       )}
       <textarea
         value={reply}

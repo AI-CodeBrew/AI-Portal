@@ -18,7 +18,10 @@ import {
   tryDirectCatalogProductPickReply,
 } from "./product-reply";
 import { tryDirectCheckoutReply } from "./checkout-reply";
-import { tryDirectSalesRecoveryReply } from "./sales-recovery";
+import {
+  tryDirectSalesRecoveryReply,
+  looksLikeOrderDecline,
+} from "./sales-recovery";
 import {
   buildCasualGreetingReply,
   buildHowAreYouReply,
@@ -136,6 +139,20 @@ export async function runSalesAgent(
   });
   const latestUser =
     [...history].reverse().find((m) => m.role === "user")?.content ?? "";
+
+  // Price objections / declines — before variant or catalog exact handlers
+  if (looksLikeOrderDecline(latestUser)) {
+    try {
+      const recovery = await tryDirectSalesRecoveryReply(
+        enrichedCtx,
+        latestUser,
+        history
+      );
+      if (recovery) return recovery;
+    } catch (err) {
+      console.error("[run-sales-agent] sales recovery (early) failed:", err);
+    }
+  }
 
   const exactRoute = resolveExactDirectRoute(latestUser, history);
 

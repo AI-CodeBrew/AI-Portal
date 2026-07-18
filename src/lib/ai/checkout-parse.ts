@@ -2,6 +2,8 @@ import { normalizePhone, validateOrderPhone } from "@/lib/phone";
 import {
   extractSkuFromText,
   looksLikeObjectionPhrase,
+  CATALOG_BROWSE_INTRO,
+  CATALOG_BROWSE_MORE_INTRO,
 } from "@/lib/products/products-service";
 import { looksLikeVariantSelection } from "./variant-selection";
 import { looksLikeExactNamedProductQuery } from "./exact-routes";
@@ -124,11 +126,20 @@ export function looksLikeCheckoutMessage(
 
 function extractPhoneRaw(text: string): string {
   const t = text.replace(/\r/g, "\n").trim();
+  const labeledParen = t.match(
+    /\b(?:phone|ph|mobile|whatsapp|number|cell)\s*[:(]\s*([^)\n]+)\)?/i
+  );
+  if (labeledParen?.[1]?.trim()) {
+    const inner = labeledParen[1].replace(/\D/g, "");
+    if (inner.length >= 8) return inner;
+  }
   const phoneMatch =
     t.match(
       /(?:phone|ph|mobile|whatsapp|number|cell)[:\s\-]*([+\d][\d\s\-()]{6,}\d)/i
     ) || t.match(/([+]?\d[\d\s\-()]{8,}\d)/);
-  if (phoneMatch?.[1]?.trim()) return phoneMatch[1].trim();
+  if (phoneMatch?.[1]?.trim()) {
+    return phoneMatch[1].replace(/\D/g, "");
+  }
   const digitsAll = t.replace(/\D/g, "");
   if (digitsAll.length >= 8) return digitsAll;
   return "";
@@ -163,6 +174,11 @@ function stripLeadingPhoneFromText(text: string, phoneRaw: string): string {
 
 function extractAddress(text: string, phone: string, customerName: string): string {
   const t = text.replace(/\r/g, "\n").trim();
+  const labeledParen = t.match(/\b(?:address|addr|delivery)\s*[:(]\s*([^)\n]+)\)?/i);
+  if (labeledParen?.[1]?.trim()) {
+    return labeledParen[1].trim();
+  }
+
   const phoneRaw = phone || extractPhoneRaw(t);
   const afterPhone = stripLeadingPhoneFromText(t.replace(/\n/g, ", "), phoneRaw);
   if (afterPhone.length >= 4 && afterPhone !== t.replace(/\n/g, ", ")) {
@@ -227,6 +243,11 @@ function extractAddress(text: string, phone: string, customerName: string): stri
 
 function extractCustomerName(text: string): string {
   const t = text.replace(/\r/g, "\n").trim();
+  const labeledParen = t.match(/\b(?:name|naam|customer)\s*[:(]\s*([^)\n]+)\)?/i);
+  if (labeledParen?.[1]?.trim()) {
+    return labeledParen[1].trim();
+  }
+
   const nameMatch = t.match(
     /(?:name|naam|customer)[:\s\-]*([A-Za-z][A-Za-z\s.'-]{1,60})/i
   );
@@ -349,19 +370,46 @@ function extractRefFromContent(content: string): string | null {
 }
 
 /**
- * Prefer the assistant product card that has both SKU and Ref so Shopify-registry
- * products (SKU mapped, numeric variant Ref) can still be ordered.
+ * Prefer the product the customer is actually ordering — not an older browse list item.
  */
 export function findProductRefFromHistory(
   history: Array<{ role: "user" | "assistant"; content: string }>
 ): { sku?: string; variant_id?: string; product_id?: string; source?: string } | null {
-  const combined = [...history].reverse();
+  type Candidate = {
+    score: number;
+    sku?: string;
+    variant_id?: string;
+    source?: string;
+  };
 
-  for (const msg of combined) {
+  const candidates: Candidate[] = [];
+
+  for (let i = history.length - 1; i >= 0; i--) {
+    const msg = history[i];
     if (msg.role !== "assistant") continue;
-    const sku = extractSkuFromText(msg.content);
-    const ref = extractRefFromContent(msg.content);
-    if (!sku && !ref) continue;
+
+    const content = msg.content;
+    if (/Almost there — to confirm/i.test(content)) continue;
+    if (/Send like this:/i.test(content) && /Phone:\s*\(required\)/i.test(content)) {
+      continue;
+    }
+
+    const ref = extractRefFromContent(content);
+    const sku = extractSkuFromText(content);
+    if (!ref && !sku) continue;
+
+    let score = history.length - i;
+    if (/Perfect — share your \*phone\*/i.test(content)) score += 100;
+    if (/\*[^*]+\* — \*[^*]+\*/.test(content)) score += 80;
+    if (/Want it\?\s*Share your phone/i.test(content)) score += 60;
+    if (/(?:—|-)\s*(?:Rs\.?|PKR|AED|\$|€)/i.test(content)) score += 20;
+    if (
+      CATALOG_BROWSE_INTRO.test(content) ||
+      CATALOG_BROWSE_MORE_INTRO.test(content)
+    ) {
+      score -= 50;
+    }
+    if (/Which one interests you\?/i.test(content)) score -= 40;
 
     const isShopifyRef = Boolean(ref && /^\d{5,}$/.test(ref));
     const isPortalRef = Boolean(
@@ -371,19 +419,25 @@ export function findProductRefFromHistory(
         )
     );
 
-    return {
+    candidates.push({
+      score,
       ...(sku ? { sku } : {}),
       ...(ref ? { variant_id: ref } : {}),
-      source: isShopifyRef ? "shopify" : isPortalRef || sku ? "portal" : "shopify",
-    };
+      source: isShopifyRef
+        ? "shopify"
+        : isPortalRef || sku
+          ? "portal"
+          : "shopify",
+    });
   }
 
-  for (const msg of combined) {
-    const sku = extractSkuFromText(msg.content);
-    if (sku) {
-      return { sku, source: "portal" };
-    }
-  }
+  candidates.sort((a, b) => b.score - a.score);
+  const best = candidates[0];
+  if (!best) return null;
 
-  return null;
+  return {
+    ...(best.sku ? { sku: best.sku } : {}),
+    ...(best.variant_id ? { variant_id: best.variant_id } : {}),
+    source: best.source,
+  };
 }

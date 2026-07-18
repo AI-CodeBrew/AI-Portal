@@ -11,6 +11,7 @@ import {
   validateCheckoutMessage,
   type CheckoutValidationIssue,
 } from "./checkout-parse";
+import { resolveOrderLineFromChatRef } from "@/lib/orders/whatsapp-create";
 import { orderDetailsTemplate } from "./order-details-template";
 
 export {
@@ -148,6 +149,14 @@ export async function tryDirectCheckoutReply(
     return "I have your details. Which product should I order? Please send the product name or SKU again.";
   }
 
+  const resolvedLine = await resolveOrderLineFromChatRef(ctx.store.id, productRef);
+  if (!resolvedLine) {
+    const label =
+      productRef.sku ||
+      (productRef.variant_id ? `ref ${productRef.variant_id.slice(0, 8)}…` : "that product");
+    return `I have your delivery details, but ${label} isn't in the catalog anymore. Tell me the product name again and I'll place the order.`;
+  }
+
   const quantity = parseOrderQuantity(
     latestUserMessage,
     pendingOffer?.defaultQty ?? 1
@@ -167,14 +176,14 @@ export async function tryDirectCheckoutReply(
       line_items: [
         {
           quantity,
-          ...(productRef.sku ? { sku: productRef.sku } : {}),
-          ...(productRef.variant_id
-            ? { variant_id: productRef.variant_id }
+          ...(resolvedLine.sku ? { sku: resolvedLine.sku } : {}),
+          ...(resolvedLine.variant_id
+            ? { variant_id: resolvedLine.variant_id }
             : {}),
-          ...(productRef.product_id
-            ? { product_id: productRef.product_id }
+          ...(resolvedLine.product_id
+            ? { product_id: resolvedLine.product_id }
             : {}),
-          ...(productRef.source ? { source: productRef.source } : {}),
+          ...(resolvedLine.source ? { source: resolvedLine.source } : {}),
         },
       ],
       customer_name: details.customer_name,
@@ -225,6 +234,9 @@ export async function tryDirectCheckoutReply(
   if (/address/i.test(err)) {
     return formatCheckoutMissingReply(["missing_address"], pendingOffer?.defaultQty);
   }
+  if (/resolve product|variant|catalog/i.test(err)) {
+    return `I have your details but couldn't match the product in our catalog. Reply with the product name once more (e.g. AquaShelf Shower Rack) and send phone + address again — I'll place it right away.`;
+  }
 
-  return `I couldn't complete the order yet (${err}). Please check your phone number and delivery address, or wait for a team member.`;
+  return `I couldn't complete the order yet (${err}). Please wait for a team member or try again in a moment.`;
 }

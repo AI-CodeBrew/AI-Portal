@@ -7,6 +7,9 @@ import {
   productSearchTokens,
   sampleActiveCatalogProducts,
   skuMatchKey,
+  CATALOG_BROWSE_INTRO,
+  CATALOG_BROWSE_MORE_INTRO,
+  type PortalProductSearchHit,
 } from "@/lib/products/products-service";
 import {
   isPlaceholderVariantTitle,
@@ -115,6 +118,12 @@ function titleFromPitch(content: string): string | null {
   return null;
 }
 
+function isCatalogBrowseMessage(content: string): boolean {
+  return (
+    CATALOG_BROWSE_INTRO.test(content) || CATALOG_BROWSE_MORE_INTRO.test(content)
+  );
+}
+
 /** Most recently discussed product in this chat — not older products from earlier in the session. */
 export function findActiveProductContext(
   history: Array<{ role: "user" | "assistant"; content: string }>,
@@ -125,6 +134,7 @@ export function findActiveProductContext(
     if (msg.role !== "assistant" || !isProductPitchMessage(msg.content)) {
       continue;
     }
+    if (isCatalogBrowseMessage(msg.content)) continue;
 
     let userTitle: string | null = null;
     for (let j = i - 1; j >= 0 && j >= i - 3; j--) {
@@ -380,6 +390,59 @@ function productCloseLine(p: SearchProduct): string {
   return productHasSelectableVariants(p)
     ? "Which size/color do you need?"
     : "Want it? Share your phone & delivery address.";
+}
+
+export function portalHitToSearchProduct(hit: PortalProductSearchHit): SearchProduct {
+  return {
+    title: hit.title,
+    sku: hit.sku,
+    description: hit.description,
+    imageUrl: hit.imageUrl,
+    image_urls: hit.image_urls,
+    options: hit.options,
+    variants:
+      hit.variants.length > 0
+        ? hit.variants.map((v) => ({
+            id: v.id,
+            title: v.title,
+            sku: v.sku,
+            price_formatted: formatMoney(Number(v.price), hit.currency),
+            option_values: v.option_values,
+          }))
+        : [
+            {
+              id: hit.id,
+              title: "Default",
+              sku: hit.sku,
+              price_formatted: formatMoney(Number(hit.price), hit.currency),
+            },
+          ],
+    bundles: hit.bundles.map((b) => ({
+      quantity: b.quantity,
+      price_formatted: formatMoney(Number(b.price), hit.currency),
+      label: b.label,
+    })),
+  };
+}
+
+/** WhatsApp product card with image marker, ref, and closing prompt. */
+export function formatProductCardForWhatsApp(
+  product: SearchProduct,
+  options?: { variantId?: string }
+): string {
+  let block = formatSingleProductBlock(product);
+  const variantId = options?.variantId?.trim();
+  if (variantId) {
+    if (/\[Ref:\s*[^\]]+\]/i.test(block)) {
+      block = block.replace(/\[Ref:\s*[^\]]+\]/i, `[Ref: ${variantId}]`);
+    } else {
+      block = block.replace(
+        /^(\[Image:[^\]]+\]\n)?/i,
+        `$1[Ref: ${variantId}]\n`
+      );
+    }
+  }
+  return `${block}\n\n${productCloseLine(product)}`;
 }
 
 /** Build one product card — price shown once, image when available. */

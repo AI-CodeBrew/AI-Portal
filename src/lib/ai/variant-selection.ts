@@ -1,5 +1,6 @@
 import { isRealVariantTitle } from "@/lib/products/variant-titles";
 import { looksLikeCatalogProductPick } from "./catalog-browse-pick";
+import { looksLikeObjectionPhrase } from "@/lib/products/products-service";
 
 type VariantRow = {
   id?: string;
@@ -108,12 +109,15 @@ export function looksLikeVariantSelection(
   );
   if (!discussed) return false;
 
+  if (looksLikeObjectionPhrase(t)) return false;
+
   if (messageMatchesListedProductOption(t, history)) return true;
 
   if (looksLikeCatalogProductPick(t, history)) return false;
 
-  if (assistantAskedWhichVariant(history) && t.split(/\s+/).length <= 6) {
-    return true;
+  if (assistantAskedWhichVariant(history)) {
+    const words = t.split(/\s+/).filter(Boolean);
+    if (words.length === 1 && words[0]!.length <= 24) return true;
   }
 
   if (!VARIANT_WORDS.test(t)) return false;

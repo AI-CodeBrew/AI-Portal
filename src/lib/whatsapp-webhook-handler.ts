@@ -15,6 +15,10 @@ import {
   looksLikeVariantSelection,
   formatVariantOptionReprompt,
 } from "@/lib/ai/variant-selection";
+import {
+  tryDirectSalesRecoveryReply,
+  looksLikeOrderDecline,
+} from "@/lib/ai/sales-recovery";
 import { getRecentChatHistory, getStoreChatContextLimits } from "@/lib/ai/chat-history";
 import {
   getAiSessionResetAt,
@@ -135,6 +139,15 @@ async function resolveContextualDirectReply(
     chatHistory
   );
   if (imageReply) return imageReply;
+
+  if (looksLikeOrderDecline(inboundText)) {
+    const recovery = await tryDirectSalesRecoveryReply(
+      agentCtx,
+      inboundText,
+      chatHistory
+    );
+    if (recovery) return recovery;
+  }
 
   if (looksLikeCheckoutMessage(inboundText, chatHistory)) {
     const checkout = await tryDirectCheckoutReply(

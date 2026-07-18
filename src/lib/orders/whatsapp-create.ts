@@ -197,6 +197,54 @@ async function resolvePortalLine(
   return null;
 }
 
+/** Resolve a chat [Ref:] / SKU into a line item the order pipeline can fulfill. */
+export async function resolveOrderLineFromChatRef(
+  storeId: string,
+  ref: {
+    variant_id?: string;
+    product_id?: string;
+    sku?: string;
+    source?: string;
+  }
+): Promise<WhatsAppOrderLineInput | null> {
+  const portalResolved = await resolvePortalLine(storeId, {
+    variant_id: ref.variant_id,
+    product_id: ref.product_id,
+    sku: ref.sku,
+    source: ref.source,
+    quantity: 1,
+  });
+  if (portalResolved) {
+    return {
+      variant_id: portalResolved.variant_id,
+      product_id: portalResolved.product_id,
+      sku: portalResolved.sku ?? undefined,
+      source: "portal",
+      quantity: 1,
+    };
+  }
+
+  const variantId = String(ref.variant_id ?? "").trim();
+  if (variantId && isShopifyVariantId(variantId)) {
+    return { variant_id: variantId, source: "shopify", quantity: 1 };
+  }
+
+  if (ref.sku) {
+    const registry = await resolveShopifySkuRegistry(storeId, ref.sku);
+    if (registry) {
+      return {
+        variant_id: registry.variant_id,
+        product_id: registry.product_id,
+        sku: ref.sku,
+        source: "shopify",
+        quantity: 1,
+      };
+    }
+  }
+
+  return null;
+}
+
 function nextPortalOrderNumber(): string {
   const stamp = Date.now().toString(36).toUpperCase();
   return `#P${stamp}`;
