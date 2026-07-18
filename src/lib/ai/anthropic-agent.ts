@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { executeSalesTool, type AgentContext } from "./sales-tools";
 import { buildSalesSystemPromptWithExamples } from "./build-system-prompt-with-examples";
-import { CHAT_HISTORY_LIMIT } from "./chat-history";
+import { CHAT_HISTORY_LIMIT, trimHistoryForAgent } from "./chat-history";
 import { tryDirectProductReply } from "./product-reply";
 import { tryDirectCheckoutReply } from "./checkout-reply";
 import { tryDirectSalesRecoveryReply } from "./sales-recovery";
@@ -168,7 +168,7 @@ export async function runSalesAgentWithAnthropic(
 
   const historyLimit =
     ctx.aiConfig?.effectiveChatHistoryLimit ?? CHAT_HISTORY_LIMIT;
-  const trimmedHistory = history.slice(-historyLimit);
+  const trimmedHistory = trimHistoryForAgent(history, historyLimit);
 
   const skuHint = extractSkuFromText(latestUser);
   const searchHint = skuHint || extractProductSearchQuery(latestUser);

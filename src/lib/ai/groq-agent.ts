@@ -3,7 +3,7 @@ import {
   executeSalesTool,
   type AgentContext,
 } from "./sales-tools";
-import { CHAT_HISTORY_LIMIT } from "./chat-history";
+import { CHAT_HISTORY_LIMIT, trimHistoryForAgent } from "./chat-history";
 import { buildSalesSystemPromptWithExamples } from "./build-system-prompt-with-examples";
 import { formatProductsReply } from "./product-reply";
 import {
@@ -111,7 +111,7 @@ export async function runSalesAgentWithGroq(
   const latestUser = lastUserMessage(history);
   const historyLimit =
     ctx.aiConfig?.effectiveChatHistoryLimit ?? CHAT_HISTORY_LIMIT;
-  const trimmedHistory = history.slice(-historyLimit);
+  const trimmedHistory = trimHistoryForAgent(history, historyLimit);
   const agentCtx: AgentContext = { ...ctx, chatHistory: trimmedHistory };
 
   const skuHint = extractSkuFromText(latestUser);

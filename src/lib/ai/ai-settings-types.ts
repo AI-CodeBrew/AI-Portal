@@ -74,14 +74,29 @@ export const AI_SETTING_DEFAULTS = {
   recoveryBundleDiscountPercent: 25,
 } as const;
 
+/** Stored in DB as 0 — full thread context (no message cap / no session reset). */
+export const UNLIMITED_CONTEXT_VALUE = 0;
+
+export const MAX_UNLIMITED_HISTORY_MESSAGES = 500;
+
+export function isUnlimitedChatHistory(limit: number | null | undefined): boolean {
+  return limit === UNLIMITED_CONTEXT_VALUE;
+}
+
+export function isUnlimitedSessionWindow(hours: number | null | undefined): boolean {
+  return hours === UNLIMITED_CONTEXT_VALUE;
+}
+
 export function clampChatHistoryLimit(n: number | null | undefined): number {
+  if (n === UNLIMITED_CONTEXT_VALUE) return UNLIMITED_CONTEXT_VALUE;
   if (n == null || !Number.isFinite(n)) return AI_SETTING_DEFAULTS.chatHistoryLimit;
   return Math.min(50, Math.max(5, Math.round(n)));
 }
 
 export function clampSessionWindowHours(n: number | null | undefined): number {
+  if (n === UNLIMITED_CONTEXT_VALUE) return UNLIMITED_CONTEXT_VALUE;
   if (n == null || !Number.isFinite(n)) return AI_SETTING_DEFAULTS.sessionWindowHours;
-  return Math.min(72, Math.max(1, Math.round(n)));
+  return Math.min(168, Math.max(1, Math.round(n)));
 }
 
 export function clampDiscountPercent(n: number | null | undefined, fallback: number): number {

@@ -5,6 +5,7 @@ import {
   DEFAULT_SHOPIFY_CONFIRM_INSTRUCTIONS,
   DEFAULT_WHATSAPP_SALES_INSTRUCTIONS,
   REPLY_LENGTH_OPTIONS,
+  UNLIMITED_CONTEXT_VALUE,
   type AiReplyLength,
   type StoreAiSettings,
 } from "@/lib/ai/ai-settings-types";
@@ -45,6 +46,7 @@ export function AiSettingsPanel() {
 
   const [chatHistoryLimit, setChatHistoryLimit] = useState("");
   const [sessionWindowHours, setSessionWindowHours] = useState("");
+  const [unlimitedMemory, setUnlimitedMemory] = useState(false);
   const [recoveryDiscountPercent, setRecoveryDiscountPercent] = useState("");
   const [recoveryBundleDiscountPercent, setRecoveryBundleDiscountPercent] =
     useState("");
@@ -76,6 +78,10 @@ export function AiSettingsPanel() {
       );
       setSessionWindowHours(
         s.sessionWindowHours != null ? String(s.sessionWindowHours) : ""
+      );
+      setUnlimitedMemory(
+        s.chatHistoryLimit === UNLIMITED_CONTEXT_VALUE &&
+          s.sessionWindowHours === UNLIMITED_CONTEXT_VALUE
       );
       setRecoveryDiscountPercent(
         s.recoveryDiscountPercent != null
@@ -125,6 +131,10 @@ export function AiSettingsPanel() {
         ? String(settings.sessionWindowHours)
         : ""
     );
+    setUnlimitedMemory(
+      settings.chatHistoryLimit === UNLIMITED_CONTEXT_VALUE &&
+        settings.sessionWindowHours === UNLIMITED_CONTEXT_VALUE
+    );
     setRecoveryDiscountPercent(
       settings.recoveryDiscountPercent != null
         ? String(settings.recoveryDiscountPercent)
@@ -171,12 +181,14 @@ export function AiSettingsPanel() {
           openingMessage: openingMessage || null,
           replyLength,
           whatsappOrderTemplateId: whatsappOrderTemplateId || null,
-          chatHistoryLimit:
-            chatHistoryLimit.trim() === ""
+          chatHistoryLimit: unlimitedMemory
+            ? UNLIMITED_CONTEXT_VALUE
+            : chatHistoryLimit.trim() === ""
               ? null
               : Number(chatHistoryLimit),
-          sessionWindowHours:
-            sessionWindowHours.trim() === ""
+          sessionWindowHours: unlimitedMemory
+            ? UNLIMITED_CONTEXT_VALUE
+            : sessionWindowHours.trim() === ""
               ? null
               : Number(sessionWindowHours),
           recoveryDiscountPercent:
@@ -207,6 +219,10 @@ export function AiSettingsPanel() {
       );
       setSessionWindowHours(
         s.sessionWindowHours != null ? String(s.sessionWindowHours) : ""
+      );
+      setUnlimitedMemory(
+        s.chatHistoryLimit === UNLIMITED_CONTEXT_VALUE &&
+          s.sessionWindowHours === UNLIMITED_CONTEXT_VALUE
       );
       setRecoveryDiscountPercent(
         s.recoveryDiscountPercent != null
@@ -482,47 +498,86 @@ export function AiSettingsPanel() {
                   Conversation memory
                 </p>
                 <p className="mt-1 text-xs text-slate-600">
-                  How much recent chat the AI remembers. Leave empty to use
-                  admin defaults
-                  {platformDefaults?.chatHistoryLimit != null
-                    ? ` (${platformDefaults.chatHistoryLimit} msgs / ${platformDefaults.sessionWindowHours ?? 2}h)`
-                    : ""}
-                  . After the timer, the AI starts a fresh session.
+                  How much chat the AI remembers. Default is admin settings
+                  {platformDefaults?.chatHistoryLimit === UNLIMITED_CONTEXT_VALUE
+                    ? " (unlimited)"
+                    : platformDefaults?.chatHistoryLimit != null
+                      ? ` (${platformDefaults.chatHistoryLimit} msgs / ${platformDefaults.sessionWindowHours ?? 2}h)`
+                      : ""}
+                  . A short window can make the bot forget products mid-deal.
                 </p>
-                <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                  <label className="block text-sm">
-                    <span className="font-medium text-slate-700">
-                      Last messages (5–50)
-                    </span>
-                    <input
-                      type="number"
-                      min={5}
-                      max={50}
-                      value={chatHistoryLimit}
-                      onChange={(e) => setChatHistoryLimit(e.target.value)}
-                      placeholder={String(
-                        platformDefaults?.chatHistoryLimit ?? 10
-                      )}
-                      className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+
+                <div className="mt-3 flex items-start gap-3">
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={unlimitedMemory}
+                    onClick={() => setUnlimitedMemory((v) => !v)}
+                    className={`relative mt-0.5 h-6 w-11 shrink-0 rounded-full transition-colors ${
+                      unlimitedMemory ? "bg-emerald-500" : "bg-slate-300"
+                    }`}
+                  >
+                    <span
+                      className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
+                        unlimitedMemory ? "translate-x-5" : "translate-x-0"
+                      }`}
                     />
-                  </label>
-                  <label className="block text-sm">
-                    <span className="font-medium text-slate-700">
-                      Fresh start after (hours)
-                    </span>
-                    <input
-                      type="number"
-                      min={1}
-                      max={72}
-                      value={sessionWindowHours}
-                      onChange={(e) => setSessionWindowHours(e.target.value)}
-                      placeholder={String(
-                        platformDefaults?.sessionWindowHours ?? 2
-                      )}
-                      className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
-                    />
-                  </label>
+                  </button>
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">
+                      Unlimited memory
+                    </p>
+                    <p className="mt-0.5 text-xs text-slate-600">
+                      Remember the full conversation — no fresh start mid-deal.
+                      Recommended for sales chats.
+                    </p>
+                  </div>
                 </div>
+
+                {!unlimitedMemory && (
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    <label className="block text-sm">
+                      <span className="font-medium text-slate-700">
+                        Last messages (5–50)
+                      </span>
+                      <input
+                        type="number"
+                        min={5}
+                        max={50}
+                        value={chatHistoryLimit}
+                        onChange={(e) => setChatHistoryLimit(e.target.value)}
+                        placeholder={String(
+                          platformDefaults?.chatHistoryLimit ===
+                            UNLIMITED_CONTEXT_VALUE
+                            ? 10
+                            : (platformDefaults?.chatHistoryLimit ?? 10)
+                        )}
+                        className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+                      />
+                    </label>
+                    <label className="block text-sm">
+                      <span className="font-medium text-slate-700">
+                        Fresh start after (hours)
+                      </span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={168}
+                        value={sessionWindowHours}
+                        onChange={(e) =>
+                          setSessionWindowHours(e.target.value)
+                        }
+                        placeholder={String(
+                          platformDefaults?.sessionWindowHours ===
+                            UNLIMITED_CONTEXT_VALUE
+                            ? 2
+                            : (platformDefaults?.sessionWindowHours ?? 2)
+                        )}
+                        className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+                      />
+                    </label>
+                  </div>
+                )}
               </div>
 
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">

@@ -7,6 +7,9 @@ import {
   clampChatHistoryLimit,
   clampDiscountPercent,
   clampSessionWindowHours,
+  UNLIMITED_CONTEXT_VALUE,
+  isUnlimitedChatHistory,
+  isUnlimitedSessionWindow,
   AI_SETTING_DEFAULTS,
   type AiPromptTemplate,
   type AiReplyLength,
@@ -242,13 +245,17 @@ export async function updateStoreAiSettings(
     payload.ai_chat_history_limit =
       input.chatHistoryLimit == null
         ? null
-        : clampChatHistoryLimit(input.chatHistoryLimit);
+        : input.chatHistoryLimit === UNLIMITED_CONTEXT_VALUE
+          ? UNLIMITED_CONTEXT_VALUE
+          : clampChatHistoryLimit(input.chatHistoryLimit);
   }
   if (input.sessionWindowHours !== undefined) {
     payload.ai_session_window_hours =
       input.sessionWindowHours == null
         ? null
-        : clampSessionWindowHours(input.sessionWindowHours);
+        : input.sessionWindowHours === UNLIMITED_CONTEXT_VALUE
+          ? UNLIMITED_CONTEXT_VALUE
+          : clampSessionWindowHours(input.sessionWindowHours);
   }
   if (input.recoveryDiscountPercent !== undefined) {
     payload.ai_recovery_discount_percent =

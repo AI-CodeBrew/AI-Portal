@@ -6,6 +6,9 @@ import {
   clampChatHistoryLimit,
   clampDiscountPercent,
   clampSessionWindowHours,
+  UNLIMITED_CONTEXT_VALUE,
+  isUnlimitedChatHistory,
+  isUnlimitedSessionWindow,
   type AiReplyLength,
   type AiTone,
   type StoreAiSettings,
@@ -192,13 +195,17 @@ export async function updatePlatformAiDefaults(
     payload.ai_chat_history_limit =
       input.chatHistoryLimit == null
         ? AI_SETTING_DEFAULTS.chatHistoryLimit
-        : clampChatHistoryLimit(input.chatHistoryLimit);
+        : input.chatHistoryLimit === UNLIMITED_CONTEXT_VALUE
+          ? UNLIMITED_CONTEXT_VALUE
+          : clampChatHistoryLimit(input.chatHistoryLimit);
   }
   if (input.sessionWindowHours !== undefined) {
     payload.ai_session_window_hours =
       input.sessionWindowHours == null
         ? AI_SETTING_DEFAULTS.sessionWindowHours
-        : clampSessionWindowHours(input.sessionWindowHours);
+        : input.sessionWindowHours === UNLIMITED_CONTEXT_VALUE
+          ? UNLIMITED_CONTEXT_VALUE
+          : clampSessionWindowHours(input.sessionWindowHours);
   }
   if (input.recoveryDiscountPercent !== undefined) {
     payload.ai_recovery_discount_percent =
@@ -297,12 +304,20 @@ export async function resolveEffectiveAiSettings(storeSettings: {
   const usingPlatformDefaults =
     !storeSettings.agentName?.trim() || !storeSettings.openingMessage?.trim();
 
-  const effectiveChatHistoryLimit = clampChatHistoryLimit(
-    storeSettings.chatHistoryLimit ?? platform.chatHistoryLimit
-  );
-  const effectiveSessionWindowHours = clampSessionWindowHours(
-    storeSettings.sessionWindowHours ?? platform.sessionWindowHours
-  );
+  const effectiveChatHistoryLimit = isUnlimitedChatHistory(
+    storeSettings.chatHistoryLimit
+  )
+    ? UNLIMITED_CONTEXT_VALUE
+    : clampChatHistoryLimit(
+        storeSettings.chatHistoryLimit ?? platform.chatHistoryLimit
+      );
+  const effectiveSessionWindowHours = isUnlimitedSessionWindow(
+    storeSettings.sessionWindowHours
+  )
+    ? UNLIMITED_CONTEXT_VALUE
+    : clampSessionWindowHours(
+        storeSettings.sessionWindowHours ?? platform.sessionWindowHours
+      );
   const effectiveRecoveryDiscountPercent = clampDiscountPercent(
     storeSettings.recoveryDiscountPercent ?? platform.recoveryDiscountPercent,
     AI_SETTING_DEFAULTS.recoveryDiscountPercent

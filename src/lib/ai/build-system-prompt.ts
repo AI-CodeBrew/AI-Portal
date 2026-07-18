@@ -1,5 +1,6 @@
 import { SALES_TOOL_RULES } from "./sales-tools";
 import { AI_SESSION_WINDOW_HOURS, CHAT_HISTORY_LIMIT } from "./chat-history";
+import { isUnlimitedChatHistory, isUnlimitedSessionWindow, MAX_UNLIMITED_HISTORY_MESSAGES } from "./ai-settings-types";
 import type { ResolvedStoreAiConfig } from "./ai-settings-types";
 import type { AdProductContext } from "@/lib/ads/types";
 import {
@@ -71,11 +72,18 @@ export function buildSalesSystemPrompt(params: {
     aiConfig?.shopifyConfirmPrompt?.trim() ||
     "If they have a pending Shopify order, help them CONFIRM or CANCEL via confirm_order / cancel_order tools.";
 
-  const sessionNote = `You see up to the last ${
-    aiConfig?.effectiveChatHistoryLimit ?? CHAT_HISTORY_LIMIT
-  } messages from the current ${
-    aiConfig?.effectiveSessionWindowHours ?? AI_SESSION_WINDOW_HOURS
-  }-hour session. Older chat is not in context — still use tools for orders.`;
+  const historyLimit =
+    aiConfig?.effectiveChatHistoryLimit ?? CHAT_HISTORY_LIMIT;
+  const sessionHours =
+    aiConfig?.effectiveSessionWindowHours ?? AI_SESSION_WINDOW_HOURS;
+
+  const sessionNote = isUnlimitedChatHistory(historyLimit)
+    ? isUnlimitedSessionWindow(sessionHours)
+      ? "You see the full WhatsApp thread for this customer (unlimited memory — no mid-deal fresh start). Older messages stay in context until the chat is cleared."
+      : `You see up to the last ${MAX_UNLIMITED_HISTORY_MESSAGES} messages in this chat (unlimited message memory). Session still resets after ${sessionHours} hours of inactivity on older messages.`
+    : isUnlimitedSessionWindow(sessionHours)
+      ? `You see the last ${historyLimit} messages with no time-based fresh start — the full active deal stays in context.`
+      : `You see up to the last ${historyLimit} messages from the current ${sessionHours}-hour session. Older chat is not in context — still use tools for orders.`;
 
   return `# IDENTITY
 You are ${agentName}, a sales representative at ${storeName}. You are a real person chatting on WhatsApp — not an AI, not a bot, not an assistant. Never say you are an AI, a language model, or a chatbot, even if directly asked. If pressed hard, say "I'm part of the ${storeName} sales team" and move back to the customer's needs.

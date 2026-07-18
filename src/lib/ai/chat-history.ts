@@ -1,5 +1,10 @@
 import { createAdminClient } from "@/lib/supabase/admin";
-import { AI_SETTING_DEFAULTS } from "./ai-settings-types";
+import {
+  AI_SETTING_DEFAULTS,
+  isUnlimitedChatHistory,
+  isUnlimitedSessionWindow,
+  MAX_UNLIMITED_HISTORY_MESSAGES,
+} from "./ai-settings-types";
 
 export const CHAT_HISTORY_LIMIT: number = AI_SETTING_DEFAULTS.chatHistoryLimit;
 
@@ -15,9 +20,8 @@ export type ChatHistoryMessage = {
 };
 
 /**
- * Latest N messages within the AI session window,
- * chronological (oldest → newest).
- * Older messages remain in the inbox until the reseller deletes the chat.
+ * Latest messages for AI context, chronological (oldest → newest).
+ * limit/windowMs of 0 = unlimited (up to MAX_UNLIMITED_HISTORY_MESSAGES).
  */
 export async function getRecentChatHistory(
   conversationId: string,
@@ -25,15 +29,25 @@ export async function getRecentChatHistory(
   windowMs = AI_SESSION_WINDOW_MS
 ): Promise<ChatHistoryMessage[]> {
   const supabase = createAdminClient();
-  const since = new Date(Date.now() - windowMs).toISOString();
+  const unlimitedHistory = isUnlimitedChatHistory(limit);
+  const unlimitedWindow = windowMs === 0;
 
-  const { data: rows } = await supabase
+  let query = supabase
     .from("whatsapp_messages")
     .select("direction, content, created_at")
     .eq("conversation_id", conversationId)
-    .gte("created_at", since)
-    .order("created_at", { ascending: false })
-    .limit(limit);
+    .order("created_at", { ascending: false });
+
+  if (!unlimitedWindow && windowMs > 0) {
+    const since = new Date(Date.now() - windowMs).toISOString();
+    query = query.gte("created_at", since);
+  }
+
+  query = query.limit(
+    unlimitedHistory ? MAX_UNLIMITED_HISTORY_MESSAGES : Math.max(1, limit)
+  );
+
+  const { data: rows } = await query;
 
   return (rows ?? [])
     .reverse()
@@ -58,6 +72,17 @@ export async function getStoreChatContextLimits(storeId: string): Promise<{
   return {
     historyLimit,
     windowHours,
-    windowMs: windowHours * 60 * 60 * 1000,
+    windowMs: isUnlimitedSessionWindow(windowHours)
+      ? 0
+      : windowHours * 60 * 60 * 1000,
   };
+}
+
+/** Trim history for LLM calls — no-op when unlimited. */
+export function trimHistoryForAgent(
+  history: ChatHistoryMessage[],
+  limit: number
+): ChatHistoryMessage[] {
+  if (isUnlimitedChatHistory(limit)) return history;
+  return history.slice(-Math.max(1, limit));
 }
