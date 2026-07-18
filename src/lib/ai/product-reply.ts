@@ -26,7 +26,12 @@ import {
   formatVariantSelectionReply,
   looksLikeVariantSelection,
   matchVariantFromMessage,
+  messageMatchesListedProductOption,
+  assistantAskedWhichVariant,
 } from "./variant-selection";
+import {
+  looksLikeCheckoutMessage,
+} from "./checkout-parse";
 
 export type SearchProduct = {
   title?: string;
@@ -608,6 +613,8 @@ export async function tryDirectCatalogProductPickReply(
   latestUserMessage: string,
   history: Array<{ role: "user" | "assistant"; content: string }> = []
 ): Promise<string | null> {
+  if (looksLikeCheckoutMessage(latestUserMessage, history)) return null;
+  if (looksLikeVariantSelection(latestUserMessage, history)) return null;
   if (!looksLikeCatalogProductPick(latestUserMessage, history)) return null;
 
   const { titles } = extractCatalogBrowseShownProducts(history);
@@ -698,12 +705,14 @@ function shouldTryDirectProductLookup(
   message: string,
   history: Array<{ role: "user" | "assistant"; content: string }> = []
 ): boolean {
+  if (looksLikeCheckoutMessage(message, history)) return false;
+  if (looksLikeVariantSelection(message, history)) return false;
+
   const route = resolveExactDirectRoute(message, history);
   return (
     route === "sku_search" ||
     route === "named_product_search" ||
-    route === "catalog_product_pick" ||
-    route === "variant_selection"
+    route === "catalog_product_pick"
   );
 }
 
@@ -741,7 +750,12 @@ export async function tryDirectVariantSelectionReply(
   if (!products.length) return null;
 
   const product = pickBestProduct(products, active);
-  if (!productHasSelectableVariants(product)) return null;
+  const hasVariants =
+    productHasSelectableVariants(product) ||
+    messageMatchesListedProductOption(latestUserMessage, history) ||
+    assistantAskedWhichVariant(history);
+
+  if (!hasVariants) return null;
 
   const variant = matchVariantFromMessage(product, latestUserMessage);
 
@@ -767,6 +781,9 @@ export async function tryDirectProductReply(
   latestUserMessage: string,
   history: Array<{ role: "user" | "assistant"; content: string }> = []
 ): Promise<{ reply: string; products: SearchProduct[] } | null> {
+  if (looksLikeCheckoutMessage(latestUserMessage, history)) return null;
+  if (looksLikeVariantSelection(latestUserMessage, history)) return null;
+
   const followUp =
     looksLikeProductFollowUp(latestUserMessage) &&
     productDiscussedInHistory(history);

@@ -13,7 +13,7 @@ const HAS_CONTACT_HINT =
   /\b(name|naam|phone|ph|mobile|whatsapp|address|addr|city|deliver)\b/i;
 
 const ASKED_FOR_DETAILS =
-  /\b(full name|share your|delivery address|reply like this|phone \(for confirmation\)|please share|i'll place the order|i'll confirm your order|discounted price|want to order|phone.*required|delivery address.*required|almost there)\b/i;
+  /\b(full name|share your|want it\?|delivery address|phone & delivery|phone and delivery|reply like this|phone \(for confirmation\)|please share|i'll place the order|i'll confirm your order|discounted price|want to order|phone.*required|delivery address.*required|almost there|confirm this order)\b/i;
 
 /** Product/catalog question — not checkout contact details. Exact patterns only. */
 export function looksLikeProductQuestion(
@@ -83,10 +83,27 @@ export function looksLikeCheckoutMessage(
     assistantAskedForCheckoutDetails(history) &&
     t.length >= 10
   ) {
-    // Only continue checkout if they're sending contact details or accepting
     if (HAS_CONTACT_HINT.test(t) || digits.length >= 10) return true;
-    if (CHECKOUT_INTENT.test(t) && !looksLikeProductQuestion(t, history ?? [])) return true;
+    if (
+      /^\d[\d\s-]{8,}\d/.test(t) &&
+      /[a-zA-Z]{2,}/.test(t) &&
+      t.includes(",")
+    ) {
+      return true;
+    }
+    if (CHECKOUT_INTENT.test(t) && !looksLikeProductQuestion(t, history ?? [])) {
+      return true;
+    }
     return false;
+  }
+
+  if (
+    /^\d[\d\s-]{8,}\d/.test(t) &&
+    /[a-zA-Z]{2,}/.test(t) &&
+    t.length >= 15 &&
+    (t.includes(",") || t.split(/\s+/).length >= 3)
+  ) {
+    return true;
   }
 
   const lines = t.split(/\n+/).map((l) => l.trim()).filter(Boolean);
@@ -117,8 +134,41 @@ function extractPhoneRaw(text: string): string {
   return "";
 }
 
+function stripLeadingPhoneFromText(text: string, phoneRaw: string): string {
+  let rest = text.trim();
+  if (!phoneRaw) return rest;
+
+  const escaped = phoneRaw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (new RegExp(`^\\s*${escaped}`, "i").test(rest)) {
+    return rest
+      .replace(new RegExp(`^\\s*${escaped}\\s*`, "i"), "")
+      .replace(/^[,.\s-]+/, "")
+      .trim();
+  }
+
+  const digits = normalizePhone(phoneRaw);
+  if (digits.length >= 8) {
+    const flex = digits.split("").join("\\D*");
+    const match = rest.match(new RegExp(`^\\s*${flex}\\s*`, "i"));
+    if (match) {
+      return rest
+        .slice(match[0].length)
+        .replace(/^[,.\s-]+/, "")
+        .trim();
+    }
+  }
+
+  return rest;
+}
+
 function extractAddress(text: string, phone: string, customerName: string): string {
   const t = text.replace(/\r/g, "\n").trim();
+  const phoneRaw = phone || extractPhoneRaw(t);
+  const afterPhone = stripLeadingPhoneFromText(t.replace(/\n/g, ", "), phoneRaw);
+  if (afterPhone.length >= 4 && afterPhone !== t.replace(/\n/g, ", ")) {
+    return afterPhone;
+  }
+
   const lines = t
     .split("\n")
     .map((l) => l.trim())

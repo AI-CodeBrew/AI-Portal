@@ -27,6 +27,11 @@ import {
 } from "./greeting-reply";
 import { resolveExactDirectRoute } from "./exact-routes";
 import { catalogBrowseActiveInHistory } from "@/lib/products/products-service";
+import { looksLikeCheckoutMessage } from "./checkout-parse";
+import {
+  looksLikeVariantSelection,
+  formatVariantOptionReprompt,
+} from "./variant-selection";
 
 export type { AgentContext } from "./sales-tools";
 
@@ -103,7 +108,13 @@ async function tryExactDirectReply(
       return tryDirectOffTopicReply(ctx, latestUser);
     }
     case "variant_selection": {
-      return tryDirectVariantSelectionReply(ctx, latestUser, history);
+      const variant = await tryDirectVariantSelectionReply(
+        ctx,
+        latestUser,
+        history
+      );
+      if (variant) return variant;
+      return formatVariantOptionReprompt(history);
     }
     case "sku_search":
     case "named_product_search": {
@@ -199,6 +210,34 @@ export async function runSalesAgent(
     if (catalogPick) return catalogPick;
   } catch (err) {
     console.error("[run-sales-agent] catalog product pick fallback failed:", err);
+  }
+
+  try {
+    if (looksLikeCheckoutMessage(latestUser, history)) {
+      const checkout = await tryDirectCheckoutReply(
+        enrichedCtx,
+        latestUser,
+        history
+      );
+      if (checkout) return checkout;
+    }
+  } catch (err) {
+    console.error("[run-sales-agent] checkout fallback failed:", err);
+  }
+
+  try {
+    if (looksLikeVariantSelection(latestUser, history)) {
+      const variant = await tryDirectVariantSelectionReply(
+        enrichedCtx,
+        latestUser,
+        history
+      );
+      if (variant) return variant;
+      const reprompt = formatVariantOptionReprompt(history);
+      if (reprompt) return reprompt;
+    }
+  } catch (err) {
+    console.error("[run-sales-agent] variant fallback failed:", err);
   }
 
   try {

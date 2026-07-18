@@ -5,7 +5,7 @@ import {
   looksLikeObjectionPhrase,
   productSearchTokens,
 } from "@/lib/products/products-service";
-import { parseCheckoutDetails } from "./checkout-parse";
+import { parseCheckoutDetails, looksLikeCheckoutMessage } from "./checkout-parse";
 import { looksLikeCatalogProductPick } from "./catalog-browse-pick";
 import {
   looksLikeHowAreYou,
@@ -73,7 +73,9 @@ export function resolveExactDirectRoute(
   const t = message.trim();
   if (t.length < 2) return null;
 
-  if (parseCheckoutDetails(t)) return "checkout";
+  if (parseCheckoutDetails(t) || looksLikeCheckoutMessage(t, history)) {
+    return "checkout";
+  }
 
   if (looksLikeCatalogBrowseMoreRequest(t, history)) return "catalog_more";
   if (looksLikeCatalogBrowseRequest(t)) return "catalog_browse";

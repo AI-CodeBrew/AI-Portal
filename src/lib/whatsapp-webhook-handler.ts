@@ -2,11 +2,19 @@ import { NextRequest, NextResponse } from "next/server";
 import { verifyHubSignature256 } from "@/lib/crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { runSalesAgent, isSalesAgentConfigured } from "@/lib/ai/run-sales-agent";
+import type { AgentContext } from "@/lib/ai/sales-tools";
 import {
   tryDirectProductImageReply,
   tryDirectProductReply,
   looksLikeProductInquiry,
+  tryDirectVariantSelectionReply,
 } from "@/lib/ai/product-reply";
+import { tryDirectCheckoutReply } from "@/lib/ai/checkout-reply";
+import { looksLikeCheckoutMessage } from "@/lib/ai/checkout-parse";
+import {
+  looksLikeVariantSelection,
+  formatVariantOptionReprompt,
+} from "@/lib/ai/variant-selection";
 import { getRecentChatHistory, getStoreChatContextLimits } from "@/lib/ai/chat-history";
 import {
   getAiSessionResetAt,
@@ -113,6 +121,47 @@ async function sendReply(
     console.error("[whatsapp-webhook] sendWhatsAppText failed:", error);
     return { ok: false, error };
   }
+}
+
+async function resolveContextualDirectReply(
+  agentCtx: AgentContext,
+  inboundText: string,
+  chatHistory: Array<{ role: "user" | "assistant"; content: string }>,
+  greetingCtx: AgentContext
+): Promise<string> {
+  const imageReply = await tryDirectProductImageReply(
+    agentCtx,
+    inboundText,
+    chatHistory
+  );
+  if (imageReply) return imageReply;
+
+  if (looksLikeCheckoutMessage(inboundText, chatHistory)) {
+    const checkout = await tryDirectCheckoutReply(
+      agentCtx,
+      inboundText,
+      chatHistory
+    );
+    if (checkout) return checkout;
+  }
+
+  if (looksLikeVariantSelection(inboundText, chatHistory)) {
+    const variant = await tryDirectVariantSelectionReply(
+      agentCtx,
+      inboundText,
+      chatHistory
+    );
+    if (variant) return variant;
+    const reprompt = formatVariantOptionReprompt(chatHistory);
+    if (reprompt) return reprompt;
+  }
+
+  const direct = await tryDirectProductReply(agentCtx, inboundText, chatHistory);
+  return (
+    direct?.reply ??
+    tryDirectOffTopicReply(greetingCtx, inboundText) ??
+    buildCasualGreetingReply(greetingCtx)
+  );
 }
 
 export async function handleWhatsAppWebhookVerify(
@@ -545,24 +594,12 @@ export async function handleWhatsAppWebhookMessage(
                   };
                   const aiSettings = await resolveStoreAiConfig(activeStore.id);
                   const greetingCtx = { ...agentCtx, aiConfig: aiSettings };
-                  const imageReply = await tryDirectProductImageReply(
+                  replyText = await resolveContextualDirectReply(
                     agentCtx,
                     inboundText,
-                    chatHistory
+                    chatHistory,
+                    greetingCtx
                   );
-                  if (imageReply) {
-                    replyText = imageReply;
-                  } else {
-                    const direct = await tryDirectProductReply(
-                      agentCtx,
-                      inboundText,
-                      chatHistory
-                    );
-                    replyText =
-                      direct?.reply ??
-                      tryDirectOffTopicReply(greetingCtx, inboundText) ??
-                      buildCasualGreetingReply(greetingCtx);
-                  }
                 } catch (fallbackErr) {
                   console.error(
                     "[whatsapp-webhook] direct product fallback failed:",
@@ -598,24 +635,12 @@ export async function handleWhatsAppWebhookMessage(
                 adProductContext,
               };
               const aiSettings = await resolveStoreAiConfig(activeStore.id);
-              const imageReply = await tryDirectProductImageReply(
-                agentCtx,
+              replyText = await resolveContextualDirectReply(
+                { ...agentCtx, aiConfig: aiSettings },
                 inboundText,
-                chatHistory
+                chatHistory,
+                { ...agentCtx, aiConfig: aiSettings }
               );
-              if (imageReply) {
-                replyText = imageReply;
-              } else {
-                const direct = await tryDirectProductReply(
-                  agentCtx,
-                  inboundText,
-                  chatHistory
-                );
-                replyText =
-                  direct?.reply ??
-                  tryDirectOffTopicReply({ ...agentCtx, aiConfig: aiSettings }, inboundText) ??
-                  buildCasualGreetingReply({ ...agentCtx, aiConfig: aiSettings });
-              }
             }
           } finally {
             stopTypingRefresh?.();

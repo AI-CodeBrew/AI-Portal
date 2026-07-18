@@ -79,6 +79,18 @@ export function messageMatchesListedProductOption(
   );
 }
 
+/** Re-prompt when the customer picked an option we didn't match. */
+export function formatVariantOptionReprompt(
+  history: Array<{ role: "user" | "assistant"; content: string }>
+): string | null {
+  const listed = listedOptionValuesInHistory(history);
+  if (!listed.length) return null;
+  const labels = listed.map(
+    (value) => value.charAt(0).toUpperCase() + value.slice(1)
+  );
+  return `Please reply with one of the options listed above — ${labels.join(", ")}.`;
+}
+
 /** User is picking a color/size/variant for a product already shown in chat. */
 export function looksLikeVariantSelection(
   message: string,
@@ -138,18 +150,33 @@ export function matchVariantFromMessage(
   product: ProductWithVariants,
   message: string
 ): VariantRow | null {
+  const msgLower = message.trim().toLowerCase();
   const tokens = selectionTokens(message);
-  if (!tokens.length) return null;
-
-  const realVariants = (product.variants ?? []).filter((v) =>
+  const allVariants = product.variants ?? [];
+  const realVariants = allVariants.filter((v) =>
     isRealVariantTitle(v.title ?? null)
   );
-  if (!realVariants.length) return null;
+  const candidates = realVariants.length ? realVariants : allVariants;
+  if (!candidates.length) return null;
+
+  for (const variant of candidates) {
+    for (const value of Object.values(variant.option_values ?? {})) {
+      const valLower = value.toLowerCase();
+      if (valLower === msgLower || tokens.some((t) => valLower.includes(t) || t.includes(valLower))) {
+        return variant;
+      }
+    }
+  }
+
+  if (!tokens.length && msgLower.length >= 2) {
+    tokens.push(msgLower);
+  }
+  if (!tokens.length) return null;
 
   let best: VariantRow | null = null;
   let bestScore = 0;
 
-  for (const variant of realVariants) {
+  for (const variant of candidates) {
     const hay = variantHaystack(variant);
     let score = 0;
     for (const token of tokens) {
@@ -170,10 +197,13 @@ export function matchVariantFromMessage(
   for (const opt of product.options ?? []) {
     for (const value of opt.values ?? []) {
       const valLower = value.toLowerCase();
-      if (!tokens.some((t) => valLower.includes(t) || t.includes(valLower))) {
-        if (valLower !== message.trim().toLowerCase()) continue;
+      if (
+        valLower !== msgLower &&
+        !tokens.some((t) => valLower.includes(t) || t.includes(valLower))
+      ) {
+        continue;
       }
-      const match = realVariants.find((v) => {
+      const match = candidates.find((v) => {
         const hay = variantHaystack(v);
         return hay.includes(valLower);
       });
