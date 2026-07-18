@@ -1,4 +1,5 @@
 import { isRealVariantTitle } from "@/lib/products/variant-titles";
+import { looksLikeCatalogProductPick } from "./catalog-browse-pick";
 
 type VariantRow = {
   id?: string;
@@ -34,9 +35,11 @@ export function assistantAskedWhichVariant(
     .map((m) => m.content)
     .join("\n");
   return (
-    /which (color|colour|size|variant|one)\b/i.test(recent) ||
+    /which (color|colour|size|variant|option)\b/i.test(recent) ||
     /which size\/color/i.test(recent) ||
+    /which version of/i.test(recent) ||
     /Options:\s*(Color|Colour|Size)/i.test(recent) ||
+    /Reply with the color or size/i.test(recent) ||
     /comes in:/i.test(recent)
   );
 }
@@ -58,13 +61,20 @@ export function looksLikeVariantSelection(
   );
   if (!discussed) return false;
 
+  if (looksLikeCatalogProductPick(t, history)) return false;
+
   if (assistantAskedWhichVariant(history) && t.split(/\s+/).length <= 6) {
     return true;
   }
 
   if (!VARIANT_WORDS.test(t)) return false;
 
-  if (/\b(want|order|buy|take|get|need)\b/i.test(t)) return true;
+  if (
+    assistantAskedWhichVariant(history) &&
+    /\b(want|order|buy|take|get|need)\b/i.test(t)
+  ) {
+    return true;
+  }
   if (/\b(in|the)\s+\w+\s+(color|colour|size)\b/i.test(t)) return true;
   return false;
 }

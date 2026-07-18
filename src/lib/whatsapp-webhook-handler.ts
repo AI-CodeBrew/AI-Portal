@@ -8,6 +8,10 @@ import {
   looksLikeProductInquiry,
 } from "@/lib/ai/product-reply";
 import { getRecentChatHistory, getStoreChatContextLimits } from "@/lib/ai/chat-history";
+import {
+  getAiSessionResetAt,
+  resolveAiContextSinceIso,
+} from "@/lib/ai/session-reset";
 import { quotaLimitMessage } from "@/lib/ai/plans";
 import { tryConsumeAiQuota } from "@/lib/ai/quota";
 import {
@@ -254,6 +258,11 @@ export async function handleWhatsAppWebhookMessage(
             continue;
           }
 
+          const aiSessionResetAt = await getAiSessionResetAt(
+            activeStore.id,
+            customerPhone
+          );
+
           let { data: conversation } = await supabase
             .from("whatsapp_conversations")
             .select("*")
@@ -266,6 +275,22 @@ export async function handleWhatsAppWebhookMessage(
 
           let isNewConversation = false;
 
+          if (
+            conversation &&
+            aiSessionResetAt &&
+            new Date(String(conversation.created_at)) <
+              new Date(aiSessionResetAt)
+          ) {
+            await supabase
+              .from("whatsapp_conversations")
+              .update({
+                status: "closed",
+                updated_at: new Date().toISOString(),
+              })
+              .eq("id", conversation.id);
+            conversation = null;
+          }
+
           if (!conversation) {
             const { data: newConv } = await supabase
               .from("whatsapp_conversations")
@@ -273,6 +298,8 @@ export async function handleWhatsAppWebhookMessage(
                 store_id: activeStore.id,
                 customer_phone: customerPhone,
                 status: "ai_handling",
+                ai_reply_count: 0,
+                ai_exhausted: false,
               })
               .select("*")
               .single();
@@ -281,6 +308,11 @@ export async function handleWhatsAppWebhookMessage(
           }
 
           if (!conversation) continue;
+
+          const aiContextSince = resolveAiContextSinceIso(
+            String(conversation.created_at),
+            aiSessionResetAt
+          );
 
           const inboundPreview = inboundMessagePreview(
             msg.type,
@@ -477,7 +509,8 @@ export async function handleWhatsAppWebhookMessage(
                   const chatHistory = await getRecentChatHistory(
                     conversation.id,
                     chatLimits.historyLimit,
-                    chatLimits.windowMs
+                    chatLimits.windowMs,
+                    aiContextSince
                   );
 
                   replyText = await runSalesAgent(
@@ -500,7 +533,8 @@ export async function handleWhatsAppWebhookMessage(
                   const chatHistory = await getRecentChatHistory(
                     conversation.id,
                     chatLimits.historyLimit,
-                    chatLimits.windowMs
+                    chatLimits.windowMs,
+                    aiContextSince
                   );
                   const agentCtx = {
                     store: activeStore,
@@ -553,7 +587,8 @@ export async function handleWhatsAppWebhookMessage(
               const chatHistory = await getRecentChatHistory(
                 conversation.id,
                 chatLimits.historyLimit,
-                chatLimits.windowMs
+                chatLimits.windowMs,
+                aiContextSince
               );
               const agentCtx = {
                 store: activeStore,

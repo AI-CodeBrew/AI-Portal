@@ -7,8 +7,6 @@ import {
   productSearchTokens,
   sampleActiveCatalogProducts,
   skuMatchKey,
-  CATALOG_BROWSE_INTRO,
-  CATALOG_BROWSE_MORE_INTRO,
 } from "@/lib/products/products-service";
 import {
   isPlaceholderVariantTitle,
@@ -19,6 +17,11 @@ import { getShopCurrency, listShopifyCatalogProducts } from "@/lib/shopify";
 import { formatMoney } from "@/lib/currency";
 import { executeSalesTool, type AgentContext } from "./sales-tools";
 import { resolveExactDirectRoute } from "./exact-routes";
+import {
+  extractCatalogBrowseShownProducts,
+  looksLikeCatalogProductPick,
+  pickBestShownCatalogTitle,
+} from "./catalog-browse-pick";
 import {
   formatVariantSelectionReply,
   looksLikeVariantSelection,
@@ -443,43 +446,6 @@ export function formatProductsReply(products: SearchProduct[]): string {
   return `${blocks[0]}\n\n${productCloseLine(products[0]!)}`;
 }
 
-function extractCatalogBrowseShownProducts(
-  history: Array<{ role: "user" | "assistant"; content: string }>
-): { skus: string[]; titles: string[] } {
-  const skus = new Set<string>();
-  const titles = new Set<string>();
-
-  for (const msg of history) {
-    if (msg.role !== "assistant") continue;
-    if (
-      !CATALOG_BROWSE_INTRO.test(msg.content) &&
-      !CATALOG_BROWSE_MORE_INTRO.test(msg.content)
-    ) {
-      continue;
-    }
-
-    for (const m of msg.content.matchAll(
-      /(?:^|\n)([^\n]+?)\s*(?:—|-)\s*(?:Rs\.?|PKR|AED|\$|€)/gim
-    )) {
-      const title = m[1]
-        ?.replace(/\*([^*]+)\*/g, "$1")
-        .replace(/^\[Ref:[^\]]+\]\s*/i, "")
-        .replace(/^\[Image:[^\]]+\]\s*/i, "")
-        .trim();
-      if (title && title.length >= 2 && title.length <= 120) {
-        titles.add(title);
-      }
-    }
-
-    for (const m of msg.content.matchAll(/\bSKU:\s*([^\n]+)/gi)) {
-      const sku = m[1]?.trim();
-      if (sku) skus.add(sku);
-    }
-  }
-
-  return { skus: [...skus], titles: [...titles] };
-}
-
 function formatCatalogBrowseReply(products: SearchProduct[]): string {
   const blocks = products.slice(0, 2).map((p) => formatSingleProductBlock(p));
   const pickLine =
@@ -636,6 +602,45 @@ export async function tryDirectCatalogBrowseReply(
   return built.reply;
 }
 
+/** Customer picked a product from a recent catalog browse reply. */
+export async function tryDirectCatalogProductPickReply(
+  ctx: AgentContext,
+  latestUserMessage: string,
+  history: Array<{ role: "user" | "assistant"; content: string }> = []
+): Promise<string | null> {
+  if (!looksLikeCatalogProductPick(latestUserMessage, history)) return null;
+
+  const { titles } = extractCatalogBrowseShownProducts(history);
+  const query =
+    pickBestShownCatalogTitle(latestUserMessage, titles) ||
+    extractProductSearchQuery(latestUserMessage);
+  if (!query) return null;
+
+  const { result } = await executeSalesTool(
+    "search_products",
+    { query },
+    ctx
+  );
+  const products = (
+    result && typeof result === "object" && "products" in result
+      ? (result as { products?: SearchProduct[] }).products
+      : []
+  ) as SearchProduct[];
+
+  const relevant = filterRelevantProducts(products, query);
+  if (!relevant.length) {
+    return formatProductNotFoundReply(query);
+  }
+
+  const product = pickBestProduct(relevant, {
+    title: query,
+    sku: null,
+    ref: null,
+  });
+
+  return `${formatSingleProductBlock(product)}\n\n${productCloseLine(product)}`;
+}
+
 function formatProductNotFoundReply(query: string): string {
   const label = query.trim() || "that";
   return [
@@ -697,6 +702,7 @@ function shouldTryDirectProductLookup(
   return (
     route === "sku_search" ||
     route === "named_product_search" ||
+    route === "catalog_product_pick" ||
     route === "variant_selection"
   );
 }

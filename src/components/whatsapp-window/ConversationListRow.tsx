@@ -16,11 +16,17 @@ export function ConversationListRow({
   selected,
   onSelect,
   onFollowUpSent,
+  selectionMode = false,
+  checked = false,
+  onToggleSelect,
 }: {
   conv: WhatsappConversation;
   selected: boolean;
   onSelect: () => void;
   onFollowUpSent?: () => void;
+  selectionMode?: boolean;
+  checked?: boolean;
+  onToggleSelect?: () => void;
 }) {
   const windowStatus = useWindowCountdown(
     conv.last_customer_message_at,
@@ -30,14 +36,33 @@ export function ConversationListRow({
   return (
     <div
       className={`flex w-full items-start gap-1 border-b border-slate-200 transition-colors hover:bg-white ${
-        selected
+        selected && !selectionMode
           ? "border-l-4 border-l-blue-600 bg-white"
-          : "border-l-4 border-l-transparent"
+          : checked
+            ? "border-l-4 border-l-red-400 bg-red-50/40"
+            : "border-l-4 border-l-transparent"
       }`}
     >
+      {selectionMode ? (
+        <label className="flex shrink-0 items-start px-3 py-3">
+          <input
+            type="checkbox"
+            checked={checked}
+            onChange={() => onToggleSelect?.()}
+            className="mt-1 h-4 w-4 rounded border-slate-300 text-red-600 focus:ring-red-500"
+            aria-label={`Select chat with ${displayName(conv)}`}
+          />
+        </label>
+      ) : null}
       <button
         type="button"
-        onClick={onSelect}
+        onClick={() => {
+          if (selectionMode) {
+            onToggleSelect?.();
+            return;
+          }
+          onSelect();
+        }}
         className="min-w-0 flex-1 px-4 py-3 text-left"
       >
         <p className="truncate text-sm font-semibold text-slate-900">
@@ -61,14 +86,16 @@ export function ConversationListRow({
           </span>
         </div>
       </button>
-      <div className="shrink-0 py-3 pr-2">
-        <FollowUpButton
-          conversation={conv}
-          windowStatus={windowStatus}
-          variant="compact"
-          onSent={onFollowUpSent}
-        />
-      </div>
+      {!selectionMode ? (
+        <div className="shrink-0 py-3 pr-2">
+          <FollowUpButton
+            conversation={conv}
+            windowStatus={windowStatus}
+            variant="compact"
+            onSent={onFollowUpSent}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }

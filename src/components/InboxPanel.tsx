@@ -123,6 +123,8 @@ export function InboxPanel() {
   const [loading, setLoading] = useState(true);
   const [sendError, setSendError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(search.trim()), 250);
@@ -149,6 +151,12 @@ export function InboxPanel() {
       setMessages([]);
     }
   }, [filter, debouncedSearch]);
+
+  useEffect(() => {
+    setSelectedIds((prev) =>
+      prev.filter((id) => conversations.some((c) => c.id === id))
+    );
+  }, [conversations]);
 
   useEffect(() => {
     void fetchConversations();
@@ -249,12 +257,41 @@ export function InboxPanel() {
 
   async function deleteConversation() {
     if (!selectedId) return;
-    const conv = conversations.find((c) => c.id === selectedId);
-    if (!conv) return;
-    const label = displayName(conv);
+    await deleteConversationsByIds([selectedId]);
+  }
+
+  function toggleConversationSelection(id: string) {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  }
+
+  function selectAllConversations() {
+    setSelectedIds(conversations.map((c) => c.id));
+  }
+
+  function exitSelectionMode() {
+    setSelectionMode(false);
+    setSelectedIds([]);
+  }
+
+  async function deleteConversationsByIds(ids: string[]) {
+    if (!ids.length) return;
+
+    const count = ids.length;
+    const label =
+      count === 1
+        ? (() => {
+            const conv = conversations.find((c) => c.id === ids[0]);
+            return conv ? displayName(conv) : "this chat";
+          })()
+        : `${count} chats`;
+
     if (
       !confirm(
-        `Delete chat with ${label}? This removes the conversation and all messages from the portal. It does not delete messages on the customer's WhatsApp.`
+        count === 1
+          ? `Delete chat with ${label}? This removes the conversation from the portal (not from the customer's WhatsApp). Their next message starts a fresh AI conversation.`
+          : `Delete ${label}? This removes them from the portal (not from customers' WhatsApp). Their next messages start fresh AI conversations.`
       )
     ) {
       return;
@@ -263,32 +300,41 @@ export function InboxPanel() {
     setDeleting(true);
     setSendError(null);
     try {
-      const res = await fetch(`/api/inbox/conversations/${selectedId}`, {
-        method: "DELETE",
+      const res = await fetch("/api/inbox/conversations/bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         throw new Error(
-          typeof data.error === "string" ? data.error : "Failed to delete chat"
+          typeof data.error === "string"
+            ? data.error
+            : "Failed to delete chats"
         );
       }
-      setSelectedId(null);
-      setMessages([]);
+
+      if (selectedId && ids.includes(selectedId)) {
+        setSelectedId(null);
+        setMessages([]);
+      }
+
+      setSelectedIds([]);
+      setSelectionMode(false);
       await fetchConversations();
     } catch (err) {
-      setSendError(err instanceof Error ? err.message : "Failed to delete chat");
+      setSendError(err instanceof Error ? err.message : "Failed to delete chats");
     } finally {
       setDeleting(false);
     }
   }
 
+  async function deleteSelectedConversations() {
+    await deleteConversationsByIds(selectedIds);
+  }
+
   const selected = conversations.find((c) => c.id === selectedId);
   const isManual = selected?.status === "human_handoff";
-
-  const selectedWindowStatus = useWindowCountdown(
-    selected?.last_customer_message_at,
-    selected?.window_type ?? "service"
-  );
 
   const emptyHint = useMemo(() => {
     if (debouncedSearch) {
@@ -299,6 +345,14 @@ export function InboxPanel() {
     }
     return "Send a test message to your business number. If nothing appears, check Integrations → WhatsApp — your webhook URL in Meta must point to your live site (not localhost).";
   }, [debouncedSearch, filter]);
+
+  const allConversationsSelected =
+    conversations.length > 0 && selectedIds.length === conversations.length;
+
+  const selectedWindowStatus = useWindowCountdown(
+    selected?.last_customer_message_at,
+    selected?.window_type ?? "service"
+  );
 
   return (
     <div className="space-y-4">
@@ -331,6 +385,12 @@ export function InboxPanel() {
         </div>
       </div>
 
+      {sendError && !selected ? (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-800">
+          {sendError}
+        </div>
+      ) : null}
+
       {loading && conversations.length === 0 ? (
         <p className="text-slate-600">Loading inbox...</p>
       ) : conversations.length === 0 ? (
@@ -342,7 +402,61 @@ export function InboxPanel() {
         </div>
       ) : (
         <div className="flex h-[calc(100vh-16rem)] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-          <div className="w-80 shrink-0 overflow-y-auto border-r border-slate-200 bg-slate-50">
+          <div className="flex w-80 shrink-0 flex-col border-r border-slate-200 bg-slate-50">
+            <div className="border-b border-slate-200 bg-white px-3 py-2">
+              {selectionMode ? (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="flex items-center gap-2 text-xs font-medium text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={allConversationsSelected}
+                        onChange={() => {
+                          if (allConversationsSelected) {
+                            setSelectedIds([]);
+                          } else {
+                            selectAllConversations();
+                          }
+                        }}
+                        className="h-4 w-4 rounded border-slate-300 text-red-600 focus:ring-red-500"
+                      />
+                      Select all
+                    </label>
+                    <span className="text-xs text-slate-500">
+                      {selectedIds.length} selected
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void deleteSelectedConversations()}
+                      disabled={deleting || selectedIds.length === 0}
+                      className="rounded-lg bg-red-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+                    >
+                      {deleting ? "Deleting..." : "Delete selected"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={exitSelectionMode}
+                      disabled={deleting}
+                      className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setSelectionMode(true)}
+                  disabled={deleting}
+                  className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  Select multiple
+                </button>
+              )}
+            </div>
+            <div className="flex-1 overflow-y-auto">
             {conversations.map((conv) => (
               <ConversationListRow
                 key={conv.id}
@@ -350,8 +464,12 @@ export function InboxPanel() {
                 selected={selectedId === conv.id}
                 onSelect={() => setSelectedId(conv.id)}
                 onFollowUpSent={() => void refreshAfterSend()}
+                selectionMode={selectionMode}
+                checked={selectedIds.includes(conv.id)}
+                onToggleSelect={() => toggleConversationSelection(conv.id)}
               />
             ))}
+            </div>
           </div>
 
           <div className="flex flex-1 flex-col bg-white">

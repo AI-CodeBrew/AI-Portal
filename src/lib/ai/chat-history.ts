@@ -26,7 +26,8 @@ export type ChatHistoryMessage = {
 export async function getRecentChatHistory(
   conversationId: string,
   limit = CHAT_HISTORY_LIMIT,
-  windowMs = AI_SESSION_WINDOW_MS
+  windowMs = AI_SESSION_WINDOW_MS,
+  sinceIso?: string | null
 ): Promise<ChatHistoryMessage[]> {
   const supabase = createAdminClient();
   const unlimitedHistory = isUnlimitedChatHistory(limit);
@@ -37,6 +38,10 @@ export async function getRecentChatHistory(
     .select("direction, content, created_at")
     .eq("conversation_id", conversationId)
     .order("created_at", { ascending: false });
+
+  if (sinceIso) {
+    query = query.gte("created_at", sinceIso);
+  }
 
   if (!unlimitedWindow && windowMs > 0) {
     const since = new Date(Date.now() - windowMs).toISOString();

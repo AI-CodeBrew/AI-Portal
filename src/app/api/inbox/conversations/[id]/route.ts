@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireResellerStore } from "@/lib/auth";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { deleteStoreConversations } from "@/lib/inbox/conversation-delete";
 
 export async function DELETE(
   _request: NextRequest,
@@ -14,32 +14,10 @@ export async function DELETE(
       return NextResponse.json({ error: "Conversation id required" }, { status: 400 });
     }
 
-    const supabase = createAdminClient();
+    const result = await deleteStoreConversations(storeId, [id]);
 
-    const { data: conversation, error: findError } = await supabase
-      .from("whatsapp_conversations")
-      .select("id")
-      .eq("id", id)
-      .eq("store_id", storeId)
-      .maybeSingle();
-
-    if (findError) {
-      return NextResponse.json({ error: findError.message }, { status: 500 });
-    }
-
-    if (!conversation) {
+    if (result.deletedCount === 0) {
       return NextResponse.json({ error: "Conversation not found" }, { status: 404 });
-    }
-
-    // Messages cascade-delete via FK on whatsapp_messages.conversation_id
-    const { error: deleteError } = await supabase
-      .from("whatsapp_conversations")
-      .delete()
-      .eq("id", id)
-      .eq("store_id", storeId);
-
-    if (deleteError) {
-      return NextResponse.json({ error: deleteError.message }, { status: 500 });
     }
 
     return NextResponse.json({ ok: true });

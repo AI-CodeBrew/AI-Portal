@@ -6,6 +6,7 @@ import {
   productSearchTokens,
 } from "@/lib/products/products-service";
 import { parseCheckoutDetails } from "./checkout-parse";
+import { looksLikeCatalogProductPick } from "./catalog-browse-pick";
 import {
   looksLikeHowAreYou,
   looksLikeOffTopicChat,
@@ -18,6 +19,7 @@ export type ExactDirectRoute =
   | "checkout"
   | "catalog_browse"
   | "catalog_more"
+  | "catalog_product_pick"
   | "sku_search"
   | "named_product_search"
   | "variant_selection"
@@ -26,7 +28,7 @@ export type ExactDirectRoute =
   | "off_topic";
 
 const EXPLICIT_NAMED_PRODUCT_ASK =
-  /\b(?:do you have|have you got|got any|how much is|how much for|what(?:'s| is) the price of|price of|tell me about|details (?:on|about|for)|looking for|searching for|i want (?:to buy|info on)|need info on)\b[\s,:-]*(.+)/i;
+  /\b(?:do you have|have you got|got any|how much is|how much for|what(?:'s| is) the price of|price of|tell me about|details (?:on|about|for)|looking for|searching for|i want(?:\s+(?:to buy|info on|the|a|an))?|need info on|i(?:'ll| will) take|give me)\b[\s,:-]*(.+)/i;
 
 const NAMED_PRODUCT_FILLER = new Set([
   "product",
@@ -75,6 +77,8 @@ export function resolveExactDirectRoute(
 
   if (looksLikeCatalogBrowseMoreRequest(t, history)) return "catalog_more";
   if (looksLikeCatalogBrowseRequest(t)) return "catalog_browse";
+
+  if (looksLikeCatalogProductPick(t, history)) return "catalog_product_pick";
 
   if (extractSkuFromText(t)) return "sku_search";
 

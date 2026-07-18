@@ -15,6 +15,7 @@ import {
   tryDirectProductReply,
   tryDirectVariantSelectionReply,
   tryDirectCatalogBrowseReply,
+  tryDirectCatalogProductPickReply,
 } from "./product-reply";
 import { tryDirectCheckoutReply } from "./checkout-reply";
 import { tryDirectSalesRecoveryReply } from "./sales-recovery";
@@ -25,6 +26,7 @@ import {
   tryDirectOffTopicReply,
 } from "./greeting-reply";
 import { resolveExactDirectRoute } from "./exact-routes";
+import { catalogBrowseActiveInHistory } from "@/lib/products/products-service";
 
 export type { AgentContext } from "./sales-tools";
 
@@ -87,6 +89,9 @@ async function tryExactDirectReply(
     case "catalog_browse":
     case "catalog_more": {
       return tryDirectCatalogBrowseReply(ctx, latestUser, history);
+    }
+    case "catalog_product_pick": {
+      return tryDirectCatalogProductPickReply(ctx, latestUser, history);
     }
     case "greeting_only": {
       return tryDirectGreetingReply(ctx, latestUser);
@@ -183,6 +188,28 @@ export async function runSalesAgent(
     } catch (err) {
       console.error("[run-sales-agent] Anthropic agent error:", err);
     }
+  }
+
+  try {
+    const catalogPick = await tryDirectCatalogProductPickReply(
+      enrichedCtx,
+      latestUser,
+      history
+    );
+    if (catalogPick) return catalogPick;
+  } catch (err) {
+    console.error("[run-sales-agent] catalog product pick fallback failed:", err);
+  }
+
+  try {
+    const direct = await tryDirectProductReply(enrichedCtx, latestUser, history);
+    if (direct?.reply) return direct.reply;
+  } catch (err) {
+    console.error("[run-sales-agent] direct product fallback failed:", err);
+  }
+
+  if (catalogBrowseActiveInHistory(history)) {
+    return "Which product from the list did you mean? Reply with the name (e.g. Audionic ENC) and I'll pull it up.";
   }
 
   return buildCasualGreetingReply(enrichedCtx);
