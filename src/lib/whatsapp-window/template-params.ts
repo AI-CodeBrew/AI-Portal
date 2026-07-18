@@ -1,4 +1,5 @@
 import { formatMoney } from "@/lib/currency";
+import type { TemplateProductContext } from "@/lib/inbox/template-product-context";
 
 function formatOrderSummaryParams(
   orderNumber: string,
@@ -22,6 +23,14 @@ export type TemplateContext = {
   total?: number | null;
   currency?: string | null;
   sku?: string | null;
+  product?: TemplateProductContext | null;
+};
+
+export type TemplateRowForSend = {
+  body_text: string;
+  header_format?: string | null;
+  button_type?: string | null;
+  button_url_pattern?: string | null;
 };
 
 function countBodyVariables(bodyText: string): number {
@@ -34,7 +43,7 @@ function countBodyVariables(bodyText: string): number {
   return max;
 }
 
-/** Fill {{1}}, {{2}}, … from conversation / order context. */
+/** Fill {{1}}, {{2}}, … from conversation / order / product context. */
 export function buildTemplateBodyParams(
   bodyText: string,
   context: TemplateContext
@@ -42,22 +51,31 @@ export function buildTemplateBodyParams(
   const varCount = countBodyVariables(bodyText);
   if (varCount === 0) return [];
 
+  const product = context.product;
   const items = context.items ?? [];
   const orderNumber = context.orderNumber ?? "your order";
   const total = context.total ?? 0;
-  const defaults = formatOrderSummaryParams(
+  const orderDefaults = formatOrderSummaryParams(
     orderNumber,
     items,
     total,
     context.currency
   );
 
+  const productTitle = product?.title ?? orderDefaults[1] ?? "our product";
+  const productPrice = product?.priceFormatted ?? orderDefaults[2] ?? String(total);
+  const productLine = product
+    ? `${product.title}${product.priceFormatted ? ` — ${product.priceFormatted}` : ""}`
+    : orderDefaults[1] ?? orderDefaults[0];
+
   const pool = [
     context.customerName?.trim() || "there",
-    context.sku?.trim() || (defaults[1] ?? defaults[0]),
-    defaults[2] ?? String(total),
-    defaults[0],
-    context.currency ?? "AED",
+    product ? productTitle : productLine,
+    product ? productPrice : orderDefaults[2] ?? String(total),
+    product?.sku?.trim() || context.sku?.trim() || orderDefaults[0],
+    orderDefaults[0],
+    context.currency ?? "PKR",
+    product?.productUrl ?? "",
   ];
 
   const params: string[] = [];
@@ -80,4 +98,23 @@ export function previewTemplateBody(
     );
   });
   return preview;
+}
+
+export function resolveTemplateRichSendOptions(
+  template: TemplateRowForSend,
+  context: TemplateContext
+): {
+  headerImageUrl: string | null;
+  buttonUrlPath: string | null;
+} {
+  const product = context.product;
+  const headerImageUrl =
+    template.header_format === "IMAGE" ? product?.imageUrl ?? null : null;
+
+  let buttonUrlPath: string | null = null;
+  if (template.button_type === "URL" && product?.urlPath) {
+    buttonUrlPath = product.urlPath;
+  }
+
+  return { headerImageUrl, buttonUrlPath };
 }

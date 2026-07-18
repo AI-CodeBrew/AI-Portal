@@ -24,8 +24,13 @@ export interface WhatsAppMessageTemplate {
   category: WaTemplateCategory;
   language: string;
   header_text: string | null;
+  header_format: "TEXT" | "IMAGE" | null;
+  header_image_variable: boolean;
   body_text: string;
   footer_text: string | null;
+  button_type: "NONE" | "URL";
+  button_text: string | null;
+  button_url_pattern: string | null;
   status: WaTemplateStatus;
   meta_template_id: string | null;
   meta_status: string | null;
@@ -40,8 +45,12 @@ export interface CreateWaTemplateInput {
   category: WaTemplateCategorySelectable;
   language: string;
   headerText?: string | null;
+  headerFormat?: "TEXT" | "IMAGE" | null;
   bodyText: string;
   footerText?: string | null;
+  buttonType?: "NONE" | "URL";
+  buttonText?: string | null;
+  buttonUrlPattern?: string | null;
 }
 
 const NAME_PATTERN = /^[a-z0-9_]+$/;
@@ -54,8 +63,15 @@ function mapRow(row: Record<string, unknown>): WhatsAppMessageTemplate {
     category: row.category as WaTemplateCategory,
     language: row.language as string,
     header_text: (row.header_text as string | null) ?? null,
+    header_format:
+      (row.header_format as "TEXT" | "IMAGE" | null) ??
+      (row.header_text ? "TEXT" : null),
+    header_image_variable: Boolean(row.header_image_variable),
     body_text: row.body_text as string,
     footer_text: (row.footer_text as string | null) ?? null,
+    button_type: (row.button_type as "NONE" | "URL" | undefined) ?? "NONE",
+    button_text: (row.button_text as string | null) ?? null,
+    button_url_pattern: (row.button_url_pattern as string | null) ?? null,
     status: row.status as WaTemplateStatus,
     meta_template_id: (row.meta_template_id as string | null) ?? null,
     meta_status: (row.meta_status as string | null) ?? null,
@@ -127,12 +143,28 @@ async function getStoreWaContext(storeId: string): Promise<
 
 function buildMetaComponents(input: {
   headerText?: string | null;
+  headerFormat?: "TEXT" | "IMAGE" | null;
+  headerExampleImageUrl?: string | null;
   bodyText: string;
   footerText?: string | null;
+  buttonType?: "NONE" | "URL";
+  buttonText?: string | null;
+  buttonUrlPattern?: string | null;
 }) {
   const components: Array<Record<string, unknown>> = [];
 
-  if (input.headerText?.trim()) {
+  if (input.headerFormat === "IMAGE") {
+    components.push({
+      type: "HEADER",
+      format: "IMAGE",
+      example: {
+        header_url: [
+          input.headerExampleImageUrl?.trim() ||
+            "https://cdn.shopify.com/s/files/1/0533/2089/files/placeholder-images-image_large.png",
+        ],
+      },
+    });
+  } else if (input.headerText?.trim()) {
     components.push({
       type: "HEADER",
       format: "TEXT",
@@ -152,7 +184,39 @@ function buildMetaComponents(input: {
     });
   }
 
+  if (
+    input.buttonType === "URL" &&
+    input.buttonText?.trim() &&
+    input.buttonUrlPattern?.trim()
+  ) {
+    components.push({
+      type: "BUTTONS",
+      buttons: [
+        {
+          type: "URL",
+          text: input.buttonText.trim().slice(0, 25),
+          url: input.buttonUrlPattern.trim(),
+        },
+      ],
+    });
+  }
+
   return components;
+}
+
+export async function defaultProductButtonUrlPattern(
+  storeId: string
+): Promise<string | null> {
+  const supabase = createAdminClient();
+  const { data: store } = await supabase
+    .from("stores")
+    .select("shop_domain")
+    .eq("id", storeId)
+    .maybeSingle();
+  const domain = (store?.shop_domain as string | null)?.trim();
+  if (!domain) return null;
+  const host = domain.includes(".") ? domain : `${domain}.myshopify.com`;
+  return `https://${host}/products/{{1}}`;
 }
 
 export async function listWhatsAppTemplates(
@@ -195,6 +259,18 @@ export async function createWhatsAppTemplate(
   const category: WaTemplateCategorySelectable =
     input.category === "MARKETING" ? "MARKETING" : "UTILITY";
 
+  const headerFormat =
+    input.headerFormat === "IMAGE"
+      ? "IMAGE"
+      : input.headerText?.trim()
+        ? "TEXT"
+        : null;
+  const buttonType = input.buttonType === "URL" ? "URL" : "NONE";
+  let buttonUrlPattern = input.buttonUrlPattern?.trim() || null;
+  if (buttonType === "URL" && !buttonUrlPattern) {
+    buttonUrlPattern = await defaultProductButtonUrlPattern(storeId);
+  }
+
   const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("whatsapp_message_templates")
@@ -203,9 +279,17 @@ export async function createWhatsAppTemplate(
       name,
       category,
       language: input.language || "en",
-      header_text: input.headerText?.trim() || null,
+      header_text: headerFormat === "TEXT" ? input.headerText?.trim() || null : null,
+      header_format: headerFormat,
+      header_image_variable: headerFormat === "IMAGE",
       body_text: bodyText,
       footer_text: input.footerText?.trim() || null,
+      button_type: buttonType,
+      button_text:
+        buttonType === "URL"
+          ? input.buttonText?.trim() || "View product"
+          : null,
+      button_url_pattern: buttonType === "URL" ? buttonUrlPattern : null,
       status: "draft",
       updated_at: new Date().toISOString(),
     })
@@ -246,7 +330,7 @@ export async function updateWhatsAppTemplate(
     };
   }
 
-  const payload: Record<string, string | null> = {
+  const payload: Record<string, string | boolean | null> = {
     updated_at: new Date().toISOString(),
   };
 
@@ -268,6 +352,13 @@ export async function updateWhatsAppTemplate(
   if (input.headerText !== undefined) {
     payload.header_text = input.headerText?.trim() || null;
   }
+  if (input.headerFormat !== undefined) {
+    payload.header_format = input.headerFormat;
+    payload.header_image_variable = input.headerFormat === "IMAGE";
+    if (input.headerFormat === "IMAGE") {
+      payload.header_text = null;
+    }
+  }
   if (input.bodyText !== undefined) {
     const body = input.bodyText.trim();
     if (!body) return { error: "Body is required" };
@@ -275,6 +366,15 @@ export async function updateWhatsAppTemplate(
   }
   if (input.footerText !== undefined) {
     payload.footer_text = input.footerText?.trim() || null;
+  }
+  if (input.buttonType !== undefined) {
+    payload.button_type = input.buttonType === "URL" ? "URL" : "NONE";
+  }
+  if (input.buttonText !== undefined) {
+    payload.button_text = input.buttonText?.trim() || null;
+  }
+  if (input.buttonUrlPattern !== undefined) {
+    payload.button_url_pattern = input.buttonUrlPattern?.trim() || null;
   }
 
   const { data, error } = await supabase
@@ -361,8 +461,12 @@ export async function submitWhatsAppTemplateToMeta(
     category: existing.category,
     components: buildMetaComponents({
       headerText: existing.header_text,
+      headerFormat: (existing.header_format as "TEXT" | "IMAGE" | null) ?? null,
       bodyText: existing.body_text,
       footerText: existing.footer_text,
+      buttonType: (existing.button_type as "NONE" | "URL") ?? "NONE",
+      buttonText: existing.button_text,
+      buttonUrlPattern: existing.button_url_pattern,
     }),
   };
 

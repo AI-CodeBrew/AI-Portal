@@ -1,15 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireResellerStore } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
-import {
-  getStoreWhatsAppCredentials,
-  normalizePhone,
-  sendWhatsAppTemplate,
-} from "@/lib/whatsapp";
-import {
-  buildTemplateBodyParams,
-  type TemplateContext,
-} from "@/lib/whatsapp-window/template-params";
+import { normalizePhone } from "@/lib/whatsapp";
+import { sendConversationTemplateMessage } from "@/lib/inbox/send-template-message";
+import { resolveTemplateProductContext } from "@/lib/inbox/template-product-context";
+import type { Store } from "@/lib/types";
 
 function authErrorResponse(err: unknown) {
   const message = err instanceof Error ? err.message : "";
@@ -32,7 +27,7 @@ async function loadTemplateContext(
     customer_id: string | null;
     customer_phone: string;
   }
-): Promise<TemplateContext> {
+) {
   let customerName: string | null = null;
   if (conversation.customer_id) {
     const { data: customer } = await supabase
@@ -99,6 +94,9 @@ export async function POST(request: NextRequest) {
       conversationId?: string;
       templateId?: string;
       newStatus?: "ai_handling" | "closed";
+      productSource?: "portal" | "shopify";
+      productId?: string;
+      variantId?: string;
     };
 
     const conversationId = body.conversationId?.trim();
@@ -116,7 +114,7 @@ export async function POST(request: NextRequest) {
     const { data: conversation, error: convError } = await supabase
       .from("whatsapp_conversations")
       .select(
-        "id, customer_id, customer_phone, store_id, marketing_opt_in, stores(whatsapp_phone_number_id, whatsapp_access_token)"
+        "id, customer_id, customer_phone, store_id, marketing_opt_in, stores(*)"
       )
       .eq("id", conversationId)
       .eq("store_id", storeId)
@@ -132,7 +130,9 @@ export async function POST(request: NextRequest) {
 
     const { data: template } = await supabase
       .from("whatsapp_message_templates")
-      .select("id, name, language, status, category, body_text")
+      .select(
+        "id, name, language, status, category, body_text, header_format, button_type, button_url_pattern"
+      )
       .eq("id", templateId)
       .eq("store_id", storeId)
       .maybeSingle();
@@ -162,18 +162,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const storeRaw = conversation.stores as
-      | {
-          whatsapp_phone_number_id: string | null;
-          whatsapp_access_token: string | null;
-        }
-      | {
-          whatsapp_phone_number_id: string | null;
-          whatsapp_access_token: string | null;
-        }[]
-      | null;
-
-    const store = Array.isArray(storeRaw) ? storeRaw[0] : storeRaw;
+    const storeRaw = conversation.stores as Store | Store[] | null;
+    const store = (Array.isArray(storeRaw) ? storeRaw[0] : storeRaw) as Store | null;
 
     if (!store) {
       return NextResponse.json(
@@ -182,71 +172,57 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const waCreds = getStoreWhatsAppCredentials(store);
-    if (!waCreds) {
-      return NextResponse.json(
-        {
-          error:
-            "WhatsApp is not connected or the access token could not be decrypted. Reconnect WhatsApp in Integrations.",
-        },
-        { status: 400 }
-      );
-    }
-
-    const to = normalizePhone(conversation.customer_phone);
-    if (!to || to.length < 8) {
-      return NextResponse.json(
-        { error: `Invalid customer phone number: ${conversation.customer_phone}` },
-        { status: 400 }
-      );
-    }
-
-    const context = await loadTemplateContext(supabase, storeId, {
+    const baseContext = await loadTemplateContext(supabase, storeId, {
       customer_id: conversation.customer_id as string | null,
       customer_phone: conversation.customer_phone as string,
     });
 
-    const bodyParams = buildTemplateBodyParams(
-      template.body_text as string,
-      context
-    );
-
-    try {
-      await sendWhatsAppTemplate({
-        phoneNumberId: waCreds.phoneNumberId,
-        accessToken: waCreds.accessToken,
-        to,
-        templateName: template.name as string,
-        languageCode: (template.language as string) || "en",
-        bodyParams,
+    let product = null;
+    const productId = body.productId?.trim();
+    if (productId) {
+      product = await resolveTemplateProductContext({
+        store,
+        source: body.productSource === "shopify" ? "shopify" : "portal",
+        productId,
+        variantId: body.variantId?.trim() || null,
       });
-    } catch (sendErr) {
-      const detail =
-        sendErr instanceof Error ? sendErr.message : "WhatsApp template send failed";
-      console.error("[messages/send-template] failed:", detail);
-      return NextResponse.json(
-        { error: `Could not deliver template. Details: ${detail}` },
-        { status: 502 }
-      );
-    }
-
-    const preview = `Template: ${template.name}`;
-    const { error: insertError } = await supabase
-      .from("whatsapp_messages")
-      .insert({
-        conversation_id: conversationId,
-        direction: "out",
-        content: preview,
-      });
-
-    if (insertError) {
+      if (!product) {
+        return NextResponse.json({ error: "Product not found" }, { status: 404 });
+      }
+    } else if (
+      template.header_format === "IMAGE" ||
+      template.button_type === "URL"
+    ) {
       return NextResponse.json(
         {
           error:
-            "Template was sent on WhatsApp but failed to save in the portal.",
+            "Select a product for this template — it includes a product image and/or link button.",
         },
-        { status: 500 }
+        { status: 400 }
       );
+    }
+
+    const sendResult = await sendConversationTemplateMessage({
+      storeId,
+      store,
+      conversationId,
+      customerPhone: conversation.customer_phone as string,
+      template: {
+        name: template.name as string,
+        language: (template.language as string) || "en",
+        body_text: template.body_text as string,
+        header_format: template.header_format as string | null,
+        button_type: template.button_type as string | null,
+        button_url_pattern: template.button_url_pattern as string | null,
+      },
+      context: {
+        ...baseContext,
+        product,
+      },
+    });
+
+    if (!sendResult.ok) {
+      return NextResponse.json({ error: sendResult.error }, { status: 502 });
     }
 
     const conversationUpdate: Record<string, unknown> = {
@@ -263,8 +239,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       ok: true,
-      to,
+      to: sendResult.to,
       templateName: template.name as string,
+      preview: sendResult.preview,
     });
   } catch (err) {
     const authRes = authErrorResponse(err);

@@ -19,8 +19,12 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       category?: WaTemplateCategorySelectable;
       language?: string;
       headerText?: string | null;
+      headerFormat?: "TEXT" | "IMAGE" | null;
       bodyText?: string;
       footerText?: string | null;
+      buttonType?: "NONE" | "URL";
+      buttonText?: string | null;
+      buttonUrlPattern?: string | null;
     };
 
     if (body.action === "submit") {
@@ -36,8 +40,12 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       category: body.category,
       language: body.language,
       headerText: body.headerText,
+      headerFormat: body.headerFormat,
       bodyText: body.bodyText,
       footerText: body.footerText,
+      buttonType: body.buttonType,
+      buttonText: body.buttonText,
+      buttonUrlPattern: body.buttonUrlPattern,
     });
 
     if ("error" in result) {
