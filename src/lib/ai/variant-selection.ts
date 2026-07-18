@@ -44,6 +44,41 @@ export function assistantAskedWhichVariant(
   );
 }
 
+function listedOptionValuesInHistory(
+  history: Array<{ role: "user" | "assistant"; content: string }>
+): string[] {
+  for (const msg of [...history].reverse().slice(0, 12)) {
+    if (msg.role !== "assistant") continue;
+    const match = msg.content.match(/Options:\s*([^\n]+)/i);
+    if (!match?.[1]) continue;
+
+    const segment = match[1].replace(/^[^:]+:\s*/, "");
+    const values = segment
+      .split(/[,/|·]/)
+      .map((part) => part.trim().toLowerCase())
+      .filter((part) => part.length >= 2 && part.length <= 40);
+
+    if (values.length) return values;
+  }
+  return [];
+}
+
+/** User replied with a color/size value the bot just listed. */
+export function messageMatchesListedProductOption(
+  message: string,
+  history: Array<{ role: "user" | "assistant"; content: string }>
+): boolean {
+  const t = message.trim().toLowerCase();
+  if (t.length < 2 || t.length > 40) return false;
+
+  const listed = listedOptionValuesInHistory(history);
+  if (!listed.length) return false;
+
+  return listed.some(
+    (value) => value === t || value.includes(t) || t.includes(value)
+  );
+}
+
 /** User is picking a color/size/variant for a product already shown in chat. */
 export function looksLikeVariantSelection(
   message: string,
@@ -60,6 +95,8 @@ export function looksLikeVariantSelection(
         /(?:—|-)\s*(?:Rs\.?|PKR|AED|\$|€)/i.test(m.content))
   );
   if (!discussed) return false;
+
+  if (messageMatchesListedProductOption(t, history)) return true;
 
   if (looksLikeCatalogProductPick(t, history)) return false;
 
@@ -134,7 +171,7 @@ export function matchVariantFromMessage(
     for (const value of opt.values ?? []) {
       const valLower = value.toLowerCase();
       if (!tokens.some((t) => valLower.includes(t) || t.includes(valLower))) {
-        continue;
+        if (valLower !== message.trim().toLowerCase()) continue;
       }
       const match = realVariants.find((v) => {
         const hay = variantHaystack(v);

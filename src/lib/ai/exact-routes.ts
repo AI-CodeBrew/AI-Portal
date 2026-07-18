@@ -78,13 +78,13 @@ export function resolveExactDirectRoute(
   if (looksLikeCatalogBrowseMoreRequest(t, history)) return "catalog_more";
   if (looksLikeCatalogBrowseRequest(t)) return "catalog_browse";
 
+  if (looksLikeVariantSelection(t, history)) return "variant_selection";
+
   if (looksLikeCatalogProductPick(t, history)) return "catalog_product_pick";
 
   if (extractSkuFromText(t)) return "sku_search";
 
   if (looksLikeExactNamedProductQuery(t)) return "named_product_search";
-
-  if (looksLikeVariantSelection(t, history)) return "variant_selection";
 
   if (looksLikeHowAreYou(t)) return "how_are_you";
   if (looksLikeOffTopicChat(t)) return "off_topic";

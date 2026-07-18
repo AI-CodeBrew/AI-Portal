@@ -123,6 +123,13 @@ export function looksLikeCatalogProductPick(
 
   if (messageMatchesShownCatalogTitle(t, titles)) return true;
 
+  // "i want Audionic ENC" — not bare color/size answers like "yellow"
+  const hasPickIntent =
+    /\b(i\s+)?(?:want|need|order|buy|get|take|interested in|go with|choose|pick|i(?:'ll| will) take)\b/i.test(
+      t
+    );
+  if (!hasPickIntent) return false;
+
   const query = extractProductSearchQuery(t);
-  return Boolean(query && query.length >= 2);
+  return Boolean(query && query.length >= 3);
 }
