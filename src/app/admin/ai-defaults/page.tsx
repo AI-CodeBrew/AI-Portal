@@ -17,7 +17,7 @@ export default function AdminAiDefaultsPage() {
       <div>
         <AdminPageHeader
           title="LLM Provider"
-          description="Switch between Groq and Google Gemini for WhatsApp sales AI"
+          description="Google Gemini for WhatsApp sales AI and intent routing"
         />
         <AdminLlmProviderPanel />
       </div>

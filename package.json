@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:window": "node --experimental-strip-types --test src/lib/whatsapp-window/window-status.test.ts"
+    "test:window": "node --experimental-strip-types --test src/lib/whatsapp-window/window-status.test.ts",
+    "test:gemini-ab": "node --env-file=.env.local --experimental-strip-types scripts/gemini-model-ab.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.110.0",

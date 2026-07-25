@@ -65,13 +65,8 @@ function emptyForm() {
     category: "UTILITY" as WaTemplateCategorySelectable,
     language: "en",
     headerText: "",
-    headerFormat: "NONE" as "NONE" | "TEXT" | "IMAGE",
-    headerExampleImageUrl: "",
     bodyText: "",
     footerText: "",
-    buttonType: "NONE" as "NONE" | "URL",
-    buttonText: "View product",
-    buttonUrlPattern: "",
   };
 }
 
@@ -142,13 +137,8 @@ export function WhatsAppTemplatesPanel() {
         t.category === "MARKETING" ? "MARKETING" : "UTILITY",
       language: t.language,
       headerText: t.header_text ?? "",
-      headerFormat: t.header_format ?? (t.header_text ? "TEXT" : "NONE"),
-      headerExampleImageUrl: t.header_example_image_url ?? "",
       bodyText: t.body_text,
       footerText: t.footer_text ?? "",
-      buttonType: t.button_type ?? "NONE",
-      buttonText: t.button_text ?? "View product",
-      buttonUrlPattern: t.button_url_pattern ?? "",
     });
     setModalOpen(true);
     setError(null);
@@ -171,22 +161,9 @@ export function WhatsAppTemplatesPanel() {
           name: form.name,
           category: form.category,
           language: form.language,
-          headerText: form.headerFormat === "TEXT" ? form.headerText || null : null,
-          headerFormat:
-            form.headerFormat === "IMAGE"
-              ? "IMAGE"
-              : form.headerFormat === "TEXT"
-                ? "TEXT"
-                : null,
-          headerExampleImageUrl:
-            form.headerFormat === "IMAGE"
-              ? form.headerExampleImageUrl || null
-              : null,
+          headerText: form.headerText || null,
           bodyText: form.bodyText,
           footerText: form.footerText || null,
-          buttonType: form.buttonType,
-          buttonText: form.buttonText || null,
-          buttonUrlPattern: form.buttonUrlPattern || null,
         }),
       });
       const data = await res.json();
@@ -425,28 +402,10 @@ export function WhatsAppTemplatesPanel() {
             <form onSubmit={saveTemplate} className="space-y-4 px-5 py-5">
               <div className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
                 Use <code className="rounded bg-white px-1">{"{{1}}"}</code> for
-                customer name,{" "}
-                <code className="rounded bg-white px-1">{"{{2}}"}</code> for product
-                name,{" "}
-                <code className="rounded bg-white px-1">{"{{3}}"}</code> for price.
-                <button
-                  type="button"
-                  onClick={() =>
-                    setForm((f) => ({
-                      ...f,
-                      name: f.name || "product_followup",
-                      headerFormat: "IMAGE",
-                      headerText: "",
-                      bodyText:
-                        "Hi {{1}}, check out *{{2}}* — {{3}}. Tap the button below to view full details.",
-                      buttonType: "URL",
-                      buttonText: "View product",
-                    }))
-                  }
-                  className="ml-2 font-semibold text-emerald-700 hover:underline"
-                >
-                  Use product follow-up preset
-                </button>
+                the first variable,{" "}
+                <code className="rounded bg-white px-1">{"{{2}}"}</code> for the
+                second, etc. Example:{" "}
+                <em>Hi {"{{1}}"}, your order {"{{2}}"} has been dispatched.</em>
               </div>
 
               {error && (
@@ -515,63 +474,18 @@ export function WhatsAppTemplatesPanel() {
               </div>
 
               <label className="block text-sm">
-                <span className="font-medium text-slate-700">Header</span>
-                <select
-                  value={form.headerFormat}
+                <span className="font-medium text-slate-700">
+                  Header text (optional)
+                </span>
+                <input
+                  value={form.headerText}
                   onChange={(e) =>
-                    setForm((f) => ({
-                      ...f,
-                      headerFormat: e.target.value as "NONE" | "TEXT" | "IMAGE",
-                    }))
+                    setForm((f) => ({ ...f, headerText: e.target.value }))
                   }
+                  placeholder="Your order update"
                   className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-                >
-                  <option value="NONE">No header</option>
-                  <option value="TEXT">Text header</option>
-                  <option value="IMAGE">Product image (dynamic per send)</option>
-                </select>
+                />
               </label>
-
-              {form.headerFormat === "TEXT" && (
-                <label className="block text-sm">
-                  <span className="font-medium text-slate-700">Header text</span>
-                  <input
-                    value={form.headerText}
-                    onChange={(e) =>
-                      setForm((f) => ({ ...f, headerText: e.target.value }))
-                    }
-                    placeholder="Your order update"
-                    className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-                  />
-                </label>
-              )}
-
-              {form.headerFormat === "IMAGE" && (
-                <>
-                  <p className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-xs text-violet-900">
-                    Meta requires a sample image at approval time. We upload it
-                    automatically when you submit — use a public JPG/PNG from
-                    your catalog below, or leave blank to use your latest product
-                    image.
-                  </p>
-                  <label className="block text-sm">
-                    <span className="font-medium text-slate-700">
-                      Sample image URL (optional)
-                    </span>
-                    <input
-                      value={form.headerExampleImageUrl}
-                      onChange={(e) =>
-                        setForm((f) => ({
-                          ...f,
-                          headerExampleImageUrl: e.target.value,
-                        }))
-                      }
-                      placeholder="https://cdn.example.com/product.jpg"
-                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-                    />
-                  </label>
-                </>
-              )}
 
               <label className="block text-sm">
                 <span className="font-medium text-slate-700">
@@ -602,46 +516,6 @@ export function WhatsAppTemplatesPanel() {
                   className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
                 />
               </label>
-
-              <div className="grid gap-3 sm:grid-cols-2">
-                <label className="block text-sm">
-                  <span className="font-medium text-slate-700">Button</span>
-                  <select
-                    value={form.buttonType}
-                    onChange={(e) =>
-                      setForm((f) => ({
-                        ...f,
-                        buttonType: e.target.value as "NONE" | "URL",
-                      }))
-                    }
-                    className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-                  >
-                    <option value="NONE">No button</option>
-                    <option value="URL">View product link</option>
-                  </select>
-                </label>
-                {form.buttonType === "URL" && (
-                  <label className="block text-sm">
-                    <span className="font-medium text-slate-700">Button label</span>
-                    <input
-                      value={form.buttonText}
-                      onChange={(e) =>
-                        setForm((f) => ({ ...f, buttonText: e.target.value }))
-                      }
-                      placeholder="View product"
-                      className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
-                    />
-                  </label>
-                )}
-              </div>
-
-              {form.buttonType === "URL" && (
-                <p className="text-xs text-slate-500">
-                  Product URL is built from your Shopify store automatically (
-                  <code>…/products/{"{{1}}"}</code>). Leave blank to use your
-                  connected shop domain.
-                </p>
-              )}
 
               <div className="flex justify-end gap-2 border-t border-slate-100 pt-4">
                 <button

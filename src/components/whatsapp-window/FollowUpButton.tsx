@@ -7,18 +7,8 @@ import {
   TemplatePicker,
   useApprovedTemplates,
 } from "@/components/whatsapp-window/TemplatePicker";
-import {
-  TemplateProductPicker,
-  type CatalogProduct,
-} from "@/components/whatsapp-window/TemplateProductPicker";
-import type { WhatsAppMessageTemplate } from "@/lib/whatsapp/message-templates";
 
 type FollowUpMode = "freeform" | "template";
-
-function templateNeedsProduct(template: WhatsAppMessageTemplate | undefined): boolean {
-  if (!template) return false;
-  return template.header_format === "IMAGE" || template.button_type === "URL";
-}
 
 export function FollowUpButton({
   conversation,
@@ -37,50 +27,21 @@ export function FollowUpButton({
   const [mode, setMode] = useState<FollowUpMode>("freeform");
   const [message, setMessage] = useState("");
   const [templateId, setTemplateId] = useState("");
-  const [productKey, setProductKey] = useState("");
-  const [productSource, setProductSource] = useState<"portal" | "shopify">("portal");
-  const [productId, setProductId] = useState("");
-  const [variantId, setVariantId] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const { templates, loading: templatesLoading } = useApprovedTemplates();
-  const selectedTemplate = templates.find((t) => t.id === templateId);
-  const needsProduct = templateNeedsProduct(selectedTemplate);
 
   const windowOpen = windowStatus.isOpen;
 
   function openModal() {
     setError(null);
     setMessage("");
-    setProductKey("");
-    setProductId("");
-    setVariantId("");
     setMode(windowOpen ? "freeform" : "template");
     if (templates.length > 0 && !templateId) {
       setTemplateId(templates[0]!.id);
     }
     setOpen(true);
-  }
-
-  async function selectProduct(product: CatalogProduct) {
-    setProductKey(product.key);
-    setProductSource(product.source);
-    setProductId(product.id);
-    if (product.source === "shopify" && product.variants.length === 0) {
-      const res = await fetch(
-        `/api/inbox/products?shopifyProductId=${encodeURIComponent(product.id)}`
-      );
-      const data = await res.json();
-      const full = Array.isArray(data.products)
-        ? (data.products[0] as CatalogProduct | undefined)
-        : undefined;
-      setVariantId(full?.variants.length === 1 ? full.variants[0]!.id : "");
-      return;
-    }
-    setVariantId(
-      product.variants.length === 1 ? product.variants[0]!.id : ""
-    );
   }
 
   async function handleSend() {
@@ -112,23 +73,12 @@ export function FollowUpButton({
           setError("Select a template");
           return;
         }
-        if (needsProduct && !productId) {
-          setError("Select a product for this template");
-          return;
-        }
         const res = await fetch("/api/messages/send-template", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             conversationId: conversation.id,
             templateId,
-            ...(productId
-              ? {
-                  productSource,
-                  productId,
-                  variantId: variantId || undefined,
-                }
-              : {}),
           }),
         });
         const data = await res.json();
@@ -167,7 +117,7 @@ export function FollowUpButton({
           onClick={() => setOpen(false)}
         >
           <div
-            className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-t-2xl bg-white shadow-2xl sm:rounded-2xl"
+            className="w-full max-w-md rounded-t-2xl bg-white shadow-2xl sm:rounded-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="border-b border-slate-200 px-5 py-4">
@@ -222,35 +172,16 @@ export function FollowUpButton({
                   className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
                 />
               ) : (
-                <>
-                  <TemplatePicker
-                    templates={templates}
-                    templateId={templateId || templates[0]?.id || ""}
-                    onTemplateIdChange={setTemplateId}
-                    loading={templatesLoading}
-                    context={{
-                      customerName: conversation.customer_name,
-                      marketingOptIn: conversation.marketing_opt_in,
-                    }}
-                  />
-                  <TemplateProductPicker
-                    selectedKey={productKey}
-                    selectedVariantId={variantId}
-                    onSelect={selectProduct}
-                    onVariantChange={setVariantId}
-                  />
-                  {needsProduct ? (
-                    <p className="text-xs text-amber-800">
-                      This template includes a product image and/or link — select a
-                      product above.
-                    </p>
-                  ) : (
-                    <p className="text-xs text-slate-500">
-                      Optional: select a product to fill template variables with
-                      product name and price.
-                    </p>
-                  )}
-                </>
+                <TemplatePicker
+                  templates={templates}
+                  templateId={templateId || templates[0]?.id || ""}
+                  onTemplateIdChange={setTemplateId}
+                  loading={templatesLoading}
+                  context={{
+                    customerName: conversation.customer_name,
+                    marketingOptIn: conversation.marketing_opt_in,
+                  }}
+                />
               )}
             </div>
 

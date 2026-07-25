@@ -3,7 +3,6 @@ import { requireAuth } from "@/lib/auth";
 import {
   getPlatformLlmAdminView,
   updatePlatformLlmSettings,
-  type AiLlmProvider,
 } from "@/lib/platform/llm-settings";
 
 export async function GET() {
@@ -20,23 +19,17 @@ export async function PATCH(request: NextRequest) {
   try {
     const user = await requireAuth("admin");
     const body = (await request.json()) as {
-      provider?: AiLlmProvider;
       geminiApiKey?: string;
       geminiModel?: string;
-      groqApiKey?: string;
-      groqModel?: string;
+      geminiIntentModel?: string;
       clearGeminiApiKey?: boolean;
-      clearGroqApiKey?: boolean;
     };
 
     const result = await updatePlatformLlmSettings({
-      provider: body.provider,
       geminiApiKey: body.geminiApiKey,
       geminiModel: body.geminiModel,
-      groqApiKey: body.groqApiKey,
-      groqModel: body.groqModel,
+      geminiIntentModel: body.geminiIntentModel,
       clearGeminiApiKey: body.clearGeminiApiKey,
-      clearGroqApiKey: body.clearGroqApiKey,
       updatedBy: user.id,
     });
 

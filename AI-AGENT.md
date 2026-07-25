@@ -8,7 +8,7 @@ Last updated: 2026-07-16
 
 ## Overview
 
-The agent is **not fine-tuned**. It is a general LLM (Groq **Llama 3.3 70B** by default, Anthropic Claude as fallback) guided by:
+The agent is **not fine-tuned**. It uses **Google Gemini** (plus optional Anthropic env fallback) guided by:
 
 1. **System prompt** — human sales rep persona, hard rules, stage guidance (`build-system-prompt.ts`)
 2. **Per-store settings** — name, tone, templates, recovery discounts (Dashboard → AI Settings)
@@ -53,7 +53,7 @@ Handlers run **in order**. First match wins; LLM only runs if nothing else handl
 | 2 | Sales recovery | `sales-recovery.ts` | Decline / “too expensive” after product pitch → discount → bundle → stop |
 | 3 | Product image | `product-reply.ts` | “Send/share/show product image/photo” |
 | 4 | Product lookup | `product-reply.ts` | SKU or product name question (SKU wins even if message says “want to order”) |
-| 5 | LLM | `groq-agent.ts` / `gemini-agent.ts` / `anthropic-agent.ts` | Everything else (provider set in Admin → AI Defaults → LLM) |
+| 6 | LLM | `gemini-agent.ts` / `anthropic-agent.ts` (env) | Everything else |
 
 If the LLM throws, the webhook falls back to direct product/image lookup before a generic error message.
 
@@ -204,8 +204,7 @@ Admin platform defaults apply when store leaves a field null.
 
 | Variable | Role |
 |----------|------|
-| `GROQ_API_KEY` | Groq LLM when provider = **groq** (default) |
-| `GROQ_MODEL` | Optional Groq override (default `llama-3.3-70b-versatile`) |
+| `GEMINI_API_KEY` | Gemini LLM + intent router (Admin → AI Defaults or env) |
 | `GEMINI_API_KEY` | Optional Gemini fallback if not saved in admin UI |
 | `ANTHROPIC_API_KEY` | Fallback LLM if active provider unavailable |
 | `BUNNY_CDN_HOSTNAME` | Portal product image URLs |
@@ -225,7 +224,7 @@ When you change AI behavior, update **this doc** and the relevant file:
 | Product + image direct replies | `src/lib/ai/product-reply.ts` |
 | Checkout parsing | `src/lib/ai/checkout-reply.ts`, `checkout-parse.ts` |
 | Recovery offers | `src/lib/ai/sales-recovery.ts` |
-| Groq / Gemini / Anthropic loops | `src/lib/ai/groq-agent.ts`, `gemini-agent.ts`, `anthropic-agent.ts` |
+| Gemini / Anthropic loops | `src/lib/ai/gemini-agent.ts`, `anthropic-agent.ts`, `intent-router.ts` |
 | LLM provider admin | `src/lib/platform/llm-settings.ts`, Admin → AI Defaults → LLM Provider |
 | Webhook / send | `src/lib/whatsapp-webhook-handler.ts` |
 | Image markers / strip | `src/lib/ai/message-markers.ts` |

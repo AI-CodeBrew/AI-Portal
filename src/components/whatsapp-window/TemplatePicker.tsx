@@ -66,22 +66,7 @@ export function TemplatePicker({
         </div>
       )}
 
-          {selected && (
-            <div className="flex flex-wrap gap-1.5">
-              {selected.header_format === "IMAGE" && (
-                <span className="rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-800">
-                  Product image
-                </span>
-              )}
-              {selected.button_type === "URL" && (
-                <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800">
-                  Product link
-                </span>
-              )}
-            </div>
-          )}
-
-          {selected && (
+      {selected && (
         <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 text-sm text-slate-700">
           {selected.header_text && (
             <p className="mb-1 font-semibold text-slate-900">

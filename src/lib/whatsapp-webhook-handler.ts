@@ -631,7 +631,7 @@ export async function handleWhatsAppWebhookMessage(
               }
             } else {
               console.error(
-                "[whatsapp-webhook] No LLM configured — set Groq or Gemini in Admin → AI Defaults."
+                "[whatsapp-webhook] No Gemini configured — set GEMINI_API_KEY or Admin → AI Defaults."
               );
               const chatLimits = await getStoreChatContextLimits(activeStore.id);
               const chatHistory = await getRecentChatHistory(

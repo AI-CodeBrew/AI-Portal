@@ -1,10 +1,75 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { decrypt, encrypt } from "@/lib/crypto";
 
-export type AiLlmProvider = "groq" | "gemini";
-
 export const DEFAULT_GEMINI_MODEL = "gemini-3-flash-preview";
-export const DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile";
+/** Gemini model for JSON intent routing (tried before main agent on ambiguous turns). */
+export const DEFAULT_GEMINI_INTENT_MODEL = "gemini-3.5-flash";
+
+export type GeminiModelChoice = {
+  id: string;
+  label: string;
+  description: string;
+};
+
+/** Presets shown in Admin → AI Defaults model picker. */
+export const GEMINI_SALES_MODEL_CHOICES: GeminiModelChoice[] = [
+  {
+    id: "gemini-3.5-flash",
+    label: "Gemini 3.5 Flash (recommended)",
+    description: "Best for tool calling and ambiguous WhatsApp sales chat.",
+  },
+  {
+    id: "gemini-3-flash-preview",
+    label: "Gemini 3 Flash Preview",
+    description: "Fast default — strong balance of speed and quality.",
+  },
+  {
+    id: "gemini-3-flash",
+    label: "Gemini 3 Flash",
+    description: "Alias for 3 Flash Preview in the API.",
+  },
+  {
+    id: "gemini-2.5-flash",
+    label: "Gemini 2.5 Flash",
+    description: "Lower cost; good for high message volume.",
+  },
+  {
+    id: "gemini-2.5-pro",
+    label: "Gemini 2.5 Pro",
+    description: "Deeper reasoning — slower and higher cost.",
+  },
+  {
+    id: "gemini-3.1-pro-preview",
+    label: "Gemini 3.1 Pro Preview",
+    description: "Maximum quality for difficult conversations.",
+  },
+];
+
+export const GEMINI_INTENT_MODEL_CHOICES: GeminiModelChoice[] = [
+  {
+    id: "gemini-3.5-flash",
+    label: "Gemini 3.5 Flash (recommended)",
+    description: "Best for classifying intent before handlers run.",
+  },
+  {
+    id: "gemini-3-flash-preview",
+    label: "Gemini 3 Flash Preview",
+    description: "Faster intent routing.",
+  },
+  {
+    id: "gemini-2.5-flash",
+    label: "Gemini 2.5 Flash",
+    description: "Budget intent routing.",
+  },
+];
+
+export function normalizeGeminiIntentModel(
+  model: string | null | undefined
+): string {
+  const m = model?.trim() || DEFAULT_GEMINI_INTENT_MODEL;
+  if (m === "gemini-3-flash") return "gemini-3-flash-preview";
+  return m;
+}
 
 /** Map friendly admin names to valid Gemini API model ids. */
 export function normalizeGeminiModel(model: string | null | undefined): string {
@@ -13,20 +78,11 @@ export function normalizeGeminiModel(model: string | null | undefined): string {
   return m;
 }
 
-export function normalizeGroqModel(model: string | null | undefined): string {
-  return model?.trim() || DEFAULT_GROQ_MODEL;
-}
-
 export type PlatformLlmAdminView = {
-  provider: AiLlmProvider;
   geminiModel: string;
-  groqModel: string;
+  geminiIntentModel: string;
   geminiApiKeyMasked: string | null;
-  groqApiKeyMasked: string | null;
   hasGeminiApiKey: boolean;
-  hasGroqApiKey: boolean;
-  /** True when Groq key comes from server env (not DB) */
-  groqFromEnv: boolean;
   /** True when Gemini key comes from server env (not DB) */
   geminiFromEnv: boolean;
   configured: boolean;
@@ -34,11 +90,9 @@ export type PlatformLlmAdminView = {
 };
 
 export type ActiveLlmConfig = {
-  provider: AiLlmProvider;
   geminiApiKey: string | null;
   geminiModel: string;
-  groqApiKey: string | null;
-  groqModel: string;
+  geminiIntentModel: string;
 };
 
 function maskSecret(plain: string | null): string | null {
@@ -60,42 +114,23 @@ function safeDecrypt(value: string | null): string | null {
   }
 }
 
-function isProvider(value: unknown): value is AiLlmProvider {
-  return value === "groq" || value === "gemini";
-}
-
-function resolveGroqKeyFromEnv(): string | null {
-  const key = process.env.GROQ_API_KEY?.trim();
-  return key || null;
-}
-
 function resolveGeminiKeyFromEnv(): string | null {
   const key = process.env.GEMINI_API_KEY?.trim();
   return key || null;
-}
-
-function resolveGroqModelFromEnv(): string | null {
-  const model = process.env.GROQ_MODEL?.trim();
-  return model || null;
 }
 
 export async function getActiveLlmConfig(): Promise<ActiveLlmConfig> {
   const supabase = createAdminClient();
   const { data } = await supabase
     .from("platform_settings")
-    .select(
-      "ai_llm_provider, gemini_api_key, gemini_model, groq_api_key, groq_model"
-    )
+    .select("gemini_api_key, gemini_model, gemini_intent_model")
     .eq("id", 1)
     .maybeSingle();
 
-  const provider = isProvider(data?.ai_llm_provider)
-    ? data.ai_llm_provider
-    : "groq";
   const geminiModel = normalizeGeminiModel(data?.gemini_model as string | null);
-  const groqModel =
-    normalizeGroqModel(data?.groq_model as string | null) ||
-    normalizeGroqModel(resolveGroqModelFromEnv());
+  const geminiIntentModel = normalizeGeminiIntentModel(
+    data?.gemini_intent_model as string | null
+  );
 
   let geminiApiKey: string | null = null;
   if (data?.gemini_api_key) {
@@ -105,127 +140,75 @@ export async function getActiveLlmConfig(): Promise<ActiveLlmConfig> {
     geminiApiKey = resolveGeminiKeyFromEnv();
   }
 
-  let groqApiKey: string | null = null;
-  if (data?.groq_api_key) {
-    groqApiKey = safeDecrypt(data.groq_api_key as string);
-  }
-  if (!groqApiKey) {
-    groqApiKey = resolveGroqKeyFromEnv();
-  }
-
-  return { provider, geminiApiKey, geminiModel, groqApiKey, groqModel };
+  return { geminiApiKey, geminiModel, geminiIntentModel };
 }
 
 export async function getPlatformLlmAdminView(): Promise<PlatformLlmAdminView> {
   const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("platform_settings")
-    .select(
-      "ai_llm_provider, gemini_api_key, gemini_model, groq_api_key, groq_model, updated_at"
-    )
+    .select("gemini_api_key, gemini_model, gemini_intent_model, updated_at")
     .eq("id", 1)
     .maybeSingle();
 
   if (error) {
     const hint = error.message.includes("platform_settings")
-      ? " — Run migrations 029 and 032 in Supabase"
+      ? " — Run migrations 029+ in Supabase"
       : "";
     throw new Error(error.message + hint);
   }
 
-  const provider = isProvider(data?.ai_llm_provider)
-    ? data.ai_llm_provider
-    : "groq";
   const geminiModel = normalizeGeminiModel(data?.gemini_model as string | null);
-  const groqModel = normalizeGroqModel(data?.groq_model as string | null);
-
+  const geminiIntentModel = normalizeGeminiIntentModel(
+    data?.gemini_intent_model as string | null
+  );
   const geminiEncrypted = (data?.gemini_api_key as string | null) ?? null;
-  const groqEncrypted = (data?.groq_api_key as string | null) ?? null;
-
   const geminiFromEnv = Boolean(!geminiEncrypted && resolveGeminiKeyFromEnv());
-  const groqFromEnv = Boolean(!groqEncrypted && resolveGroqKeyFromEnv());
-
   const geminiPlain =
     safeDecrypt(geminiEncrypted) ?? resolveGeminiKeyFromEnv();
-  const groqPlain = safeDecrypt(groqEncrypted) ?? resolveGroqKeyFromEnv();
-
   const hasGeminiApiKey = Boolean(geminiEncrypted || resolveGeminiKeyFromEnv());
-  const hasGroqApiKey = Boolean(groqEncrypted || resolveGroqKeyFromEnv());
-
-  const configured =
-    provider === "groq" ? hasGroqApiKey : hasGeminiApiKey;
 
   return {
-    provider,
     geminiModel,
-    groqModel,
+    geminiIntentModel,
     geminiApiKeyMasked: maskSecret(geminiPlain),
-    groqApiKeyMasked: maskSecret(groqPlain),
     hasGeminiApiKey,
-    hasGroqApiKey,
-    groqFromEnv,
     geminiFromEnv,
-    configured,
+    configured: hasGeminiApiKey,
     updatedAt: (data?.updated_at as string | null) ?? null,
   };
 }
 
 export async function updatePlatformLlmSettings(input: {
-  provider?: AiLlmProvider;
   geminiApiKey?: string;
   geminiModel?: string;
-  groqApiKey?: string;
-  groqModel?: string;
+  geminiIntentModel?: string;
   clearGeminiApiKey?: boolean;
-  clearGroqApiKey?: boolean;
   updatedBy?: string | null;
 }): Promise<PlatformLlmAdminView | { error: string }> {
   const supabase = createAdminClient();
   const { data: current } = await supabase
     .from("platform_settings")
-    .select(
-      "gemini_api_key, groq_api_key, ai_llm_provider, gemini_model, groq_model"
-    )
+    .select("gemini_api_key, gemini_model, gemini_intent_model")
     .eq("id", 1)
     .maybeSingle();
-
-  const provider =
-    input.provider ??
-    (isProvider(current?.ai_llm_provider) ? current.ai_llm_provider : "groq");
 
   const hasGeminiStored = Boolean(
     current?.gemini_api_key || resolveGeminiKeyFromEnv()
   );
-  const hasGroqStored = Boolean(
-    current?.groq_api_key || resolveGroqKeyFromEnv()
-  );
 
-  if (provider === "gemini") {
-    const keyInput = input.geminiApiKey?.trim();
-    if (input.clearGeminiApiKey) {
-      // allowed — may fall back to env or force re-entry
-    } else if (!keyInput && !hasGeminiStored) {
-      return {
-        error:
-          "Gemini API key is required when Gemini is selected (paste key or set GEMINI_API_KEY env).",
-      };
-    }
-  }
-
-  if (provider === "groq") {
-    const keyInput = input.groqApiKey?.trim();
-    if (input.clearGroqApiKey) {
-      // allowed
-    } else if (!keyInput && !hasGroqStored) {
-      return {
-        error:
-          "Groq API key is required when Groq is selected (paste key or set GROQ_API_KEY env).",
-      };
-    }
+  const keyInput = input.geminiApiKey?.trim();
+  if (input.clearGeminiApiKey) {
+    // allowed — may fall back to env or force re-entry
+  } else if (!keyInput && !hasGeminiStored) {
+    return {
+      error:
+        "Gemini API key is required (paste key in admin or set GEMINI_API_KEY env).",
+    };
   }
 
   const payload: Record<string, string | null> = {
-    ai_llm_provider: provider,
+    ai_llm_provider: "gemini",
     updated_at: new Date().toISOString(),
     updated_by: input.updatedBy ?? null,
   };
@@ -237,25 +220,18 @@ export async function updatePlatformLlmSettings(input: {
     payload.gemini_model = DEFAULT_GEMINI_MODEL;
   }
 
-  if (input.groqModel !== undefined) {
-    payload.groq_model =
-      normalizeGroqModel(input.groqModel.trim() || DEFAULT_GROQ_MODEL);
-  } else if (!current?.groq_model) {
-    payload.groq_model = DEFAULT_GROQ_MODEL;
+  if (input.geminiIntentModel !== undefined) {
+    payload.gemini_intent_model = normalizeGeminiIntentModel(
+      input.geminiIntentModel.trim() || DEFAULT_GEMINI_INTENT_MODEL
+    );
+  } else if (!current?.gemini_intent_model) {
+    payload.gemini_intent_model = DEFAULT_GEMINI_INTENT_MODEL;
   }
 
-  const geminiKeyInput = input.geminiApiKey?.trim();
-  if (geminiKeyInput) {
-    payload.gemini_api_key = encrypt(geminiKeyInput);
+  if (keyInput) {
+    payload.gemini_api_key = encrypt(keyInput);
   } else if (input.clearGeminiApiKey) {
     payload.gemini_api_key = null;
-  }
-
-  const groqKeyInput = input.groqApiKey?.trim();
-  if (groqKeyInput) {
-    payload.groq_api_key = encrypt(groqKeyInput);
-  } else if (input.clearGroqApiKey) {
-    payload.groq_api_key = null;
   }
 
   const { error } = await supabase
@@ -263,12 +239,7 @@ export async function updatePlatformLlmSettings(input: {
     .upsert({ id: 1, ...payload }, { onConflict: "id" });
 
   if (error) {
-    const hint =
-      error.message.includes("groq_api_key") ||
-      error.message.includes("ai_llm_provider")
-        ? " — Run migrations 029 and 032 in Supabase"
-        : "";
-    return { error: error.message + hint };
+    return { error: error.message };
   }
 
   try {
@@ -282,11 +253,5 @@ export async function updatePlatformLlmSettings(input: {
 
 export async function isLlmProviderConfigured(): Promise<boolean> {
   const config = await getActiveLlmConfig();
-  if (config.provider === "gemini") {
-    return Boolean(config.geminiApiKey);
-  }
-  if (config.provider === "groq") {
-    return Boolean(config.groqApiKey);
-  }
-  return Boolean(process.env.ANTHROPIC_API_KEY);
+  return Boolean(config.geminiApiKey);
 }

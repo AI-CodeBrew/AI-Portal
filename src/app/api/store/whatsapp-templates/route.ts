@@ -49,13 +49,8 @@ export async function POST(request: NextRequest) {
       category?: WaTemplateCategorySelectable;
       language?: string;
       headerText?: string | null;
-      headerFormat?: "TEXT" | "IMAGE" | null;
-      headerExampleImageUrl?: string | null;
       bodyText?: string;
       footerText?: string | null;
-      buttonType?: "NONE" | "URL";
-      buttonText?: string | null;
-      buttonUrlPattern?: string | null;
     };
 
     const result = await createWhatsAppTemplate(storeId, {
@@ -63,13 +58,8 @@ export async function POST(request: NextRequest) {
       category: body.category ?? "UTILITY",
       language: body.language ?? "en",
       headerText: body.headerText,
-      headerFormat: body.headerFormat,
-      headerExampleImageUrl: body.headerExampleImageUrl,
       bodyText: body.bodyText ?? "",
       footerText: body.footerText,
-      buttonType: body.buttonType,
-      buttonText: body.buttonText,
-      buttonUrlPattern: body.buttonUrlPattern,
     });
 
     if ("error" in result) {

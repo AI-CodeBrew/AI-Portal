@@ -80,7 +80,7 @@ const STEPS = [
   },
 ];
 
-const INTEGRATIONS = ["Shopify", "WhatsApp", "Meta Ads", "Groq AI"];
+const INTEGRATIONS = ["Shopify", "WhatsApp", "Meta Ads", "Google Gemini"];
 
 function DashboardPreview() {
   return (

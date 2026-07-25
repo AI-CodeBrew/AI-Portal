@@ -1,4 +1,3 @@
-import { runSalesAgentWithGroq } from "./groq-agent";
 import { runSalesAgentWithGemini } from "./gemini-agent";
 import { runSalesAgentWithAnthropic } from "./anthropic-agent";
 import { getShopCurrency } from "@/lib/shopify";
@@ -35,6 +34,7 @@ import {
   looksLikeVariantSelection,
   formatVariantOptionReprompt,
 } from "./variant-selection";
+import { tryIntentRoutedReply } from "./intent-router";
 
 export type { AgentContext } from "./sales-tools";
 
@@ -180,34 +180,33 @@ export async function runSalesAgent(
     console.error("[run-sales-agent] sales recovery failed:", err);
   }
 
-  const llm = await getActiveLlmConfig();
-
-  if (llm.provider === "gemini") {
-    if (!llm.geminiApiKey) {
-      console.error(
-        "[run-sales-agent] Gemini selected but API key unavailable (decrypt failed or not saved on this server)"
-      );
-    } else {
-      try {
-        return await runSalesAgentWithGemini(enrichedCtx, history, {
-          apiKey: llm.geminiApiKey,
-          model: llm.geminiModel,
-        });
-      } catch (err) {
-        console.error("[run-sales-agent] Gemini agent error:", err);
-      }
-    }
+  try {
+    const intentRouted = await tryIntentRoutedReply(
+      enrichedCtx,
+      latestUser,
+      history,
+      exactRoute
+    );
+    if (intentRouted) return intentRouted;
+  } catch (err) {
+    console.error("[run-sales-agent] intent router failed:", err);
   }
 
-  if (llm.provider === "groq" && llm.groqApiKey) {
+  const llm = await getActiveLlmConfig();
+
+  if (llm.geminiApiKey) {
     try {
-      return await runSalesAgentWithGroq(enrichedCtx, history, {
-        apiKey: llm.groqApiKey,
-        model: llm.groqModel,
+      return await runSalesAgentWithGemini(enrichedCtx, history, {
+        apiKey: llm.geminiApiKey,
+        model: llm.geminiModel,
       });
     } catch (err) {
-      console.error("[run-sales-agent] Groq agent error:", err);
+      console.error("[run-sales-agent] Gemini agent error:", err);
     }
+  } else {
+    console.error(
+      "[run-sales-agent] Gemini API key unavailable (set in Admin → AI Defaults or GEMINI_API_KEY env)"
+    );
   }
 
   if (process.env.ANTHROPIC_API_KEY) {
