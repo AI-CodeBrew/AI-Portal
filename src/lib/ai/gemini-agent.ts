@@ -15,6 +15,8 @@ import {
   DEFAULT_GEMINI_MODEL,
   normalizeGeminiModel,
 } from "@/lib/platform/llm-settings";
+import { chatThinkingConfig, selectSalesModel } from "./model-routing";
+import { MEMORY_DEFAULTS } from "@/lib/memory/types";
 
 const GEMINI_API_BASE =
   "https://generativelanguage.googleapis.com/v1beta/models";
@@ -98,6 +100,7 @@ async function geminiGenerate(params: {
   contents: GeminiContent[];
   forceToolName?: string;
 }): Promise<GeminiResponse> {
+  const thinking = chatThinkingConfig(params.model);
   const body: Record<string, unknown> = {
     systemInstruction: { parts: [{ text: params.systemPrompt }] },
     contents: params.contents,
@@ -105,6 +108,7 @@ async function geminiGenerate(params: {
     generationConfig: {
       temperature: 0.35,
       maxOutputTokens: 1024,
+      ...(thinking ?? {}),
     },
   };
 
@@ -153,9 +157,17 @@ export async function runSalesAgentWithGemini(
   const storeLabel = ctx.store.store_name || ctx.store.shop_domain || "our store";
   const latestUser = lastUserMessage(history);
   const historyLimit =
-    ctx.aiConfig?.effectiveChatHistoryLimit ?? CHAT_HISTORY_LIMIT;
+    ctx.memoryContext?.historyLimit ??
+    ctx.aiConfig?.effectiveChatHistoryLimit ??
+    CHAT_HISTORY_LIMIT ??
+    MEMORY_DEFAULTS.recent_turn_limit;
+  // historyLimit 0 = full thread; else post-compact exact window (summary holds older)
   const trimmedHistory = trimHistoryForAgent(history, historyLimit);
-  const model = normalizeGeminiModel(options.model);
+  const routedModel = selectSalesModel({
+    history: trimmedHistory,
+    latestUser,
+  });
+  const model = normalizeGeminiModel(options.model || routedModel);
   const agentCtx: AgentContext = { ...ctx, chatHistory: trimmedHistory };
 
   const skuHint = extractSkuFromText(latestUser);
@@ -171,6 +183,7 @@ export async function runSalesAgentWithGemini(
     adProductContext: ctx.adProductContext,
     pendingOrdersHint: ctx.pendingOrdersHint,
     history: trimmedHistory,
+    memoryContext: ctx.memoryContext,
   });
 
   const contents = mergeGeminiContents(toGeminiContents(trimmedHistory));

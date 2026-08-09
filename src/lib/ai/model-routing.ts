@@ -1,0 +1,47 @@
+import {
+  resolveGeminiChatModel,
+  resolveGeminiReasoningModel,
+} from "@/lib/platform/llm-settings";
+import { detectConversationStage } from "./conversation-stage";
+import { looksLikeOrderDecline } from "./sales-recovery";
+
+type HistoryMessage = { role: "user" | "assistant"; content: string };
+
+const HARD_NEGOTIATION =
+  /\b(too\s+expensive|discount|cheaper|negotiate|best\s+price|last\s+price|final\s+price|offer|bundle|deal|expensive|غالي|خصم|سعر)\b/i;
+
+/**
+ * Chat = gemini-3.6-flash (default).
+ * Hard negotiation / objection = gemini-3.1-pro-preview.
+ */
+export function selectSalesModel(params: {
+  history: HistoryMessage[];
+  latestUser: string;
+}): string {
+  const stage = detectConversationStage(params.history);
+  const text = params.latestUser.trim();
+
+  const hard =
+    stage === "objection_handling" ||
+    looksLikeOrderDecline(text) ||
+    HARD_NEGOTIATION.test(text);
+
+  if (hard) {
+    return resolveGeminiReasoningModel();
+  }
+  return resolveGeminiChatModel();
+}
+
+/** Low / minimal thinking for Flash chat turns. */
+export function chatThinkingConfig(model: string): Record<string, unknown> | null {
+  const id = model.toLowerCase();
+  if (id.includes("flash") && !id.includes("lite")) {
+    // Gemini 3 thinkingBudget: 0 = minimal/off when supported
+    return {
+      thinkingConfig: {
+        thinkingBudget: 0,
+      },
+    };
+  }
+  return null;
+}

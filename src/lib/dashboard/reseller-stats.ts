@@ -1,7 +1,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getStoreAiUsage } from "@/lib/ai/quota";
 import { DEFAULT_ORDER_TEMPLATE_ID } from "@/lib/ai/ai-settings-types";
-import { isSalesAgentConfigured } from "@/lib/ai/run-sales-agent";
+import { isLlmProviderConfigured } from "@/lib/platform/llm-settings";
 import { getStoreOrderTotals } from "@/lib/orders/store-order-totals";
 import { countStoreProducts } from "@/lib/products/products-service";
 
@@ -740,7 +740,7 @@ export async function getResellerDashboardStats(
       limit: aiUsage.limit,
       percentUsed: aiUsage.percentUsed,
       limitReached: aiUsage.limitReached,
-      platformConfigured: await isSalesAgentConfigured(),
+      platformConfigured: await isLlmProviderConfigured(),
     },
     ads: {
       linkCount: adRows.length,

@@ -5,7 +5,6 @@ import {
   AI_SETTING_DEFAULTS,
   REPLY_LENGTH_OPTIONS,
   TONE_OPTIONS,
-  UNLIMITED_CONTEXT_VALUE,
   type AiReplyLength,
   type AiTone,
 } from "@/lib/ai/ai-settings-types";
@@ -26,13 +25,6 @@ export function AdminAiDefaultsPanel() {
   const [supportEmail, setSupportEmail] = useState("");
   const [supportPhone, setSupportPhone] = useState("");
 
-  const [chatHistoryLimit, setChatHistoryLimit] = useState(
-    String(AI_SETTING_DEFAULTS.chatHistoryLimit)
-  );
-  const [sessionWindowHours, setSessionWindowHours] = useState(
-    String(AI_SETTING_DEFAULTS.sessionWindowHours)
-  );
-  const [unlimitedMemory, setUnlimitedMemory] = useState(false);
   const [recoveryDiscountPercent, setRecoveryDiscountPercent] = useState(
     String(AI_SETTING_DEFAULTS.recoveryDiscountPercent)
   );
@@ -58,16 +50,6 @@ export function AdminAiDefaultsPanel() {
       setPlatformName(s.platformName ?? "Arabia AI");
       setSupportEmail(s.supportEmail ?? "");
       setSupportPhone(s.supportPhone ?? "");
-      setChatHistoryLimit(
-        String(s.chatHistoryLimit ?? AI_SETTING_DEFAULTS.chatHistoryLimit)
-      );
-      setSessionWindowHours(
-        String(s.sessionWindowHours ?? AI_SETTING_DEFAULTS.sessionWindowHours)
-      );
-      setUnlimitedMemory(
-        s.chatHistoryLimit === UNLIMITED_CONTEXT_VALUE &&
-          s.sessionWindowHours === UNLIMITED_CONTEXT_VALUE
-      );
       setRecoveryDiscountPercent(
         String(
           s.recoveryDiscountPercent ??
@@ -117,13 +99,6 @@ export function AdminAiDefaultsPanel() {
           platformName: platformName || null,
           supportEmail: supportEmail || null,
           supportPhone: supportPhone || null,
-          chatHistoryLimit: unlimitedMemory
-            ? UNLIMITED_CONTEXT_VALUE
-            : Number(chatHistoryLimit) || AI_SETTING_DEFAULTS.chatHistoryLimit,
-          sessionWindowHours: unlimitedMemory
-            ? UNLIMITED_CONTEXT_VALUE
-            : Number(sessionWindowHours) ||
-              AI_SETTING_DEFAULTS.sessionWindowHours,
           recoveryDiscountPercent:
             Number(recoveryDiscountPercent) ||
             AI_SETTING_DEFAULTS.recoveryDiscountPercent,
@@ -137,8 +112,7 @@ export function AdminAiDefaultsPanel() {
           conversationReplyWindowHours:
             conversationReplyWindowHours.trim() === ""
               ? null
-              : Number(conversationReplyWindowHours),
-        }),
+              : Number(conversationReplyWindowHours),        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Save failed");
@@ -296,52 +270,6 @@ export function AdminAiDefaultsPanel() {
             Used when a reseller leaves these fields empty
           </p>
           <div className="mt-5 space-y-4">
-            <label className="flex cursor-pointer items-start gap-3">
-              <input
-                type="checkbox"
-                checked={unlimitedMemory}
-                onChange={(e) => setUnlimitedMemory(e.target.checked)}
-                className="mt-1 h-4 w-4 rounded border-slate-300 text-violet-600"
-              />
-              <span>
-                <span className="block font-medium text-slate-800">
-                  Unlimited conversation memory (default for new stores)
-                </span>
-                <span className="block text-xs text-slate-500">
-                  Full thread context — resellers can still override per store.
-                </span>
-              </span>
-            </label>
-            {!unlimitedMemory && (
-              <div className="grid gap-4 sm:grid-cols-2">
-            <label className="block text-sm">
-              <span className="font-medium text-slate-700">
-                Chat history (messages)
-              </span>
-              <input
-                type="number"
-                min={5}
-                max={50}
-                value={chatHistoryLimit}
-                onChange={(e) => setChatHistoryLimit(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm"
-              />
-            </label>
-            <label className="block text-sm">
-              <span className="font-medium text-slate-700">
-                Session window (hours)
-              </span>
-              <input
-                type="number"
-                min={1}
-                max={168}
-                value={sessionWindowHours}
-                onChange={(e) => setSessionWindowHours(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm"
-              />
-            </label>
-              </div>
-            )}
             <label className="block text-sm">
               <span className="font-medium text-slate-700">
                 First “no” discount %

@@ -2,6 +2,7 @@ import { buildSalesSystemPrompt } from "./build-system-prompt";
 import { getSuccessExamplesSection } from "@/lib/outcomes/prompt-examples-cache";
 import type { ResolvedStoreAiConfig } from "./ai-settings-types";
 import type { AdProductContext } from "@/lib/ads/types";
+import type { AgentMemoryContext } from "@/lib/memory/types";
 
 type HistoryMessage = { role: "user" | "assistant"; content: string };
 
@@ -13,6 +14,7 @@ export async function buildSalesSystemPromptWithExamples(params: {
   adProductContext?: AdProductContext | null;
   pendingOrdersHint?: string | null;
   history?: HistoryMessage[];
+  memoryContext?: AgentMemoryContext | null;
 }): Promise<string> {
   const successExamplesSection = await getSuccessExamplesSection(
     params.storeId
@@ -26,5 +28,6 @@ export async function buildSalesSystemPromptWithExamples(params: {
     pendingOrdersHint: params.pendingOrdersHint,
     history: params.history,
     successExamplesSection,
+    memoryContext: params.memoryContext,
   });
 }

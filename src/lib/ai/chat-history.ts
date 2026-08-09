@@ -17,6 +17,8 @@ export const AI_SESSION_WINDOW_HOURS: number =
 export type ChatHistoryMessage = {
   role: "user" | "assistant";
   content: string;
+  /** ISO timestamp — used for summary boundary / exact-window growth */
+  created_at?: string;
 };
 
 /**
@@ -61,25 +63,25 @@ export async function getRecentChatHistory(
         | "user"
         | "assistant",
       content: m.content,
+      created_at: typeof m.created_at === "string" ? m.created_at : undefined,
     }));
 }
 
-/** Resolve chat context limits for a store (reseller override → admin default). */
+/**
+ * Fetch cap for AI history. Actual trim/compact is decided by
+ * `resolveAgentChatHistory` (all messages until ~70% budget, then summary + last 20).
+ */
 export async function getStoreChatContextLimits(storeId: string): Promise<{
   historyLimit: number;
   windowHours: number;
   windowMs: number;
 }> {
-  const { resolveStoreAiConfig } = await import("./store-ai-settings");
-  const config = await resolveStoreAiConfig(storeId);
-  const historyLimit = config.effectiveChatHistoryLimit;
-  const windowHours = config.effectiveSessionWindowHours;
+  void storeId;
   return {
-    historyLimit,
-    windowHours,
-    windowMs: isUnlimitedSessionWindow(windowHours)
-      ? 0
-      : windowHours * 60 * 60 * 1000,
+    /** 0 = unlimited fetch (up to MAX_UNLIMITED_HISTORY_MESSAGES) */
+    historyLimit: 0,
+    windowHours: 0,
+    windowMs: 0,
   };
 }
 

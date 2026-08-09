@@ -51,6 +51,8 @@ export interface AgentContext {
   pendingOrdersHint?: string | null;
   /** Recent chat — used by browse_catalog and other tools */
   chatHistory?: Array<{ role: "user" | "assistant"; content: string }>;
+  /** Profile + rolling summary + Mem0 recall for this turn */
+  memoryContext?: import("@/lib/memory/types").AgentMemoryContext | null;
 }
 
 function formatVariantPrice(price: string, currency: string) {

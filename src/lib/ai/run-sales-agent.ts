@@ -196,16 +196,16 @@ export async function runSalesAgent(
 
   if (llm.geminiApiKey) {
     try {
+      // Model chosen inside gemini-agent via selectSalesModel (chat vs pro)
       return await runSalesAgentWithGemini(enrichedCtx, history, {
         apiKey: llm.geminiApiKey,
-        model: llm.geminiModel,
       });
     } catch (err) {
       console.error("[run-sales-agent] Gemini agent error:", err);
     }
   } else {
     console.error(
-      "[run-sales-agent] Gemini API key unavailable (set in Admin → AI Defaults or GEMINI_API_KEY env)"
+      "[run-sales-agent] Gemini API key unavailable (set GEMINI_API_KEY in env)"
     );
   }
 

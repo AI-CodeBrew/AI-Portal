@@ -1,6 +1,5 @@
 import { SALES_TOOL_RULES } from "./sales-tools";
-import { AI_SESSION_WINDOW_HOURS, CHAT_HISTORY_LIMIT } from "./chat-history";
-import { isUnlimitedChatHistory, isUnlimitedSessionWindow, MAX_UNLIMITED_HISTORY_MESSAGES } from "./ai-settings-types";
+import { CHAT_HISTORY_LIMIT } from "./chat-history";
 import type { ResolvedStoreAiConfig } from "./ai-settings-types";
 import type { AdProductContext } from "@/lib/ads/types";
 import {
@@ -9,6 +8,9 @@ import {
   formatStructuredSummary,
   getStageInstructions,
 } from "./conversation-stage";
+import { formatMemoryPromptBlocks } from "@/lib/memory/memory-format";
+import type { AgentMemoryContext } from "@/lib/memory/types";
+import { MEMORY_DEFAULTS } from "@/lib/memory/types";
 
 type HistoryMessage = { role: "user" | "assistant"; content: string };
 
@@ -20,6 +22,7 @@ export function buildSalesSystemPrompt(params: {
   pendingOrdersHint?: string | null;
   history?: HistoryMessage[];
   successExamplesSection?: string | null;
+  memoryContext?: AgentMemoryContext | null;
 }): string {
   const {
     storeLabel,
@@ -29,6 +32,7 @@ export function buildSalesSystemPrompt(params: {
     pendingOrdersHint,
     history = [],
     successExamplesSection,
+    memoryContext,
   } = params;
 
   const agentName =
@@ -73,17 +77,19 @@ export function buildSalesSystemPrompt(params: {
     "If they have a pending Shopify order, help them CONFIRM or CANCEL via confirm_order / cancel_order tools.";
 
   const historyLimit =
-    aiConfig?.effectiveChatHistoryLimit ?? CHAT_HISTORY_LIMIT;
-  const sessionHours =
-    aiConfig?.effectiveSessionWindowHours ?? AI_SESSION_WINDOW_HOURS;
+    memoryContext?.historyLimit ??
+    aiConfig?.effectiveChatHistoryLimit ??
+    CHAT_HISTORY_LIMIT ??
+    MEMORY_DEFAULTS.recent_turn_limit;
 
-  const sessionNote = isUnlimitedChatHistory(historyLimit)
-    ? isUnlimitedSessionWindow(sessionHours)
-      ? "You see the full WhatsApp thread for this customer (unlimited memory — no mid-deal fresh start). Older messages stay in context until the chat is cleared."
-      : `You see up to the last ${MAX_UNLIMITED_HISTORY_MESSAGES} messages in this chat (unlimited message memory). Session still resets after ${sessionHours} hours of inactivity on older messages.`
-    : isUnlimitedSessionWindow(sessionHours)
-      ? `You see the last ${historyLimit} messages with no time-based fresh start — the full active deal stays in context.`
-      : `You see up to the last ${historyLimit} messages from the current ${sessionHours}-hour session. Older chat is not in context — still use tools for orders.`;
+  const memoryBlocks = formatMemoryPromptBlocks(memoryContext);
+  const sessionNote =
+    historyLimit === 0
+      ? `You see the full conversation so far (verbatim) plus any customer profile above. Do not re-ask facts already in the profile.`
+      : `You see the last ${historyLimit} messages verbatim plus any conversation summary and customer profile above. Do not re-ask facts already in the profile or summary.`;
+
+  const profileName =
+    memoryContext?.profile?.name || summary.customer_name || "unknown";
 
   return `# IDENTITY
 You are ${agentName}, a sales representative at ${storeName}. You are a real person chatting on WhatsApp — not an AI, not a bot, not an assistant. Never say you are an AI, a language model, or a chatbot, even if directly asked. If pressed hard, say "I'm part of the ${storeName} sales team" and move back to the customer's needs.
@@ -118,10 +124,11 @@ ${stageInstructions}
 ${stage === "greeting" && adProductContext ? `- Customer landed from an ad about ${adSku}. Greet warmly, confirm you're pulling up the product, call search_products.` : ""}
 
 # CUSTOMER & ORDER CONTEXT
-- Customer name: ${summary.customer_name ?? "unknown"}
+- Customer name: ${profileName}
 - Ad source SKU: ${adSku}
 - Known details: ${formatStructuredSummary(summary)}
 ${adProductLine ? `- ${adProductLine}` : ""}${pendingBlock}
+${memoryBlocks ? `\n${memoryBlocks}` : ""}
 
 # TOOLS (this store's catalog only)
 - browse_catalog() — show 2 catalog items when the customer wants to browse without naming a product; call again for "more/other"

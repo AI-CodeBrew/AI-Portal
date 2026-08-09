@@ -1,5 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { normalizePhone } from "@/lib/phone";
+import { clearRollingSummaryForPhone } from "@/lib/memory/conversation-compaction";
 
 /** Mark that this customer's AI chat was cleared from the inbox — next thread is fresh. */
 export async function markAiSessionReset(
@@ -24,6 +25,9 @@ export async function markAiSessionReset(
   if (error) {
     throw new Error(error.message);
   }
+
+  // Clear rolling summary; durable customer profile is kept
+  await clearRollingSummaryForPhone(storeId, phone);
 }
 
 /** Latest inbox clear time for this customer, if any. */

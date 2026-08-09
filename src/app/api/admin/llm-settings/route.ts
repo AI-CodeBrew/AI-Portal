@@ -1,9 +1,6 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
-import {
-  getPlatformLlmAdminView,
-  updatePlatformLlmSettings,
-} from "@/lib/platform/llm-settings";
+import { getPlatformLlmAdminView } from "@/lib/platform/llm-settings";
 
 export async function GET() {
   try {
@@ -15,29 +12,17 @@ export async function GET() {
   }
 }
 
-export async function PATCH(request: NextRequest) {
+/** Models and API key are env-only; admin cannot change them. */
+export async function PATCH() {
   try {
-    const user = await requireAuth("admin");
-    const body = (await request.json()) as {
-      geminiApiKey?: string;
-      geminiModel?: string;
-      geminiIntentModel?: string;
-      clearGeminiApiKey?: boolean;
-    };
-
-    const result = await updatePlatformLlmSettings({
-      geminiApiKey: body.geminiApiKey,
-      geminiModel: body.geminiModel,
-      geminiIntentModel: body.geminiIntentModel,
-      clearGeminiApiKey: body.clearGeminiApiKey,
-      updatedBy: user.id,
-    });
-
-    if ("error" in result) {
-      return NextResponse.json({ error: result.error }, { status: 400 });
-    }
-
-    return NextResponse.json({ settings: result });
+    await requireAuth("admin");
+    return NextResponse.json(
+      {
+        error:
+          "Gemini API key and models are configured via environment variables and cannot be changed here.",
+      },
+      { status: 405 }
+    );
   } catch {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

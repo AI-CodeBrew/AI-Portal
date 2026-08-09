@@ -68,8 +68,10 @@ export interface ResolvedStoreAiConfig extends StoreAiSettings {
 }
 
 export const AI_SETTING_DEFAULTS = {
-  chatHistoryLimit: 10,
-  sessionWindowHours: 2,
+  /** Last N verbatim messages for the AI (no time cut by default). */
+  chatHistoryLimit: 20,
+  /** 0 = no session time window — older context kept via rolling summary. */
+  sessionWindowHours: 0,
   recoveryDiscountPercent: 15,
   recoveryBundleDiscountPercent: 25,
 } as const;
@@ -168,7 +170,7 @@ export const DEFAULT_WHATSAPP_SALES_INSTRUCTIONS = `You are a WhatsApp sales age
   3) If they still refuse, offer a 2-pack bundle at the configured bundle discount %. If they accept, create_draft_order with qty and that discount.
   4) If they refuse again, thank them and stop pushing.
 - Always calculate totals as unit price × quantity × (1 − discount%/100).
-- Use the last 10 chat messages for context (sizes, "that one", follow-ups).
+- Use the last 20 chat messages plus conversation summary for context (sizes, "that one", follow-ups).
 - Never call create_draft_order until phone + full delivery address are confirmed (name is optional). If the phone is missing, incomplete, or invalid, ask them to send the correct full number.
 - After create_draft_order succeeds, tell them the order is confirmed and share brief dispatching details (processing / expected delivery window).
 - Keep replies short and suitable for WhatsApp.`;

@@ -24,6 +24,14 @@ import {
   getAiSessionResetAt,
   resolveAiContextSinceIso,
 } from "@/lib/ai/session-reset";
+import {
+  buildAgentMemoryContext,
+  updateProfileFromTurn,
+} from "@/lib/memory/agent-memory-context";
+import { resolveAgentChatHistory } from "@/lib/memory/conversation-compaction";
+import { extractAndStoreMemories } from "@/lib/memory/mem0-client";
+import { buildSalesSessionKey } from "@/lib/memory/session-key";
+import { MEMORY_DEFAULTS } from "@/lib/memory/types";
 import { quotaLimitMessage } from "@/lib/ai/plans";
 import { tryConsumeAiQuota } from "@/lib/ai/quota";
 import {
@@ -565,15 +573,22 @@ export async function handleWhatsAppWebhookMessage(
                     `[whatsapp-webhook] AI quota exceeded store=${activeStore.id} used=${quota.usage.used}/${quota.usage.limit}`
                   );
                 } else {
-                  const chatLimits = await getStoreChatContextLimits(
-                    activeStore.id
-                  );
-                  const chatHistory = await getRecentChatHistory(
-                    conversation.id,
-                    chatLimits.historyLimit,
-                    chatLimits.windowMs,
-                    aiContextSince
-                  );
+                  // Full thread until ~70% budget; then summary + last 20 exact
+                  const resolvedHistory = await resolveAgentChatHistory({
+                    conversationId: conversation.id,
+                    sinceIso: aiContextSince,
+                  });
+                  const chatHistory = resolvedHistory.history;
+
+                  const memoryContext = await buildAgentMemoryContext({
+                    storeId: activeStore.id,
+                    customerPhone,
+                    conversationId: conversation.id,
+                    sinceIso: aiContextSince,
+                    latestUserMessage: inboundText,
+                    storeHistoryLimit: resolvedHistory.historyLimit,
+                    rollingSummaryOverride: resolvedHistory.rollingSummary,
+                  });
 
                   replyText = await runSalesAgent(
                     {
@@ -582,6 +597,7 @@ export async function handleWhatsAppWebhookMessage(
                       customerPhone,
                       customerId: conversation.customer_id,
                       adProductContext,
+                      memoryContext,
                     },
                     chatHistory
                   );
@@ -631,7 +647,7 @@ export async function handleWhatsAppWebhookMessage(
               }
             } else {
               console.error(
-                "[whatsapp-webhook] No Gemini configured — set GEMINI_API_KEY or Admin → AI Defaults."
+                "[whatsapp-webhook] No Gemini configured — set GEMINI_API_KEY in env."
               );
               const chatLimits = await getStoreChatContextLimits(activeStore.id);
               const chatHistory = await getRecentChatHistory(
@@ -674,6 +690,26 @@ export async function handleWhatsAppWebhookMessage(
               direction: "out",
               // Keep internal markers in stored history so recovery stage still works
               content: replyText,
+            });
+
+            // Post-reply memory writeback (non-blocking): rules profile + Mem0 extract
+            const historyForProfile = await getRecentChatHistory(
+              conversation.id,
+              MEMORY_DEFAULTS.recent_turn_limit,
+              0,
+              aiContextSince
+            );
+            void updateProfileFromTurn({
+              storeId: activeStore.id,
+              customerPhone,
+              userMessage: inboundText,
+              assistantReply: replyText,
+              history: historyForProfile,
+            });
+            void extractAndStoreMemories({
+              sessionKey: buildSalesSessionKey(activeStore.id, customerPhone),
+              userMessage: inboundText,
+              assistantReply: customerFacingText,
             });
 
             // Count AI replies toward per-conversation limit (+ optional window)

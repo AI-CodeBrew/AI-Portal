@@ -2,7 +2,7 @@
 
 Living documentation for how the portal’s WhatsApp sales AI works. **Update this file whenever you change AI behavior, prompts, tools, or message flow.**
 
-Last updated: 2026-07-16
+Last updated: 2026-08-09
 
 ---
 
@@ -169,16 +169,30 @@ Send order in webhook: images first (with delay), then text.
 
 ---
 
-## Chat memory
+## Chat memory (5 layers)
 
-| Setting | Default | Source |
-|---------|---------|--------|
-| History limit | 10 messages | `ai_chat_history_limit` / platform default |
-| Session window | 2 hours | `ai_session_window_hours` |
+| Layer | What | Default |
+|-------|------|---------|
+| 1 Session identity | `storeId:phone` persistent conversation | Webhook resolve |
+| 2 Short-term history | **Full thread** while under ~70% of 120k budget | No time window |
+| 3 Compaction | At ~70%: rolling summary of older chat + last **20** exact | Utility model |
+| 4 Customer profile | Name, language, funnel, SKUs, objections | Rules-first update |
+| 5 Long-term Mem0 | Supabase pgvector recall; Gemini `gemini-embedding-001` | Soft-fail if unset |
 
-- AI only sees messages inside the window (`chat-history.ts`)
-- Full history remains in reseller inbox
-- Internal markers kept in DB so recovery/stages still work
+- Under budget: agent **contents** = all messages in the session
+- At/over ~70%: compact → prompt gets rolling summary + last 20 verbatim (exact window then grows with new msgs until ~70% again)
+- Prompt inject = profile + rolling summary + Mem0 recall
+- Inbox clear resets summary; durable profile is kept
+- Resolver: `resolveAgentChatHistory` in `conversation-compaction.ts`
+- Files: `src/lib/memory/*`, migration `039_conversation_memory.sql`
+
+### Model routing
+
+| Task | Model env |
+|------|-----------|
+| Default chat / tools | `GEMINI_CHAT_MODEL` (low thinking) |
+| Hard negotiation / objections | `GEMINI_REASONING_MODEL` |
+| Summary + Mem0 extract / intent | `GEMINI_UTILITY_MODEL` |
 
 ---
 
@@ -204,9 +218,11 @@ Admin platform defaults apply when store leaves a field null.
 
 | Variable | Role |
 |----------|------|
-| `GEMINI_API_KEY` | Gemini LLM + intent router (Admin → AI Defaults or env) |
-| `GEMINI_API_KEY` | Optional Gemini fallback if not saved in admin UI |
-| `ANTHROPIC_API_KEY` | Fallback LLM if active provider unavailable |
+| `GEMINI_API_KEY` | Gemini API key (env only; admin UI is status-only) |
+| `GEMINI_CHAT_MODEL` | Chat / sales replies (default `gemini-3.6-flash`) |
+| `GEMINI_REASONING_MODEL` | Heavier reasoning tasks (default `gemini-3.1-pro-preview`) |
+| `GEMINI_UTILITY_MODEL` | Light utility / intent routing (default `gemini-3.1-flash-lite`) |
+| `ANTHROPIC_API_KEY` | Fallback LLM if Gemini unavailable |
 | `BUNNY_CDN_HOSTNAME` | Portal product image URLs |
 
 ---
@@ -225,7 +241,9 @@ When you change AI behavior, update **this doc** and the relevant file:
 | Checkout parsing | `src/lib/ai/checkout-reply.ts`, `checkout-parse.ts` |
 | Recovery offers | `src/lib/ai/sales-recovery.ts` |
 | Gemini / Anthropic loops | `src/lib/ai/gemini-agent.ts`, `anthropic-agent.ts`, `intent-router.ts` |
-| LLM provider admin | `src/lib/platform/llm-settings.ts`, Admin → AI Defaults → LLM Provider |
+| LLM env + status | `src/lib/platform/llm-settings.ts`, Admin → AI Defaults (read-only) |
+| Model routing | `src/lib/ai/model-routing.ts` |
+| Memory layers | `src/lib/memory/*` (profile, compaction, mem0, agent-memory-context) |
 | Webhook / send | `src/lib/whatsapp-webhook-handler.ts` |
 | Image markers / strip | `src/lib/ai/message-markers.ts` |
 | WebP → JPEG for WhatsApp | `src/lib/whatsapp-image.server.ts` |
@@ -238,6 +256,10 @@ When you change AI behavior, update **this doc** and the relevant file:
 
 | Date | Change |
 |------|--------|
+| 2026-08-09 | History: pass full thread until ~70% of 120k budget, then summarize older chat and keep last 20 exact (`resolveAgentChatHistory`). |
+| 2026-08-09 | Five-layer memory: 20-msg history (no time window), rolling summary compaction, customer profile, Mem0+pgvector recall; Pro model for hard negotiation. |
+| 2026-08-09 | Removed chat history / session window controls from admin and reseller AI settings UIs. |
+| 2026-08-09 | Gemini key + models from env only (`GEMINI_CHAT_MODEL`, `GEMINI_REASONING_MODEL`, `GEMINI_UTILITY_MODEL`); admin LLM panel is status-only (connected + model names). |
 | 2026-07-16 | Product not in catalog: direct lookup returns a clear "not available" reply instead of generic SKU greeting; relevance filter on search hits. |
 | 2026-07-16 | Webhook atomic dedup (`whatsapp_webhook_dedup`); no LLM on price objections (recovery only); discount shows real price; typo declines like "expsnive". |
 | 2026-07-16 | Gemini fixes: model alias `gemini-3-flash` → `gemini-3-flash-preview`; webhook no longer drops replies if dedup migration missing; Gemini errors fall back to greeting. |
