@@ -7,6 +7,10 @@ import type {
   PeriodMetric,
   ResellerDashboardStats,
 } from "@/lib/dashboard/reseller-stats";
+import {
+  cachedJsonFetch,
+  peekCachedJson,
+} from "@/lib/client-fetch-cache";
 
 function formatDelta(metric: PeriodMetric, suffix = "%"): string {
   if (metric.deltaPercent == null) {
@@ -217,18 +221,28 @@ function OrderStatusBars({
   );
 }
 
+const DASHBOARD_STATS_KEY = "dashboard:stats";
+
 export function ResellerDashboard() {
-  const [stats, setStats] = useState<ResellerDashboardStats | null>(null);
-  const [loading, setLoading] = useState(true);
+  const cached = peekCachedJson<{ stats?: ResellerDashboardStats; error?: string }>(
+    DASHBOARD_STATS_KEY
+  );
+  const [stats, setStats] = useState<ResellerDashboardStats | null>(
+    cached?.stats ?? null
+  );
+  const [loading, setLoading] = useState(!cached?.stats);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
-    fetch("/api/dashboard/stats")
-      .then((res) => res.json())
-      .then((data) => {
+    void cachedJsonFetch<{ stats?: ResellerDashboardStats; error?: string }>(
+      DASHBOARD_STATS_KEY,
+      "/api/dashboard/stats",
+      { ttlMs: 45_000, staleWhileRevalidate: true }
+    )
+      .then(({ data }) => {
         if (data.error) throw new Error(data.error);
-        setStats(data.stats);
+        if (data.stats) setStats(data.stats);
       })
       .catch((err) =>
         setError(err instanceof Error ? err.message : "Failed to load")

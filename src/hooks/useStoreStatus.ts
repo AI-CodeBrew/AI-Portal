@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { cachedJsonFetch, peekCachedJson } from "@/lib/client-fetch-cache";
 
 export interface StoreStatus {
   id: string;
@@ -31,14 +32,22 @@ export interface StoreStatus {
   };
 }
 
-export function useStoreStatus() {
-  const [store, setStore] = useState<StoreStatus | null>(null);
-  const [loading, setLoading] = useState(true);
+const STORE_STATUS_KEY = "store:status";
 
-  const refresh = useCallback(async () => {
+export function useStoreStatus() {
+  const cached = peekCachedJson<{ store?: StoreStatus | null }>(STORE_STATUS_KEY);
+  const [store, setStore] = useState<StoreStatus | null>(cached?.store ?? null);
+  const [loading, setLoading] = useState(!cached?.store);
+
+  const refresh = useCallback(async (force = false) => {
     try {
-      const res = await fetch("/api/store");
-      const data = await res.json();
+      const { data } = await cachedJsonFetch<{
+        store?: StoreStatus | null;
+      }>(STORE_STATUS_KEY, "/api/store", {
+        ttlMs: 60_000,
+        staleWhileRevalidate: !force,
+        force,
+      });
       setStore(data.store ?? null);
     } catch {
       setStore(null);
@@ -48,8 +57,12 @@ export function useStoreStatus() {
   }, []);
 
   useEffect(() => {
-    refresh();
+    void refresh(false);
   }, [refresh]);
 
-  return { store, loading, refresh };
+  return {
+    store,
+    loading,
+    refresh: () => refresh(true),
+  };
 }

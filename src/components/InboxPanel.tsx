@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { cachedJsonFetch } from "@/lib/client-fetch-cache";
 import { ChatMessageBody } from "@/components/ChatMessageBody";
 import { createClient } from "@/lib/supabase/client";
 import type { WhatsappConversation, WhatsappMessage } from "@/lib/types";
@@ -132,11 +133,16 @@ export function InboxPanel() {
   }, [search]);
 
   const fetchConversations = useCallback(async () => {
-    setLoading(true);
     const params = new URLSearchParams({ filter });
     if (debouncedSearch) params.set("q", debouncedSearch);
-    const res = await fetch(`/api/inbox?${params}`);
-    const data = await res.json();
+    const cacheKey = `inbox:list:${params.toString()}`;
+    setLoading(true);
+    const { data } = await cachedJsonFetch<{
+      conversations?: WhatsappConversation[];
+    }>(cacheKey, `/api/inbox?${params}`, {
+      ttlMs: 20_000,
+      staleWhileRevalidate: true,
+    });
     const list = (data.conversations ?? []) as WhatsappConversation[];
     setConversations(list);
     setLoading(false);

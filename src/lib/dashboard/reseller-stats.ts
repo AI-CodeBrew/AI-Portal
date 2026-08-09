@@ -201,13 +201,26 @@ export async function getResellerDashboardStats(
   const previousStartIso = previousStart.toISOString();
   const previousEndIso = previousEnd.toISOString();
 
-  const { data: store } = await supabase
-    .from("stores")
-    .select(
-      "store_name, shop_domain, shopify_access_token, whatsapp_phone_number_id, whatsapp_access_token, meta_app_id, meta_app_secret, ai_agent_name, ai_opening_message, ai_order_template_id, created_at"
-    )
-    .eq("id", storeId)
-    .single();
+  // Parallelize store + ad links (was sequential ~2 round-trips)
+  const [storeRes, adLinksQuery] = await Promise.all([
+    supabase
+      .from("stores")
+      .select(
+        "store_name, shop_domain, shopify_access_token, whatsapp_phone_number_id, whatsapp_access_token, meta_app_id, meta_app_secret, ai_agent_name, ai_opening_message, ai_order_template_id, created_at"
+      )
+      .eq("id", storeId)
+      .single(),
+    supabase
+      .from("ad_whatsapp_links")
+      .select(
+        "id, slug, product_title, price, currency, click_count, prefill_message, created_at"
+      )
+      .eq("store_id", storeId)
+      .order("click_count", { ascending: false })
+      .order("created_at", { ascending: false }),
+  ]);
+
+  const store = storeRes.data;
 
   const shopifyConnected = Boolean(store?.shopify_access_token);
   const whatsappConnected = Boolean(
@@ -217,15 +230,6 @@ export async function getResellerDashboardStats(
   const businessInfoDone = Boolean(
     store?.store_name?.trim() || store?.shop_domain?.trim()
   );
-
-  const adLinksQuery = await supabase
-    .from("ad_whatsapp_links")
-    .select(
-      "id, slug, product_title, price, currency, click_count, prefill_message, created_at"
-    )
-    .eq("store_id", storeId)
-    .order("click_count", { ascending: false })
-    .order("created_at", { ascending: false });
 
   const adRows =
     adLinksQuery.error?.message.includes("ad_whatsapp_links") ||
