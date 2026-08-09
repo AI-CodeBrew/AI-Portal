@@ -4,8 +4,10 @@ import { getAppUrl } from "./app-url";
 
 export { getAppUrl };
 
+/** Keep in sync with Shopify Partner app Allowed redirection + scopes. */
 export const DEFAULT_SHOPIFY_SCOPES =
-  "read_orders,write_orders,read_products,read_customers,write_draft_orders,read_merchant_managed_fulfillment_orders,write_merchant_managed_fulfillment_orders";
+  process.env.SHOPIFY_SCOPES?.trim() ||
+  "read_orders,write_orders,read_products,read_customers,write_draft_orders";
 
 const API_VERSION = "2024-10";
 
