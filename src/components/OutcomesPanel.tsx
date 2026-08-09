@@ -274,14 +274,7 @@ export function OutcomesPanel() {
         {loading ? (
           <p className="px-4 py-8 text-sm text-slate-600">Loading…</p>
         ) : outcomes.length === 0 ? (
-          <div className="px-4 py-8 text-sm text-slate-600 space-y-2">
-            <p>No extracted outcomes yet.</p>
-            <p>
-              After a WhatsApp AI order is <strong>confirmed</strong>, click{" "}
-              <strong>Analyze closed deals</strong> above (or wait for the daily
-              cron). Requires migration 033 in Supabase.
-            </p>
-          </div>
+          <p className="px-4 py-8 text-sm text-slate-500">No outcomes yet.</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="min-w-full text-left text-sm">
