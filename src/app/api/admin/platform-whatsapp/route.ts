@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import {
+  clearPlatformMetaSettings,
   getPlatformMetaAdminView,
   listResellerWhatsAppStatus,
   updatePlatformMetaSettings,
@@ -28,10 +29,19 @@ export async function POST(request: NextRequest) {
   try {
     const user = await requireAuth("admin");
     const body = (await request.json()) as {
+      action?: "save" | "disconnect";
       metaAppId?: string;
       metaAppSecret?: string;
       metaConfigId?: string;
     };
+
+    if (body.action === "disconnect") {
+      const result = await clearPlatformMetaSettings(user.id);
+      if ("error" in result) {
+        return NextResponse.json({ error: result.error }, { status: 400 });
+      }
+      return NextResponse.json({ settings: result });
+    }
 
     const result = await updatePlatformMetaSettings({
       metaAppId: body.metaAppId ?? "",

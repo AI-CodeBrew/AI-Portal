@@ -116,6 +116,7 @@ export function AdminWhatsAppPlatformPanel() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          action: "save",
           metaAppId,
           metaAppSecret: metaAppSecret || undefined,
           metaConfigId,
@@ -129,6 +130,39 @@ export function AdminWhatsAppPlatformPanel() {
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function disconnect() {
+    if (
+      !confirm(
+        "Disconnect platform Meta / WhatsApp credentials? Resellers will not be able to connect WhatsApp until you save new credentials."
+      )
+    ) {
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const res = await fetch("/api/admin/platform-whatsapp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "disconnect" }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Disconnect failed");
+      setSettings(data.settings);
+      setMetaAppId("");
+      setMetaAppSecret("");
+      setMetaConfigId("");
+      setSuccess(
+        "Platform Meta credentials disconnected. Enter new App ID, Secret, and Config ID, then Save."
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Disconnect failed");
     } finally {
       setSaving(false);
     }
@@ -243,13 +277,27 @@ export function AdminWhatsAppPlatformPanel() {
             </div>
           </div>
 
-          <button
-            type="submit"
-            disabled={saving}
-            className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-50"
-          >
-            {saving ? "Saving..." : "Save"}
-          </button>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="submit"
+              disabled={saving}
+              className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-50"
+            >
+              {saving ? "Saving..." : "Save"}
+            </button>
+            {(settings?.configured ||
+              settings?.metaAppId ||
+              settings?.hasMetaAppSecret) && (
+              <button
+                type="button"
+                onClick={disconnect}
+                disabled={saving}
+                className="rounded-lg border border-red-300 bg-white px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"
+              >
+                {saving ? "Working..." : "Disconnect"}
+              </button>
+            )}
+          </div>
         </form>
       </div>
 

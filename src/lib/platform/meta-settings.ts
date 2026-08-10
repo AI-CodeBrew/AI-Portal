@@ -210,6 +210,43 @@ export async function updatePlatformMetaSettings(input: {
   }
 }
 
+/** Clear platform Meta credentials so admin can reconnect with a new app. */
+export async function clearPlatformMetaSettings(updatedBy?: string | null): Promise<
+  PlatformMetaAdminView | { error: string }
+> {
+  const supabase = createAdminClient();
+  const { error } = await supabase
+    .from("platform_settings")
+    .upsert(
+      {
+        id: 1,
+        meta_app_id: null,
+        meta_app_secret: null,
+        meta_embedded_signup_config_id: null,
+        whatsapp_verify_token: null,
+        updated_at: new Date().toISOString(),
+        updated_by: updatedBy ?? null,
+      },
+      { onConflict: "id" }
+    );
+
+  if (error) {
+    const hint = error.message.includes("platform_settings")
+      ? " — Run migration 023_platform_settings.sql in Supabase"
+      : "";
+    return { error: error.message + hint };
+  }
+
+  try {
+    return await getPlatformMetaAdminView();
+  } catch (err) {
+    return {
+      error:
+        err instanceof Error ? err.message : "Cleared but failed to reload",
+    };
+  }
+}
+
 export type ResellerWhatsAppStatus =
   | "connected"
   | "not_connected"
