@@ -168,9 +168,13 @@ export function WhatsAppIntegrationPanel() {
       (response) => {
         if (!response.authResponse?.code) {
           setConnectStatus(store?.whatsapp_connected ? "connected" : "idle");
+          const status = response.status;
           setMessage({
             type: "error",
-            text: "Signup was cancelled. You can try Connect WhatsApp again anytime.",
+            text:
+              status === "unknown" || status === "not_authorized"
+                ? "Facebook blocked login for this account (often “Feature unavailable”). Your admin Facebook may work because it has an app role. Ask the platform admin to finish Meta Live setup: App Domains, User Data Deletion URL, Data Use Checkup, and Advanced Access for public_profile — or add your Facebook as an App Tester."
+                : "Signup was cancelled or Facebook Login failed. Try again, or use a different Facebook account.",
           });
           return;
         }

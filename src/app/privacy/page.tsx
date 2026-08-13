@@ -282,8 +282,11 @@ export default function PrivacyPolicyPage() {
         <div className="mx-auto flex max-w-3xl flex-col items-center justify-between gap-3 px-5 text-xs text-slate-500 sm:flex-row sm:px-8">
           <p>© {new Date().getFullYear()} Arabia AI</p>
           <div className="flex gap-4 font-medium text-slate-600">
-            <Link href="/privacy" className="hover:text-slate-900">
-              Privacy Policy
+            <Link href="/terms" className="hover:text-slate-900">
+              Terms
+            </Link>
+            <Link href="/data-deletion" className="hover:text-slate-900">
+              Data deletion
             </Link>
             <Link href="/login" className="hover:text-slate-900">
               Sign in
