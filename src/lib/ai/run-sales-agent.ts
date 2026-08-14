@@ -24,8 +24,10 @@ import {
 } from "./sales-recovery";
 import {
   buildCasualGreetingReply,
+  buildHowAreYouReply,
   buildWaitingForQuestionReply,
   looksLikeCasualGreeting,
+  looksLikeHowAreYou,
   looksLikeOffTopicChat,
   assistantAlreadyWelcomed,
   tryDirectGreetingReply,
@@ -267,6 +269,10 @@ export async function runSalesAgent(
     if (direct?.reply) return direct.reply;
   } catch (err) {
     console.error("[run-sales-agent] direct product fallback failed:", err);
+  }
+
+  if (looksLikeHowAreYou(latestUser)) {
+    return buildHowAreYouReply(enrichedCtx);
   }
 
   // Never greet again when they clearly asked for a product

@@ -256,6 +256,7 @@ When you change AI behavior, update **this doc** and the relevant file:
 
 | Date | Change |
 |------|--------|
+| 2026-08-14 | “How are you” / “hey bro how are you” → natural “I'm fine…” reply; anti-spam “ask me a product” only for empty hi/hey loops. |
 | 2026-08-14 | Roman Urdu product asks + bare names (e.g. Audionic buds) → search, not English greeting; reply in same language/script as customer. |
 | 2026-08-14 | Anti-spam greetings: first hi = one welcome; hello/hey again → “How can I help you?” only — never re-send opening intro. |
 | 2026-08-14 | Returning “hey again”: greet + ask for a product to show (not old catalog-list “which product from the list / pull it up”). Catalog browse context limited to recent turns. |

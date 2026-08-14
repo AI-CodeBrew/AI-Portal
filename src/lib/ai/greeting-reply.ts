@@ -15,7 +15,9 @@ export function looksLikeHowAreYou(text: string): boolean {
   return (
     /\bhow\s+(are\s+you|are\s+u|r\s+u|is\s+it\s+going|you\s+doing)\b/i.test(t) ||
     /\bhow('s|s)\s+(it\s+going|things|your\s+day|everything)\b/i.test(t) ||
-    /\bhow\s+(you|u)\s+doing\b/i.test(t)
+    /\bhow\s+(you|u)\s+doing\b/i.test(t) ||
+    /\bkya\s+haal\b/i.test(t) ||
+    /\bkesi?\s+ho\b/i.test(t)
   );
 }
 
@@ -111,17 +113,19 @@ export function buildHowAreYouReply(ctx: AgentContext): string {
   const store = storeLabel(ctx);
   const agent = agentLabel(ctx, store);
   const variants = [
-    `I'm doing well, thanks! How can I help you today?`,
-    `All good here — thanks for asking. How can I help you?`,
-    `I'm fine, thanks! ${agent} here — how can I help you?`,
+    `I'm doing well, thanks for asking! 😊 How about you?`,
+    `All good here, thank you! How are you doing?`,
+    `I'm fine, thanks! ${agent} here — hope you're doing great too 🙌`,
   ];
   const idx = Math.abs(store.length + agent.length + 1) % variants.length;
   return variants[idx]!;
 }
 
 /**
- * Greeting handler. First hi → short welcome.
- * Hello/hey again and again → one short "How can I help you?" — never spam opening.
+ * Greeting handler.
+ * - "how are you" → natural human reply (even if already welcomed)
+ * - First hi → short welcome
+ * - hi/hey again only → "How can I help you?" (no opening spam)
  */
 export function tryDirectGreetingReply(
   ctx: AgentContext,
@@ -133,15 +137,16 @@ export function tryDirectGreetingReply(
     looksLikeExactGreetingOnly(latestUserMessage) ||
     looksLikeCasualGreeting(latestUserMessage);
 
-  if (!isHowAreYou && !isGreeting) return null;
-
-  // Already welcomed (or customer keeps saying hi) → don't re-introduce
-  if (assistantAlreadyWelcomed(history)) {
-    return buildWaitingForQuestionReply();
-  }
-
+  // Real "how are you?" — answer like a person, never the product waiting line
   if (isHowAreYou) {
     return buildHowAreYouReply(ctx);
+  }
+
+  if (!isGreeting) return null;
+
+  // Repeat hi/hey only — don't re-send full intro
+  if (assistantAlreadyWelcomed(history)) {
+    return buildWaitingForQuestionReply();
   }
 
   return buildCasualGreetingReply(ctx);
