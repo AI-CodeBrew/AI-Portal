@@ -51,7 +51,7 @@ import {
 } from "@/lib/ads/ad-links-service";
 import { parseAdRefFromMessage } from "@/lib/ads/whatsapp-ad-links";
 import { extractOutboundMedia } from "@/lib/ai/message-markers";
-import { buildCasualGreetingReply, tryDirectOffTopicReply } from "@/lib/ai/greeting-reply";
+import { buildCasualGreetingReply, tryDirectOffTopicReply, looksLikeExactGreetingOnly } from "@/lib/ai/greeting-reply";
 import {
   getStoreWhatsAppCredentials,
   resolveMetaSecret,
@@ -515,6 +515,7 @@ export async function handleWhatsAppWebhookMessage(
             }
           );
 
+          let openingSentThisTurn = false;
           if (isNewConversation && !looksLikeProductInquiry(inboundText)) {
             try {
               const aiSettings = await resolveStoreAiConfig(activeStore.id);
@@ -542,6 +543,7 @@ export async function handleWhatsAppWebhookMessage(
                 );
                 // Only show in portal if WhatsApp accepted the message
                 if (openingResult.ok) {
+                  openingSentThisTurn = true;
                   await supabase.from("whatsapp_messages").insert({
                     conversation_id: conversation.id,
                     direction: "out",
@@ -556,6 +558,11 @@ export async function handleWhatsAppWebhookMessage(
             } catch (openingErr) {
               console.error("[whatsapp-webhook] Opening message error:", openingErr);
             }
+          }
+
+          // Opening already welcomed them — don't also send casual "Hi I'm …" greeting
+          if (openingSentThisTurn && looksLikeExactGreetingOnly(inboundText)) {
+            continue;
           }
 
           // Typing indicator + read receipt — before LLM / reply generation

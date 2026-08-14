@@ -24,10 +24,7 @@ import {
 } from "./sales-recovery";
 import {
   buildCasualGreetingReply,
-  buildHowAreYouReply,
   looksLikeOffTopicChat,
-  tryDirectGreetingReply,
-  tryDirectOffTopicReply,
 } from "./greeting-reply";
 import { resolveExactDirectRoute } from "./exact-routes";
 import { catalogBrowseActiveInHistory } from "@/lib/products/products-service";
@@ -111,15 +108,6 @@ async function tryExactDirectReply(
     case "return_policy": {
       return tryDirectPolicyReply(ctx, latestUser);
     }
-    case "greeting_only": {
-      return tryDirectGreetingReply(ctx, latestUser);
-    }
-    case "how_are_you": {
-      return buildHowAreYouReply(ctx);
-    }
-    case "off_topic": {
-      return tryDirectOffTopicReply(ctx, latestUser);
-    }
     case "variant_selection": {
       const variant = await tryDirectVariantSelectionReply(
         ctx,
@@ -150,20 +138,8 @@ export async function runSalesAgent(
   const latestUser =
     [...history].reverse().find((m) => m.role === "user")?.content ?? "";
 
-  // Price objections / declines — before variant or catalog exact handlers
-  if (looksLikeOrderDecline(latestUser)) {
-    try {
-      const recovery = await tryDirectSalesRecoveryReply(
-        enrichedCtx,
-        latestUser,
-        history
-      );
-      if (recovery) return recovery;
-    } catch (err) {
-      console.error("[run-sales-agent] sales recovery (early) failed:", err);
-    }
-  }
-
+  // Fast path ONLY for clear structural intents (SKU, checkout details, browse, policy).
+  // Price/discount/ambiguous chat → LLM (intent router may tip tool handlers, else Gemini).
   const exactRoute = resolveExactDirectRoute(latestUser, history);
 
   try {
@@ -176,18 +152,6 @@ export async function runSalesAgent(
     if (exact) return exact;
   } catch (err) {
     console.error("[run-sales-agent] exact direct reply failed:", err);
-  }
-
-  // Recovery uses its own exact decline patterns + pitch detection
-  try {
-    const recovery = await tryDirectSalesRecoveryReply(
-      enrichedCtx,
-      latestUser,
-      history
-    );
-    if (recovery) return recovery;
-  } catch (err) {
-    console.error("[run-sales-agent] sales recovery failed:", err);
   }
 
   try {
@@ -206,7 +170,6 @@ export async function runSalesAgent(
 
   if (llm.geminiApiKey) {
     try {
-      // Model chosen inside gemini-agent via selectSalesModel (chat vs pro)
       return await runSalesAgentWithGemini(enrichedCtx, history, {
         apiKey: llm.geminiApiKey,
       });
@@ -224,6 +187,20 @@ export async function runSalesAgent(
       return runSalesAgentWithAnthropic(enrichedCtx, history);
     } catch (err) {
       console.error("[run-sales-agent] Anthropic agent error:", err);
+    }
+  }
+
+  // Gemini failed — last-resort recovery for clear declines only
+  if (looksLikeOrderDecline(latestUser)) {
+    try {
+      const recovery = await tryDirectSalesRecoveryReply(
+        enrichedCtx,
+        latestUser,
+        history
+      );
+      if (recovery) return recovery;
+    } catch (err) {
+      console.error("[run-sales-agent] recovery fallback failed:", err);
     }
   }
 

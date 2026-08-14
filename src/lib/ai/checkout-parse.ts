@@ -9,13 +9,22 @@ import { looksLikeVariantSelection } from "./variant-selection";
 import { looksLikeExactNamedProductQuery } from "./exact-routes";
 
 const CHECKOUT_INTENT =
-  /\b(place\s+(an\s+)?order|want\s+to\s+(order|buy)|order\s+(this|it|now)|buy\s+(this|it|now)|checkout|confirm\s+(my\s+)?order|i('m| am)?\s+(ready|ordering)|yes|yeah|yep|ok|okay|sure|deal)\b/i;
+  /\b(place\s+(an\s+)?order|want\s+to\s+(order|buy)|order\s+(this|it|now)|buy\s+(this|it|now)|checkout|confirm\s+(my\s+)?order|i('m| am)?\s+(ready|ordering)|deal)\b/i;
+
+/** Affirmations that are still shopping — not ready to place an order. */
+export function looksLikeStillShoppingMessage(text: string): boolean {
+  const t = text.trim();
+  if (t.length < 4) return false;
+  return /\b(looking\s+for\s+(a\s+)?products?|want\s+(to\s+)?(see|browse|find)|show\s+(me\s+)?(products?|options|something)|share\s+(some\s+)?(different|other|more)\s+products?|(different|other|more)\s+products?|winning\s+products|just\s+browsing|see\s+(what\s+)?(you\s+)?have)\b/i.test(
+    t
+  );
+}
 
 const HAS_CONTACT_HINT =
   /\b(name|naam|phone|ph|mobile|whatsapp|address|addr|city|deliver)\b/i;
 
 const ASKED_FOR_DETAILS =
-  /\b(full name|share your|want it\?|delivery address|phone & delivery|phone and delivery|reply like this|phone \(for confirmation\)|please share|i'll place the order|i'll confirm your order|discounted price|want to order|phone.*required|delivery address.*required|almost there|confirm this order)\b/i;
+  /\b(share your phone|phone & delivery|phone and delivery|reply like this|phone \(for confirmation\)|i'll place the order|i'll confirm your order|discounted price|phone.*required|delivery address.*required|almost there\s*[—–-]|confirm this order|to confirm your order)\b/i;
 
 /** Product/catalog question — not checkout contact details. Exact patterns only. */
 export function looksLikeProductQuestion(
@@ -65,6 +74,9 @@ export function looksLikeCheckoutMessage(
 ): boolean {
   const t = text.trim();
   if (t.length < 8) return false;
+
+  // Still shopping / browsing — never treat as checkout
+  if (looksLikeStillShoppingMessage(t)) return false;
 
   // New product question — never treat as checkout, even mid order flow
   if (looksLikeProductQuestion(t, history ?? [])) return false;

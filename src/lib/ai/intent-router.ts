@@ -1,7 +1,6 @@
 import {
   getActiveLlmConfig,
   DEFAULT_GEMINI_INTENT_MODEL,
-  normalizeGeminiIntentModel,
 } from "@/lib/platform/llm-settings";
 import type { AgentContext } from "./sales-tools";
 import type { ExactDirectRoute } from "./exact-routes";
@@ -17,13 +16,7 @@ import {
   tryDirectCatalogProductPickReply,
   tryDirectProductImageReply,
 } from "./product-reply";
-import {
-  buildHowAreYouReply,
-  tryDirectGreetingReply,
-  tryDirectOffTopicReply,
-} from "./greeting-reply";
 import { formatVariantOptionReprompt } from "./variant-selection";
-import { catalogBrowseActiveInHistory } from "@/lib/products/products-service";
 
 const GEMINI_API_BASE =
   "https://generativelanguage.googleapis.com/v1beta/models";
@@ -34,8 +27,8 @@ const ROUTER_MODEL_FALLBACKS = [
   "gemini-2.5-flash",
 ] as const;
 
-const CONFIDENCE_ACT = 0.72;
-const CONFIDENCE_CLARIFY = 0.45;
+/** Only act on tool-ish intents when the classifier is confident. */
+const CONFIDENCE_ACT = 0.78;
 
 export type SalesIntent =
   | "checkout"
@@ -61,32 +54,34 @@ export type IntentRouterResult = {
   reason: string | null;
 };
 
+/**
+ * Lightweight classifier only — does NOT invent customer replies.
+ * Conversational intents return null so the full sales LLM answers.
+ */
 const ROUTER_SYSTEM_PROMPT = `You classify WhatsApp sales chat intent for a store assistant.
-Return ONLY valid JSON with this shape:
+Return ONLY valid JSON:
 {
   "intent": "checkout|catalog_browse|catalog_more|catalog_product_pick|product_search|variant_selection|objection_recovery|product_image|greeting|how_are_you|off_topic|clarify|open_chat",
   "confidence": 0.0 to 1.0,
   "product_hint": "product name or SKU if known, else null",
   "variant_hint": "color/size option if known, else null",
-  "clarify_question": "short WhatsApp question if intent is clarify, else null",
+  "clarify_question": null,
   "reason": "one short line for logs"
 }
 
 Rules:
 - Use conversation context. Short replies like "yes", "that one", "ok", "yellow" refer to the LAST product/options the assistant showed.
-- checkout: customer shares or confirms phone + delivery address to place order.
-- catalog_browse: wants to see products without naming one.
-- catalog_more: wants different/more products after a browse list.
-- catalog_product_pick: picks a product from a recently shown browse list.
-- product_search: asks about a named product, price, availability, or SKU.
-- variant_selection: chooses size/color/option for a product already discussed.
-- objection_recovery: price too high, not interested, too expensive, decline — NOT a new product search.
-- product_image: asks to see/send product photo.
-- greeting / how_are_you / off_topic: small talk.
-- clarify: message is ambiguous; ask ONE short confirming question (use product_hint/variant_hint when possible).
-- open_chat: general question best handled by full sales agent (order status, policies, complex ask).
-- Never choose product_search for price objections.
-- confidence: 0.9+ only when very clear; 0.5-0.7 when guessing; use clarify intent when unsure.`;
+- checkout: customer shares phone + delivery address to place order (not just "yes" or "looking for a product").
+- catalog_browse / catalog_more: wants to see products / other products.
+- catalog_product_pick: picks one from a recently shown browse list.
+- product_search: named product, price of a named item, or SKU.
+- variant_selection: chooses size/color for a product already discussed.
+- objection_recovery: costly, expensive, discount, offer, % off, bulk, won't buy, not interested — any price pushback. NOT product_search.
+- product_image: wants a photo.
+- greeting / how_are_you / off_topic / clarify / open_chat: conversational — classify only; the main LLM will reply.
+- NEVER invent a customer-facing clarify question. Set clarify_question to null.
+- Never choose product_search for discount/price objections.
+- confidence: 0.9+ when very clear; lower when unsure.`;
 
 function formatHistoryForRouter(
   history: Array<{ role: "user" | "assistant"; content: string }>,
@@ -94,7 +89,8 @@ function formatHistoryForRouter(
 ): string {
   const recent = history.slice(-8);
   const lines = recent.map(
-    (m) => `${m.role === "user" ? "Customer" : "Assistant"}: ${m.content.slice(0, 500)}`
+    (m) =>
+      `${m.role === "user" ? "Customer" : "Assistant"}: ${m.content.slice(0, 500)}`
   );
   if (!lines.length || recent[recent.length - 1]?.content !== latestUser) {
     lines.push(`Customer: ${latestUser}`);
@@ -126,26 +122,21 @@ function parseRouterJson(raw: string): IntentRouterResult | null {
       "open_chat",
     ];
     if (!valid.includes(intent)) return null;
-
     const confidence = Number(data.confidence);
     return {
       intent,
       confidence: Number.isFinite(confidence)
         ? Math.min(1, Math.max(0, confidence))
-        : 0.5,
+        : 0,
       product_hint:
         typeof data.product_hint === "string" && data.product_hint.trim()
-          ? data.product_hint.trim()
+          ? data.product_hint.trim().slice(0, 120)
           : null,
       variant_hint:
         typeof data.variant_hint === "string" && data.variant_hint.trim()
-          ? data.variant_hint.trim()
+          ? data.variant_hint.trim().slice(0, 80)
           : null,
-      clarify_question:
-        typeof data.clarify_question === "string" &&
-        data.clarify_question.trim()
-          ? data.clarify_question.trim().slice(0, 320)
-          : null,
+      clarify_question: null,
       reason:
         typeof data.reason === "string" && data.reason.trim()
           ? data.reason.trim().slice(0, 200)
@@ -159,16 +150,14 @@ function parseRouterJson(raw: string): IntentRouterResult | null {
 async function callGeminiIntentRouter(
   apiKey: string,
   transcript: string,
-  primaryModel: string
+  preferredModel: string
 ): Promise<IntentRouterResult | null> {
-  let lastError = "";
   const models = [
-    normalizeGeminiIntentModel(primaryModel),
-    ...ROUTER_MODEL_FALLBACKS.filter(
-      (m) => m !== normalizeGeminiIntentModel(primaryModel)
-    ),
+    preferredModel,
+    ...ROUTER_MODEL_FALLBACKS.filter((m) => m !== preferredModel),
   ];
 
+  let lastError: string | null = null;
   for (const model of models) {
     try {
       const res = await fetch(
@@ -181,50 +170,36 @@ async function callGeminiIntentRouter(
           },
           body: JSON.stringify({
             systemInstruction: { parts: [{ text: ROUTER_SYSTEM_PROMPT }] },
-            contents: [
-              {
-                role: "user",
-                parts: [
-                  {
-                    text: `Classify the customer's latest intent from this WhatsApp thread:\n\n${transcript}`,
-                  },
-                ],
-              },
-            ],
+            contents: [{ role: "user", parts: [{ text: transcript }] }],
             generationConfig: {
-              temperature: 0.15,
-              maxOutputTokens: 512,
+              temperature: 0.1,
+              maxOutputTokens: 256,
               responseMimeType: "application/json",
             },
           }),
         }
       );
-
+      const raw = await res.text();
       if (!res.ok) {
-        lastError = await res.text();
-        if (res.status === 404) continue;
-        throw new Error(`Gemini router ${model}: ${lastError.slice(0, 200)}`);
+        lastError = `${model} HTTP ${res.status}: ${raw.slice(0, 200)}`;
+        continue;
       }
-
-      const data = (await res.json()) as {
+      const data = JSON.parse(raw) as {
         candidates?: Array<{
           content?: { parts?: Array<{ text?: string }> };
         }>;
       };
-
-      const text =
-        data.candidates?.[0]?.content?.parts
-          ?.map((p) => p.text ?? "")
-          .join("")
-          .trim() ?? "";
-
-      const parsed = parseRouterJson(text);
-      if (parsed) {
-        console.log(
-          `[intent-router] model=${model} intent=${parsed.intent} confidence=${parsed.confidence} reason=${parsed.reason ?? ""}`
-        );
-        return parsed;
+      const text = data.candidates?.[0]?.content?.parts
+        ?.map((p) => p.text ?? "")
+        .join("")
+        .trim();
+      if (!text) {
+        lastError = `${model}: empty response`;
+        continue;
       }
+      const parsed = parseRouterJson(text);
+      if (parsed) return parsed;
+      lastError = `${model}: could not parse JSON`;
     } catch (err) {
       lastError = err instanceof Error ? err.message : String(err);
       console.warn(`[intent-router] ${model} failed:`, lastError);
@@ -273,12 +248,26 @@ function buildRoutedUserMessage(
   }
 }
 
+/** Intents the full sales LLM should answer (no hardcoded reply). */
+const LLM_OWNED_INTENTS = new Set<SalesIntent>([
+  "objection_recovery",
+  "greeting",
+  "how_are_you",
+  "off_topic",
+  "clarify",
+  "open_chat",
+]);
+
 async function executeRoutedIntent(
   ctx: AgentContext,
   latestUser: string,
   history: Array<{ role: "user" | "assistant"; content: string }>,
   routed: IntentRouterResult
 ): Promise<string | null> {
+  if (LLM_OWNED_INTENTS.has(routed.intent)) {
+    return null;
+  }
+
   const message = buildRoutedUserMessage(latestUser, routed);
 
   switch (routed.intent) {
@@ -295,48 +284,25 @@ async function executeRoutedIntent(
       return direct?.reply ?? null;
     }
     case "variant_selection": {
-      const variant = await tryDirectVariantSelectionReply(ctx, message, history);
+      const variant = await tryDirectVariantSelectionReply(
+        ctx,
+        message,
+        history
+      );
       if (variant) return variant;
       return formatVariantOptionReprompt(history);
     }
-    case "objection_recovery":
-      return tryDirectSalesRecoveryReply(ctx, message, history);
     case "product_image":
       return tryDirectProductImageReply(ctx, message, history);
-    case "greeting":
-      return tryDirectGreetingReply(ctx, message);
-    case "how_are_you":
-      return buildHowAreYouReply(ctx);
-    case "off_topic":
-      return tryDirectOffTopicReply(ctx, message);
-    case "clarify":
-      return null;
-    case "open_chat":
-      return null;
     default:
       return null;
   }
 }
 
-function defaultClarifyQuestion(
-  history: Array<{ role: "user" | "assistant"; content: string }>,
-  routed: IntentRouterResult
-): string {
-  if (routed.product_hint && routed.variant_hint) {
-    return `Just to confirm — you want *${routed.product_hint}* in *${routed.variant_hint}*? Reply yes or tell me the correct option.`;
-  }
-  if (routed.product_hint) {
-    return `Did you mean *${routed.product_hint}*? Reply with the product name or say yes to continue.`;
-  }
-  if (catalogBrowseActiveInHistory(history)) {
-    return "Which product from the list did you mean? Reply with the name (e.g. Audionic ENC).";
-  }
-  return "I want to help — are you looking for a product, choosing a size/color, or ready to share phone & address to order?";
-}
-
 /**
- * Gemini intent router for ambiguous messages (no exact regex route).
- * Returns a handler reply, a clarifying question, or null to fall through to full LLM.
+ * LLM classifies intent. Tool-ish intents may run handlers.
+ * Price/discount/small-talk/clarify → null so the main sales LLM replies.
+ * Never returns hardcoded "Did you mean…?" copy.
  */
 export async function tryIntentRoutedReply(
   ctx: AgentContext,
@@ -345,15 +311,6 @@ export async function tryIntentRoutedReply(
   exactRoute: ExactDirectRoute | null
 ): Promise<string | null> {
   if (!shouldRunIntentRouter(latestUser, exactRoute)) return null;
-
-  if (looksLikeOrderDecline(latestUser)) {
-    const recovery = await tryDirectSalesRecoveryReply(
-      ctx,
-      latestUser,
-      history
-    );
-    if (recovery) return recovery;
-  }
 
   const llm = await getActiveLlmConfig();
   const apiKey = llm.geminiApiKey;
@@ -368,36 +325,33 @@ export async function tryIntentRoutedReply(
   const routed = await callGeminiIntentRouter(apiKey, transcript, intentModel);
   if (!routed) return null;
 
+  console.log(
+    `[intent-router] intent=${routed.intent} conf=${routed.confidence.toFixed(2)} reason=${routed.reason ?? ""}`
+  );
+
+  // Conversational / price / unclear → main Gemini sales agent
+  if (LLM_OWNED_INTENTS.has(routed.intent) || routed.confidence < CONFIDENCE_ACT) {
+    return null;
+  }
+
+  // Don't treat price talk as product search even if classifier slips
   if (
-    routed.intent === "clarify" ||
-    routed.confidence < CONFIDENCE_CLARIFY
+    routed.intent === "product_search" &&
+    looksLikeOrderDecline(latestUser)
   ) {
-    return (
-      routed.clarify_question?.trim() ||
-      defaultClarifyQuestion(history, routed)
-    );
-  }
-
-  if (routed.confidence < CONFIDENCE_ACT) {
-    return (
-      routed.clarify_question?.trim() ||
-      defaultClarifyQuestion(history, routed)
-    );
-  }
-
-  if (routed.intent === "open_chat") {
     return null;
   }
 
   const reply = await executeRoutedIntent(ctx, latestUser, history, routed);
-  if (reply) return reply;
+  return reply;
+}
 
-  if (routed.confidence >= CONFIDENCE_ACT) {
-    return (
-      routed.clarify_question?.trim() ||
-      defaultClarifyQuestion(history, routed)
-    );
-  }
-
-  return null;
+/** @deprecated recovery is LLM-owned; kept for Gemini-failure fallback only */
+export async function tryRecoveryIfDecline(
+  ctx: AgentContext,
+  latestUser: string,
+  history: Array<{ role: "user" | "assistant"; content: string }>
+): Promise<string | null> {
+  if (!looksLikeOrderDecline(latestUser)) return null;
+  return tryDirectSalesRecoveryReply(ctx, latestUser, history);
 }

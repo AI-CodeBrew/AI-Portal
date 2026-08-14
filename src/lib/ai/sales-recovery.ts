@@ -10,6 +10,7 @@ import type { AgentContext } from "./sales-tools";
 import {
   looksLikeCheckoutMessage,
   parseCheckoutDetails,
+  looksLikeStillShoppingMessage,
 } from "./checkout-parse";
 import { orderDetailsTemplate } from "./order-details-template";
 import { findActiveProductContext } from "./product-reply";
@@ -20,7 +21,7 @@ export {
 } from "./message-markers";
 
 const DECLINE_PATTERN =
-  /\b(don'?t\s+want|dont\s+want|do\s+not\s+want|not\s+(interested|now|today|ordering|buying|want)|no\s+thanks|no\s+thank\s+you|nah+|nope|not\s+for\s+me|maybe\s+later|later|skip|cancel|i'?ll\s+pass|no\s+order|won'?t\s+(order|buy)|wnt\s+to\s+order|expens\w*|xpens\w*|too\s+(much|pricey|costly)|can'?t\s+afford|\bbudget\b|over\s+budget|out\s+of\s+(my\s+)?budget)\b/i;
+  /\b(don'?t\s+want|dont\s+want|do\s+not\s+want|not\s+(interested|now|today|ordering|buying|want)|no\s+thanks|no\s+thank\s+you|nah+|nope|not\s+for\s+me|maybe\s+later|later|skip|cancel|i'?ll\s+pass|no\s+order|won'?t\s+(order|buy)|not\s+going\s+to\s+(buy|order)|wnt\s+to\s+order|expens\w*|xpens\w*|costly|too\s+(much|pricey|costly)|(?:price|cost|rate)\s+(is\s+)?(too\s+)?high|high\s+(price|cost)|can'?t\s+afford|\bbudget\b|over\s+budget|out\s+of\s+(my\s+)?budget|overpriced|not\s+worth|discount|discounts|any\s+offers?|better\s+(price|deal|offer)|special\s+(price|offer|deal)|last\s+price|best\s+price|final\s+price|reduce\s+(the\s+)?price|lower\s+(the\s+)?price|cheaper|sasta|offer\s+(me|please)|give\s+(me\s+)?(a\s+)?(discount|offer)|can\s+(you|u)\s+give|\d+\s*%\s*off|%\s*off|percent(?:age)?\s+off|bulk\s*(order|discount|deal|off|price)?|on\s+bulk)\b/i;
 
 const HARD_STOP_PATTERN =
   /\b(stop\s+(messaging|texting|contacting)|unsubscribe|leave\s+me\s+alone|never\s+(message|contact)|block|spam)\b/i;
@@ -37,6 +38,18 @@ export function productOfferedInHistory(
 ): boolean {
   return history.some(
     (m) => m.role === "assistant" && PRODUCT_OFFERED_PATTERN.test(m.content)
+  );
+}
+
+/** True when last assistant turn was already a "Did you mean…?" clarify (avoid loops). */
+export function lastAssistantWasProductClarify(
+  history: Array<{ role: "user" | "assistant"; content: string }>
+): boolean {
+  const last = [...history].reverse().find((m) => m.role === "assistant");
+  if (!last) return false;
+  return (
+    /Did you mean \*/i.test(last.content) ||
+    /Just to confirm — you want \*/i.test(last.content)
   );
 }
 
@@ -562,6 +575,13 @@ export function parseOrderQuantity(
 export function looksLikeOrderDecline(text: string): boolean {
   const t = text.trim();
   if (t.length < 2) return false;
+  // Asking for other products is browse — not a price decline
+  if (
+    /\b(different|other|more)\s+products?\b/i.test(t) ||
+    /\bshare\s+(?:me\s+)?(?:some\s+)?(?:other|different|more)\b/i.test(t)
+  ) {
+    return false;
+  }
   if (looksLikeCheckoutMessage(t)) return false;
   if (HARD_STOP_PATTERN.test(t)) return true;
   if (/^(no|nope|nah|not now|maybe later|no thanks|don't want)\.?$/i.test(t)) {
@@ -575,6 +595,7 @@ export function looksLikeOfferAcceptance(text: string): boolean {
   // If contact details are already in the message, checkout places the order
   if (parseCheckoutDetails(t)) return false;
   if (looksLikeCheckoutMessage(t)) return false;
+  if (looksLikeStillShoppingMessage(t)) return false;
   if (looksLikeOrderDecline(t)) return false;
   return ACCEPT_OFFER_PATTERN.test(t) && t.length <= 120;
 }
@@ -587,6 +608,19 @@ export async function tryDirectSalesRecoveryReply(
   const assistants = lastAssistantMessages(history, 12);
   const recentAssistant = assistants.join("\n");
   const hadProductPitch = PRODUCT_OFFERED_PATTERN.test(recentAssistant);
+
+  // Discount/offer ask with no product in chat yet — don't SKU-search "discount"
+  if (!hadProductPitch && looksLikeOrderDecline(latestUserMessage)) {
+    if (
+      /\b(discount|offer|cheaper|sasta|best\s+price|last\s+price|special\s+price)\b/i.test(
+        latestUserMessage
+      )
+    ) {
+      return `Prices are already set for quality — which product are you looking at? Send the name or SKU and I'll pull it up.`;
+    }
+    return null;
+  }
+
   if (!hadProductPitch) return null;
 
   const product = findProductContext(history, latestUserMessage);

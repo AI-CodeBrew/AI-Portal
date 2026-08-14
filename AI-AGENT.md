@@ -45,17 +45,16 @@ Save full reply (with internal markers) to whatsapp_messages
 
 ## Hybrid pipeline (`run-sales-agent.ts`)
 
-Handlers run **in order**. First match wins; LLM only runs if nothing else handles the message.
+Handlers run **in order**. First match wins.
 
-| Order | Handler | File | When |
-|------|---------|------|------|
-| 1 | Checkout | `checkout-reply.ts` | Customer sends name + phone + address (or after assistant asked for details) |
-| 2 | Sales recovery | `sales-recovery.ts` | Decline / “too expensive” after product pitch → discount → bundle → stop |
-| 3 | Product image | `product-reply.ts` | “Send/share/show product image/photo” |
-| 4 | Product lookup | `product-reply.ts` | SKU or product name question (SKU wins even if message says “want to order”) |
-| 6 | LLM | `gemini-agent.ts` / `anthropic-agent.ts` (env) | Everything else |
+| Order | Handler | When |
+|------|---------|------|
+| 1 | Exact routes | Clear SKU, checkout with phone+address, catalog browse phrases, product confirm (“yes” after Did you mean), delivery/return policy |
+| 2 | Intent router (LLM classify) | High-confidence **tool** intents only (search/browse/checkout/variant/image). Price/discount/small-talk/clarify → **fall through** (no hardcoded reply) |
+| 3 | Gemini sales agent | Writes the customer reply (objections, ads, ambiguous phrasing) using system prompt + tools |
+| 4 | Fallbacks | Catalog pick / checkout / product / greeting — only if Gemini fails |
 
-If the LLM throws, the webhook falls back to direct product/image lookup before a generic error message.
+**LLM-first for conversation:** Do not regex-match every “costly / discount” phrasing into a canned reply. Gemini decides intent from full chat context; discount ladder lives in the system prompt.
 
 ---
 
@@ -257,6 +256,9 @@ When you change AI behavior, update **this doc** and the relevant file:
 
 | Date | Change |
 |------|--------|
+| 2026-08-14 | LLM-first for conversational intents (price/discount/ambiguous): no hardcoded recovery/clarify replies; intent router classifies only; Gemini writes the answer. Fast path kept for SKU/checkout/browse/policy only. |
+| 2026-08-14 | Price-objection loop fix: match “costly / cost is high / % off / bulk”; never “Did you mean same product?” after a pitch; recovery before intent clarify (critical for ad traffic). |
+| 2026-08-14 | Chat fixes: discount/offer → recovery (not catalog search); value before %; no double greeting after opening; “looking for product” / “different products” → browse not checkout; clarify copy no longer pushes address. |
 | 2026-08-14 | Policy fast handlers: delivery ETA 3–5 days; damaged-by-courier → photos + failed-delivery note to support WhatsApp for refund (`policy-reply.ts`). |
 | 2026-08-14 | Fix: “yes” after “Did you mean *product*?” continues that product instead of casual greeting (`product_confirm`; yes/ok removed from greeting-only). |
 | 2026-08-14 | Off-topic: match “who are you / tell me who are you”; route identity before catalog pick; skip catalog-list fallback for identity. |

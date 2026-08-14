@@ -7,11 +7,6 @@ import {
 } from "@/lib/products/products-service";
 import { parseCheckoutDetails, looksLikeCheckoutMessage } from "./checkout-parse";
 import { looksLikeCatalogProductPick } from "./catalog-browse-pick";
-import {
-  looksLikeHowAreYou,
-  looksLikeOffTopicChat,
-  looksLikeExactGreetingOnly,
-} from "./greeting-reply";
 import { looksLikeProductConfirmAffirmation } from "./product-confirm";
 import {
   looksLikeDeliveryEtaQuestion,
@@ -30,13 +25,10 @@ export type ExactDirectRoute =
   | "variant_selection"
   | "product_confirm"
   | "delivery_policy"
-  | "return_policy"
-  | "greeting_only"
-  | "how_are_you"
-  | "off_topic";
+  | "return_policy";
 
 const EXPLICIT_NAMED_PRODUCT_ASK =
-  /\b(?:do you have|have you got|got any|how much is|how much for|what(?:'s| is) the price of|price of|tell me about|details (?:on|about|for)|looking for|searching for|i want(?:\s+(?:to buy|info on|the|a|an))?|need info on|i(?:'ll| will) take|give me)\b[\s,:-]*(.+)/i;
+  /\b(?:do you have|have you got|got any|how much is|how much for|what(?:'s| is) the price of|price of|tell me about|details (?:on|about|for)|looking for|searching for|i want(?:\s+(?:to buy|info on|the|a|an))?|need info on|i(?:'ll| will) take)\b[\s,:-]*(.+)/i;
 
 const NAMED_PRODUCT_FILLER = new Set([
   "product",
@@ -85,20 +77,18 @@ export function resolveExactDirectRoute(
     return "checkout";
   }
 
-  // "yes" after "Did you mean *X*?" — before greeting so affirmations continue the product
+  // Browse / different products before greetings & confirm
+  if (looksLikeCatalogBrowseMoreRequest(t, history)) return "catalog_more";
+  if (looksLikeCatalogBrowseRequest(t)) return "catalog_browse";
+
   if (looksLikeProductConfirmAffirmation(t, history)) return "product_confirm";
 
-  // Factual store policies — before greeting / catalog so Gemini doesn't invent ETAs/refunds
+  // Factual policies only — conversational intents go to the LLM
   if (looksLikeDeliveryEtaQuestion(t)) return "delivery_policy";
   if (looksLikeReturnOrDamageQuestion(t)) return "return_policy";
 
-  // Identity / greeting before catalog pick — avoids "who are you" → product-list fallback
-  if (looksLikeHowAreYou(t)) return "how_are_you";
-  if (looksLikeOffTopicChat(t)) return "off_topic";
-  if (looksLikeExactGreetingOnly(t)) return "greeting_only";
-
-  if (looksLikeCatalogBrowseMoreRequest(t, history)) return "catalog_more";
-  if (looksLikeCatalogBrowseRequest(t)) return "catalog_browse";
+  // Greetings / identity → LLM (avoids double-hardcoded intros)
+  // kept out of exact routes on purpose
 
   if (looksLikeVariantSelection(t, history)) return "variant_selection";
 

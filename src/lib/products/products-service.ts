@@ -942,20 +942,20 @@ export function productSearchTokens(query: string): string[] {
   ).slice(0, 6);
 }
 
-/** Price pushback / refusal — not a catalog search (e.g. "no it's very expensive"). */
+/** Price pushback / discount ask / refusal — not a catalog search. */
 export function looksLikeObjectionPhrase(text: string): boolean {
   const t = text.trim();
   if (t.length < 2) return false;
-  return /\b(don'?t\s+want|dont\s+want|do\s+not\s+want|not\s+(interested|now|today|ordering|buying|want)|no\s+thanks|no\s+thank\s+you|nah+|nope|not\s+for\s+me|maybe\s+later|skip|cancel|i'?ll\s+pass|no\s+order|won'?t\s+(order|buy)|expens\w*|xpens\w*|too\s+(much|pricey|costly|expensive)|can'?t\s+afford|\bbudget\b|over\s+budget|out\s+of\s+(my\s+)?budget|overpriced|not\s+worth)\b/i.test(
+  return /\b(don'?t\s+want|dont\s+want|do\s+not\s+want|not\s+(interested|now|today|ordering|buying|want)|no\s+thanks|no\s+thank\s+you|nah+|nope|not\s+for\s+me|maybe\s+later|skip|cancel|i'?ll\s+pass|no\s+order|won'?t\s+(order|buy)|expens\w*|xpens\w*|costly|too\s+(much|pricey|costly|expensive)|(?:price|cost|rate)\s+(is\s+)?(too\s+)?high|high\s+(price|cost)|can'?t\s+afford|\bbudget\b|over\s+budget|out\s+of\s+(my\s+)?budget|overpriced|not\s+worth|discount|discounts|any\s+offers?|better\s+(price|deal|offer)|special\s+(price|offer|deal)|last\s+price|best\s+price|final\s+price|reduce\s+(the\s+)?price|lower\s+(the\s+)?price|cheaper|sasta|offer\s+(me|please)|give\s+(me\s+)?(a\s+)?(discount|offer)|can\s+(you|u)\s+give|\d+\s*%\s*off|%\s*off|percent(?:age)?\s+off|bulk\s*(order|discount|deal|off|price)?|on\s+bulk)\b/i.test(
     t
   );
 }
 
 const CATALOG_BROWSE_PATTERN =
-  /\b(?:show\s+(?:me\s+)?(?:(?:some|your|a\s+few|any)\s+)?products(?:\s+(?:which|that|i\s+can\s+)?(?:i\s+can\s+)?buy)?|show\s+(?:me\s+)?(?:what\s+(?:you\s+)?(?:have|sell)|something\s+(?:i\s+can\s+)?buy)|what\s+(?:can\s+)?(?:i|we)\s+(?:can\s+)?buy|what\s+(?:do\s+you\s+)?(?:have|sell)|what\s+products|your\s+(?:catalog|products)|browse(?:\s+the\s+catalog)?|recommend\s+(?:me\s+)?something|any\s+suggestions?|something\s+to\s+buy)\b/i;
+  /\b(?:show\s+(?:me\s+)?(?:(?:some|your|a\s+few|any)\s+)?products(?:\s+(?:which|that|i\s+can\s+)?(?:i\s+can\s+)?buy)?|show\s+(?:me\s+)?(?:what\s+(?:you\s+)?(?:have|sell)|something\s+(?:i\s+can\s+)?buy)|what\s+(?:can\s+)?(?:i|we)\s+(?:can\s+)?buy|what\s+(?:do\s+you\s+)?(?:have|sell)|what\s+products|your\s+(?:catalog|products)|browse(?:\s+the\s+catalog)?|recommend\s+(?:me\s+)?something|any\s+suggestions?|something\s+to\s+buy|looking\s+for\s+(?:a\s+)?products?|share\s+(?:me\s+)?(?:some\s+)?(?:different|other|more)\s+products?|(?:different|other|more)\s+products?|winning\s+products)\b/i;
 
 const CATALOG_BROWSE_MORE_PATTERN =
-  /\b(?:(?:show\s+(?:me\s+)?)?(?:some\s+)?(?:other|more|different|another)(?:\s+products?)?|something\s+else|anything\s+else|what\s+else|next\s+(?:ones?|products?|options?)?|any\s+others?|different\s+ones?|more\s+options?)\b/i;
+  /\b(?:(?:show\s+(?:me\s+)?)?(?:some\s+)?(?:other|more|different|another)(?:\s+products?)?|something\s+else|anything\s+else|what\s+else|next\s+(?:ones?|products?|options?)?|any\s+others?|different\s+ones?|more\s+options?|share\s+(?:me\s+)?(?:some\s+)?(?:other|different|more)(?:\s+products?)?)\b/i;
 
 export const CATALOG_BROWSE_INTRO =
   /Here are a couple of things you can order from us/i;
@@ -1003,6 +1003,12 @@ const CATALOG_BROWSE_GENERIC = new Set([
   "from",
   "us",
   "please",
+  "yes",
+  "yeah",
+  "yep",
+  "looking",
+  "share",
+  "winning",
 ]);
 
 /** Customer wants to browse the catalog — not a specific product name. */
@@ -1028,16 +1034,31 @@ export function catalogBrowseActiveInHistory(
   );
 }
 
-/** "Show me other / more products" after a catalog browse reply. */
+/** "Show me other / more products" — after browse OR when rejecting current pitch. */
 export function looksLikeCatalogBrowseMoreRequest(
   message: string,
   history: Array<{ role: "user" | "assistant"; content: string }> = []
 ): boolean {
-  if (!catalogBrowseActiveInHistory(history)) return false;
   const t = message.trim();
   if (t.length < 3) return false;
+  if (looksLikeObjectionPhrase(t) && !CATALOG_BROWSE_MORE_PATTERN.test(t)) {
+    return false;
+  }
+  if (!CATALOG_BROWSE_MORE_PATTERN.test(t)) return false;
   if (looksLikeCatalogBrowseRequest(t)) return false;
-  return CATALOG_BROWSE_MORE_PATTERN.test(t);
+
+  // Prior catalog list → paginate
+  if (catalogBrowseActiveInHistory(history)) return true;
+
+  // "different/other products" even after a single product pitch (not only after browse)
+  if (
+    /\b(different|other|more|another)\s+products?\b/i.test(t) ||
+    /\bshare\s+(?:me\s+)?(?:some\s+)?(?:other|different|more)\b/i.test(t)
+  ) {
+    return true;
+  }
+
+  return false;
 }
 
 /**
@@ -1066,6 +1087,10 @@ export function extractProductSearchQuery(text: string): string | null {
     let phrase = availabilityAsk[1].replace(/[?.!]+$/g, "").trim();
     // "want to order storage rack" → skip leading order phrasing
     phrase = phrase.replace(/^to\s+(?:order|buy)\s+/i, "").trim();
+    // "this one, Cream Craft…" / "this, …"
+    phrase = phrase
+      .replace(/^(?:this\s+one|that\s+one|this|that)\s*[,:\-–—]?\s*/i, "")
+      .trim();
     const tokens = productSearchTokens(phrase);
     const meaningful = tokens.filter(
       (token) => !CATALOG_BROWSE_GENERIC.has(token.toLowerCase())

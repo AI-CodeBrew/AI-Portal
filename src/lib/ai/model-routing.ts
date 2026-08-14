@@ -8,7 +8,7 @@ import { looksLikeOrderDecline } from "./sales-recovery";
 type HistoryMessage = { role: "user" | "assistant"; content: string };
 
 const HARD_NEGOTIATION =
-  /\b(too\s+expensive|discount|cheaper|negotiate|best\s+price|last\s+price|final\s+price|offer|bundle|deal|expensive|غالي|خصم|سعر)\b/i;
+  /\b(too\s+expensive|expensive|costly|cost\s+is\s+high|price\s+is\s+high|discount|cheaper|negotiate|best\s+price|last\s+price|final\s+price|offer|bundle|deal|%\s*off|bulk|sasta|غالي|خصم|سعر)\b/i;
 
 /**
  * Chat = gemini-3.6-flash (default).
