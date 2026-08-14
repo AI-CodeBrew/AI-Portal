@@ -182,11 +182,6 @@ export function AdminWhatsAppPlatformPanel() {
     );
   }
 
-  const legalBase =
-    process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "") ||
-    siteOrigin ||
-    "https://ai-portal-silk.vercel.app";
-
   return (
     <div className="space-y-6">
       <div
@@ -199,87 +194,6 @@ export function AdminWhatsAppPlatformPanel() {
         {settings?.configured
           ? "Platform WhatsApp integration: Configured ✅"
           : "Platform WhatsApp integration: Not configured ⚠️"}
-      </div>
-
-      <div className="overflow-hidden rounded-xl border border-amber-200 bg-amber-50/50 shadow-sm">
-        <div className="border-b border-amber-100 px-5 py-4">
-          <h2 className="font-semibold text-slate-900">
-            Agents see “Feature unavailable”?
-          </h2>
-          <p className="mt-1 text-sm text-slate-600">
-            That error is from Meta, not this portal. Admin Facebook works
-            because that user is an App Administrator. Finish these Meta
-            Developer steps so any agent Facebook account can use Connect
-            WhatsApp.
-          </p>
-        </div>
-        <ol className="list-decimal space-y-2 px-5 py-4 pl-10 text-sm text-slate-700">
-          <li>
-            Open{" "}
-            <a
-              href="https://developers.facebook.com/apps/1052871057244062/settings/basic/"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="font-medium text-violet-700 underline"
-            >
-              App settings → Basic
-            </a>
-            : set <strong>App Domains</strong> to{" "}
-            <code className="rounded bg-white px-1">ai-portal-silk.vercel.app</code>
-            , <strong>Website</strong> URL to{" "}
-            <code className="rounded bg-white px-1">{legalBase}/</code>, Privacy
-            Policy (already set), Terms to{" "}
-            <code className="rounded bg-white px-1">{legalBase}/terms</code>, and
-            User Data Deletion to{" "}
-            <code className="rounded bg-white px-1">
-              {legalBase}/data-deletion
-            </code>
-            . Save changes.
-          </li>
-          <li>
-            Complete any red banner / pending{" "}
-            <strong>Data Use Checkup</strong> on the app dashboard.
-          </li>
-          <li>
-            <a
-              href="https://developers.facebook.com/apps/1052871057244062/app-review/permissions/"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="font-medium text-violet-700 underline"
-            >
-              App Review → Permissions
-            </a>
-            : request <strong>Advanced Access</strong> for{" "}
-            <code className="rounded bg-white px-1">public_profile</code> (and{" "}
-            <code className="rounded bg-white px-1">email</code> if listed). Live
-            apps often block non-role users until Advanced Access is granted.
-          </li>
-          <li>
-            Confirm <strong>Fynk Tech</strong> business verification in{" "}
-            <a
-              href="https://business.facebook.com/settings/security"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="font-medium text-violet-700 underline"
-            >
-              Business Settings → Security Center
-            </a>
-            .
-          </li>
-          <li>
-            Temporary test:{" "}
-            <a
-              href="https://developers.facebook.com/apps/1052871057244062/roles/roles/"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="font-medium text-violet-700 underline"
-            >
-              Roles → Add Testers
-            </a>{" "}
-            for one agent Facebook account (they must accept the invite), then
-            retry Connect WhatsApp.
-          </li>
-        </ol>
       </div>
 
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">

@@ -94,3 +94,14 @@ export interface StoreProduct {
     click_count: number;
   } | null;
 }
+
+/** Lightweight row for products list — no images/description/variants. */
+export interface StoreProductSummary {
+  id: string;
+  name: string;
+  tagline: string | null;
+  price: number;
+  currency: string;
+  sku: string;
+  options?: Array<{ name: string; values: string[] }>;
+}

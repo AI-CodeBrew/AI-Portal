@@ -5,6 +5,7 @@ import type {
   ProductBundleInput,
   ProductOptionInput,
   StoreProduct,
+  StoreProductSummary,
 } from "@/lib/products/types";
 import { PlanUpgradeLink } from "@/components/PlanFeaturesList";
 import Link from "next/link";
@@ -18,17 +19,6 @@ type ProductQuota = {
 };
 
 const CURRENCIES = ["AED", "SAR", "USD", "EUR", "MAD", "EGP", "QAR", "KWD"];
-const COUNTRIES = [
-  "UAE",
-  "Saudi Arabia",
-  "Egypt",
-  "Morocco",
-  "Qatar",
-  "Kuwait",
-  "Bahrain",
-  "Oman",
-  "Other",
-];
 
 type Tab = "basics" | "options" | "bundles" | "discount";
 
@@ -99,12 +89,47 @@ function cartesianPreview(options: FormOption[]): string[] {
   return combos.map((c) => c.join(" / "));
 }
 
+function fillFormFromProduct(product: StoreProduct) {
+  const gallery =
+    product.image_urls?.length
+      ? product.image_urls
+      : product.image_url
+        ? [product.image_url]
+        : [];
+  return {
+    name: product.name,
+    tagline: product.tagline ?? "",
+    description: product.description ?? "",
+    image_url: product.image_url ?? gallery[0] ?? "",
+    image_urls: gallery,
+    price: String(product.price),
+    currency: product.currency,
+    target_country: product.target_country,
+    sku: product.sku,
+    discount_enabled: product.discount_enabled,
+    discount_type: (product.discount_type ?? "percent") as "percent" | "fixed",
+    discount_value:
+      product.discount_value != null ? String(product.discount_value) : "",
+    options: (product.options ?? []).map((o) => ({
+      name: o.name,
+      values: o.values,
+      valuesText: formatOptionValues(o.values),
+    })),
+    bundles: (product.bundles ?? []).map((b) => ({
+      quantity: b.quantity,
+      price: b.price,
+      label: b.label,
+    })),
+  };
+}
+
 export function ProductsPanel() {
-  const [products, setProducts] = useState<StoreProduct[]>([]);
+  const [products, setProducts] = useState<StoreProductSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<StoreProduct | null>(null);
+  const [editLoading, setEditLoading] = useState(false);
   const [tab, setTab] = useState<Tab>("basics");
   const [form, setForm] = useState(emptyForm());
   const [saving, setSaving] = useState(false);
@@ -145,46 +170,34 @@ export function ProductsPanel() {
     setTab("basics");
     setSkuTouched(false);
     setCreatedLink(null);
+    setEditLoading(false);
     setModalOpen(true);
   }
 
-  function openEdit(product: StoreProduct) {
-    const gallery =
-      product.image_urls?.length
-        ? product.image_urls
-        : product.image_url
-          ? [product.image_url]
-          : [];
-    setEditing(product);
-    setForm({
-      name: product.name,
-      tagline: product.tagline ?? "",
-      description: product.description ?? "",
-      image_url: product.image_url ?? gallery[0] ?? "",
-      image_urls: gallery,
-      price: String(product.price),
-      currency: product.currency,
-      target_country: product.target_country,
-      sku: product.sku,
-      discount_enabled: product.discount_enabled,
-      discount_type: product.discount_type ?? "percent",
-      discount_value:
-        product.discount_value != null ? String(product.discount_value) : "",
-      options: (product.options ?? []).map((o) => ({
-        name: o.name,
-        values: o.values,
-        valuesText: formatOptionValues(o.values),
-      })),
-      bundles: (product.bundles ?? []).map((b) => ({
-        quantity: b.quantity,
-        price: b.price,
-        label: b.label,
-      })),
-    });
-    setSkuTouched(true);
+  async function openEdit(productId: string) {
+    setError(null);
+    setEditLoading(true);
+    setEditing(null);
+    setForm(emptyForm());
     setTab("basics");
-    setCreatedLink(product.ad_link?.whatsapp_url ?? null);
+    setSkuTouched(true);
+    setCreatedLink(null);
     setModalOpen(true);
+
+    try {
+      const res = await fetch(`/api/store/products/${productId}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to load product");
+      const product = data.product as StoreProduct;
+      setEditing(product);
+      setForm(fillFormFromProduct(product));
+      setCreatedLink(product.ad_link?.whatsapp_url ?? null);
+    } catch (err) {
+      setModalOpen(false);
+      setError(err instanceof Error ? err.message : "Failed to load product");
+    } finally {
+      setEditLoading(false);
+    }
   }
 
   async function uploadImages(files: FileList | File[]) {
@@ -365,102 +378,68 @@ export function ProductsPanel() {
           </button>
         </div>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {products.map((p) => (
-            <div
-              key={p.id}
-              className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"
-            >
-              <div className="aspect-[4/3] bg-slate-100">
-                {p.image_url ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={p.image_url}
-                    alt={p.name}
-                    className="h-full w-full object-cover"
-                  />
-                ) : (
-                  <div className="flex h-full items-center justify-center text-sm text-slate-400">
-                    No image
-                  </div>
-                )}
-              </div>
-              <div className="p-4">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <p className="font-semibold text-slate-900">{p.name}</p>
-                    {p.tagline && (
-                      <p className="text-xs text-slate-500">{p.tagline}</p>
-                    )}
-                  </div>
-                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase text-slate-600">
-                    {p.sku}
-                  </span>
-                </div>
-                <p className="mt-2 text-sm font-semibold text-slate-800">
-                  {Number(p.price).toLocaleString()} {p.currency}
-                </p>
-                {(p.options ?? []).some((o) => (o.values?.length ?? 0) > 0) && (
-                  <div className="mt-2 space-y-1">
-                    {(p.options ?? []).map((o) => (
-                      <p key={o.name} className="text-xs text-slate-600">
-                        <span className="font-medium text-slate-700">{o.name}:</span>{" "}
-                        {(o.values ?? []).join(", ")}
+        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+          <ul className="divide-y divide-slate-100">
+            {products.map((p) => {
+              const optionSummary = (p.options ?? [])
+                .filter((o) => (o.values?.length ?? 0) > 0)
+                .map((o) => `${o.name}: ${(o.values ?? []).join(", ")}`)
+                .join(" · ");
+              return (
+                <li
+                  key={p.id}
+                  className="flex flex-wrap items-center gap-3 px-4 py-3 hover:bg-slate-50/80 sm:flex-nowrap"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <span className="shrink-0 font-semibold text-slate-800">
+                        {Number(p.price).toLocaleString()} {p.currency}
+                      </span>
+                      <p className="truncate font-semibold text-slate-900">
+                        {p.name}
                       </p>
-                    ))}
-                  </div>
-                )}
-                {(p.variants ?? []).filter((v) => v.title && v.title !== "Default")
-                  .length > 0 && (
-                  <div className="mt-2 flex flex-wrap gap-1">
-                    {(p.variants ?? [])
-                      .filter((v) => v.title && v.title !== "Default")
-                      .slice(0, 8)
-                      .map((v) => (
-                        <span
-                          key={v.id}
-                          className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-700"
-                          title={v.sku ?? undefined}
-                        >
-                          {v.title}
-                          {v.price != null && v.price !== p.price
-                            ? ` · ${Number(v.price).toLocaleString()} ${p.currency}`
-                            : ""}
+                      {p.tagline && (
+                        <span className="truncate text-xs text-slate-500">
+                          {p.tagline}
                         </span>
-                      ))}
+                      )}
+                      <span className="rounded-full bg-slate-100 px-2 py-0.5 font-mono text-[10px] font-bold uppercase text-slate-600">
+                        {p.sku}
+                      </span>
+                    </div>
+                    {optionSummary ? (
+                      <p className="mt-0.5 truncate text-sm text-slate-600">
+                        {optionSummary}
+                      </p>
+                    ) : null}
                   </div>
-                )}
-                {p.ad_link?.whatsapp_url && (
-                  <p className="mt-2 truncate text-xs text-slate-400">
-                    Legacy link available
-                  </p>
-                )}
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => openEdit(p)}
-                    className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => copyLink(p.sku)}
-                    className="rounded-lg bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
-                  >
-                    Copy SKU
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => removeProduct(p.id)}
-                    className="rounded-lg px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50"
-                  >
-                    Delete
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))}
+                  <div className="flex shrink-0 flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void openEdit(p.id)}
+                      className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => copyLink(p.sku)}
+                      className="rounded-lg bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+                    >
+                      Copy SKU
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => removeProduct(p.id)}
+                      className="rounded-lg px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
         </div>
       )}
 
@@ -469,7 +448,11 @@ export function ProductsPanel() {
           <div className="flex max-h-[95vh] w-full max-w-3xl flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:rounded-2xl">
             <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
               <h2 className="text-lg font-bold text-slate-900">
-                {editing ? "Edit product" : "Add product"}
+                {editLoading
+                  ? "Loading product..."
+                  : editing
+                    ? "Edit product"
+                    : "Add product"}
               </h2>
               <button
                 type="button"
@@ -483,6 +466,12 @@ export function ProductsPanel() {
               </button>
             </div>
 
+            {editLoading ? (
+              <div className="px-5 py-16 text-center text-sm text-slate-600">
+                Loading product details...
+              </div>
+            ) : (
+            <>
             <div className="flex gap-1 overflow-x-auto border-b border-slate-200 px-3">
               {TABS.map((t) => (
                 <button
@@ -523,6 +512,45 @@ export function ProductsPanel() {
 
               {tab === "basics" && (
                 <div className="grid gap-4 sm:grid-cols-2">
+                  {(form.image_url || form.image_urls[0]) && (
+                    <div className="sm:col-span-2">
+                      <p className="mb-2 text-sm font-medium text-slate-700">
+                        Product preview
+                      </p>
+                      <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={form.image_url || form.image_urls[0]}
+                          alt={form.name || "Product preview"}
+                          className="mx-auto max-h-72 w-full object-contain"
+                        />
+                      </div>
+                      {form.image_urls.length > 1 && (
+                        <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
+                          {form.image_urls.map((url) => (
+                            <button
+                              key={url}
+                              type="button"
+                              onClick={() => setThumbnail(url)}
+                              className={`h-14 w-14 shrink-0 overflow-hidden rounded-lg border-2 ${
+                                (form.image_url || form.image_urls[0]) === url
+                                  ? "border-emerald-500"
+                                  : "border-slate-200"
+                              }`}
+                            >
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={url}
+                                alt=""
+                                className="h-full w-full object-cover"
+                              />
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   <label className="block text-sm">
                     <span className="font-medium text-slate-700">Product name</span>
                     <input
@@ -680,26 +708,6 @@ export function ProductsPanel() {
                       placeholder="wireless-earbuds-pro"
                       className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm"
                     />
-                  </label>
-
-                  <label className="block text-sm sm:col-span-2">
-                    <span className="font-medium text-slate-700">Target country</span>
-                    <select
-                      value={form.target_country}
-                      onChange={(e) =>
-                        setForm((f) => ({
-                          ...f,
-                          target_country: e.target.value,
-                        }))
-                      }
-                      className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-                    >
-                      {COUNTRIES.map((c) => (
-                        <option key={c} value={c}>
-                          {c}
-                        </option>
-                      ))}
-                    </select>
                   </label>
                 </div>
               )}
@@ -968,13 +976,15 @@ export function ProductsPanel() {
               </button>
               <button
                 type="button"
-                disabled={saving || !form.name.trim()}
+                disabled={saving || editLoading || !form.name.trim()}
                 onClick={saveProduct}
                 className="rounded-lg bg-emerald-400 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500 disabled:opacity-50"
               >
                 {saving ? "Saving..." : "Save & generate link"}
               </button>
             </div>
+            </>
+            )}
           </div>
         </div>
       )}

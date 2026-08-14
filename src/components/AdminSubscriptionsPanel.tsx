@@ -4,6 +4,10 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import type { AdminResellerRow } from "@/lib/admin/resellers";
 import { AI_PLANS, PLAN_ORDER, normalizePlanId, type PlanId } from "@/lib/ai/plans";
+import {
+  AdminPaginationBar,
+  type AdminPageSize,
+} from "@/components/AdminPaginationBar";
 
 type PlanFilter = "all" | PlanId;
 
@@ -41,6 +45,8 @@ export function AdminSubscriptionsPanel({
   const [search, setSearch] = useState("");
   const [savingId, setSavingId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<AdminPageSize>(10);
 
   const counts = useMemo(() => {
     const c: Record<PlanId, number> = {
@@ -70,6 +76,13 @@ export function AdminSubscriptionsPanel({
       );
     });
   }, [resellers, planFilter, search]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const paged = useMemo(() => {
+    const start = (safePage - 1) * pageSize;
+    return filtered.slice(start, start + pageSize);
+  }, [filtered, safePage, pageSize]);
 
   async function changePlan(storeId: string, planId: PlanId) {
     setSavingId(storeId);
@@ -127,7 +140,10 @@ export function AdminSubscriptionsPanel({
       <div className="grid gap-3 sm:grid-cols-4">
         <button
           type="button"
-          onClick={() => setPlanFilter("all")}
+          onClick={() => {
+            setPlanFilter("all");
+            setPage(1);
+          }}
           className={`rounded-xl border p-4 text-left shadow-sm transition ${
             planFilter === "all"
               ? "border-violet-400 bg-violet-50"
@@ -145,7 +161,10 @@ export function AdminSubscriptionsPanel({
           <button
             key={id}
             type="button"
-            onClick={() => setPlanFilter(id)}
+            onClick={() => {
+              setPlanFilter(id);
+              setPage(1);
+            }}
             className={`rounded-xl border p-4 text-left shadow-sm transition ${
               planFilter === id
                 ? "border-violet-400 bg-violet-50"
@@ -169,7 +188,10 @@ export function AdminSubscriptionsPanel({
         <input
           type="search"
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={(e) => {
+            setSearch(e.target.value);
+            setPage(1);
+          }}
           placeholder="Search reseller, store, email..."
           className="w-full max-w-sm rounded-lg border border-slate-200 px-3 py-2 text-sm"
         />
@@ -183,7 +205,10 @@ export function AdminSubscriptionsPanel({
             <button
               key={id}
               type="button"
-              onClick={() => setPlanFilter(id as PlanFilter)}
+              onClick={() => {
+                setPlanFilter(id as PlanFilter);
+                setPage(1);
+              }}
               className={`rounded-full px-3 py-1 text-xs font-semibold ${
                 planFilter === id
                   ? "bg-violet-600 text-white"
@@ -226,7 +251,7 @@ export function AdminSubscriptionsPanel({
                   </td>
                 </tr>
               ) : (
-                filtered.map((r) => {
+                paged.map((r) => {
                   const planId = normalizePlanId(r.store?.plan_id);
                   const used = r.aiUsage?.used ?? 0;
                   const limit =
@@ -295,12 +320,18 @@ export function AdminSubscriptionsPanel({
             </tbody>
           </table>
         </div>
-        <div className="border-t border-slate-100 px-4 py-3 text-xs text-slate-500">
-          Showing {filtered.length} of {resellers.length} resellers
-          {planFilter !== "all"
-            ? ` · filtered by ${AI_PLANS[planFilter].name}`
-            : ""}
-        </div>
+        <AdminPaginationBar
+          page={safePage}
+          totalPages={totalPages}
+          pageSize={pageSize}
+          totalItems={filtered.length}
+          itemLabel="subscriptions"
+          onPageChange={setPage}
+          onPageSizeChange={(size) => {
+            setPageSize(size);
+            setPage(1);
+          }}
+        />
       </div>
     </div>
   );

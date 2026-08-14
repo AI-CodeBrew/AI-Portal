@@ -72,3 +72,14 @@ export function peekCachedJson<T>(key: string): T | null {
   if (!hit) return null;
   return hit.payload as T;
 }
+
+/** Clear one key, or all keys starting with prefix (e.g. `inbox:list:`). */
+export function invalidateCachedJson(keyOrPrefix: string): void {
+  if (cache.has(keyOrPrefix)) {
+    cache.delete(keyOrPrefix);
+    return;
+  }
+  for (const key of cache.keys()) {
+    if (key.startsWith(keyOrPrefix)) cache.delete(key);
+  }
+}

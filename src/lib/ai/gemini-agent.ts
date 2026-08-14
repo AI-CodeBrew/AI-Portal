@@ -36,6 +36,13 @@ interface GeminiResponse {
     content?: { role?: string; parts?: GeminiPart[] };
     finishReason?: string;
   }>;
+  usageMetadata?: {
+    promptTokenCount?: number;
+    candidatesTokenCount?: number;
+    totalTokenCount?: number;
+    thoughtsTokenCount?: number;
+    cachedContentTokenCount?: number;
+  };
 }
 
 function lastUserMessage(
@@ -146,7 +153,14 @@ async function geminiGenerate(params: {
     throw new Error(`Gemini API error (${res.status}): ${errText.slice(0, 300)}`);
   }
 
-  return res.json() as Promise<GeminiResponse>;
+  const json = (await res.json()) as GeminiResponse;
+  const usage = json.usageMetadata;
+  if (usage) {
+    console.info(
+      `[gemini-agent] usageMetadata model=${params.model} input=${usage.promptTokenCount ?? "?"} output=${usage.candidatesTokenCount ?? "?"} thoughts=${usage.thoughtsTokenCount ?? 0} total=${usage.totalTokenCount ?? "?"}`
+    );
+  }
+  return json;
 }
 
 export async function runSalesAgentWithGemini(

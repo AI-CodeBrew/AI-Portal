@@ -1,5 +1,6 @@
 "use client";
 
+// Reseller orders list with Back/Next + editable rows-per-page.
 import { useEffect, useState, useRef, useCallback } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -21,8 +22,6 @@ import {
 import { OrderTrackingModal } from "@/components/OrderTrackingModal";
 import { OrderFollowUpModal } from "@/components/OrderFollowUpModal";
 import type { WhatsAppMessageTemplate } from "@/lib/whatsapp/message-templates";
-
-const PAGE_SIZE = ORDERS_PAGE_SIZE;
 
 const STATUS_FILTERS: {
   value: StatusFilter;
@@ -273,7 +272,8 @@ export function OrdersList() {
     initialStatus,
     initialRange.dateFrom,
     initialRange.dateTo,
-    initialPage
+    initialPage,
+    ORDERS_PAGE_SIZE
   );
 
   const [orders, setOrders] = useState<Order[]>(initialCached?.orders ?? []);
@@ -283,6 +283,8 @@ export function OrdersList() {
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [page, setPage] = useState(initialPage);
+  const [pageSize, setPageSize] = useState(ORDERS_PAGE_SIZE);
+  const [pageSizeInput, setPageSizeInput] = useState(String(ORDERS_PAGE_SIZE));
   const [totalPages, setTotalPages] = useState(
     initialCached?.totalPages ?? 1
   );
@@ -398,7 +400,7 @@ export function OrdersList() {
     setSelectedIds(new Set());
     setShowBulkFollowUp(false);
     setBulkFollowUpResults(null);
-  }, [page, statusFilter, sourceFilter, datePreset, customFrom, customTo, debouncedSearch]);
+  }, [page, pageSize, statusFilter, sourceFilter, datePreset, customFrom, customTo, debouncedSearch]);
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(customerSearch.trim()), 300);
@@ -417,12 +419,19 @@ export function OrdersList() {
       pages: number,
       shopify: number,
       counts: typeof statusCounts,
-      preset: DatePreset
+      preset: DatePreset,
+      cachePageSize: number = pageSize
     ) => {
       if (!mountedRef.current) return;
+      const resolvedPages = Math.max(
+        1,
+        pages,
+        filtered > 0 ? Math.ceil(filtered / cachePageSize) : 0,
+        nextOrders.length >= cachePageSize ? p + 1 : 0
+      );
       setOrders(nextOrders);
       setFilteredTotal(filtered);
-      setTotalPages(pages);
+      setTotalPages(resolvedPages);
       setShopifyTotal(shopify);
       setStatusCounts(counts);
       shopifyTotalRef.current = shopify;
@@ -437,7 +446,7 @@ export function OrdersList() {
         {
           orders: nextOrders,
           filteredTotal: filtered,
-          totalPages: pages,
+          totalPages: resolvedPages,
         },
         {
           shopifyTotal: shopify,
@@ -450,10 +459,11 @@ export function OrdersList() {
           lastDateFrom: dateFrom,
           lastDateTo: dateTo,
           lastPage: p,
-        }
+        },
+        cachePageSize
       );
     },
-    []
+    [pageSize]
   );
 
   const buildQuery = useCallback(
@@ -461,7 +471,8 @@ export function OrdersList() {
       p: number,
       source: SourceFilter,
       status: StatusFilter,
-      rangeOverride?: { dateFrom: string | null; dateTo: string | null; preset?: DatePreset }
+      rangeOverride?: { dateFrom: string | null; dateTo: string | null; preset?: DatePreset },
+      limitOverride?: number
     ) => {
       const range =
         rangeOverride ??
@@ -470,9 +481,13 @@ export function OrdersList() {
           customFrom || null,
           customTo || null
         );
+      const limit = Math.min(
+        100,
+        Math.max(1, Math.floor(limitOverride ?? pageSize))
+      );
       const params = new URLSearchParams({
         page: String(p),
-        limit: String(PAGE_SIZE),
+        limit: String(limit),
         status,
       });
       if (source !== "all") params.set("source", source);
@@ -483,9 +498,10 @@ export function OrdersList() {
         params,
         range,
         preset: rangeOverride?.preset ?? (customFrom || customTo ? "custom" as DatePreset : datePreset),
+        limit,
       };
     },
-    [customFrom, customTo, datePreset, debouncedSearch]
+    [customFrom, customTo, datePreset, debouncedSearch, pageSize]
   );
 
   /** Background: refresh Shopify total count (does not block UI). */
@@ -506,7 +522,10 @@ export function OrdersList() {
           !customTo &&
           countData.shopifyTotal > 0
         ) {
-          setTotalPages(Math.ceil(countData.shopifyTotal / PAGE_SIZE));
+          // Only raise page count — never shrink below filtered match pages
+          setTotalPages((prev) =>
+            Math.max(prev, Math.ceil(countData.shopifyTotal / pageSize))
+          );
         }
       }
     } catch {
@@ -519,6 +538,7 @@ export function OrdersList() {
     datePreset,
     customFrom,
     customTo,
+    pageSize,
   ]);
 
   const syncOneShopifyPage = useCallback(async () => {
@@ -533,7 +553,7 @@ export function OrdersList() {
       const res = await fetch("/api/orders/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ limit: PAGE_SIZE }),
+        body: JSON.stringify({ limit: pageSize }),
       });
       const data = await res.json();
       if (!res.ok) return;
@@ -551,7 +571,7 @@ export function OrdersList() {
     } finally {
       if (mountedRef.current) setSyncing(false);
     }
-  }, [store?.shopify_connected]);
+  }, [store?.shopify_connected, pageSize]);
 
   const ensureSyncedThroughPage = useCallback(
     async (p: number): Promise<void> => {
@@ -566,7 +586,7 @@ export function OrdersList() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               pageInfo: nextPageInfoRef.current ?? undefined,
-              limit: PAGE_SIZE,
+              limit: pageSize,
             }),
           });
           const data = await res.json();
@@ -584,7 +604,7 @@ export function OrdersList() {
         if (mountedRef.current) setSyncing(false);
       }
     },
-    [store?.shopify_connected]
+    [store?.shopify_connected, pageSize]
   );
 
   const loadPage = useCallback(
@@ -596,6 +616,7 @@ export function OrdersList() {
         force?: boolean;
         showLoading?: boolean;
         backgroundSync?: boolean;
+        limitOverride?: number;
         rangeOverride?: {
           dateFrom: string | null;
           dateTo: string | null;
@@ -608,12 +629,17 @@ export function OrdersList() {
       const backgroundSync =
         options?.backgroundSync ??
         (status === "all" && source !== "whatsapp_ai");
+      const effectivePageSize = Math.min(
+        100,
+        Math.max(1, Math.floor(options?.limitOverride ?? pageSize))
+      );
 
       const { params, range, preset } = buildQuery(
         p,
         source,
         status,
-        options?.rangeOverride
+        options?.rangeOverride,
+        effectivePageSize
       );
 
       if (!force && !debouncedSearch) {
@@ -622,7 +648,8 @@ export function OrdersList() {
           status,
           range.dateFrom,
           range.dateTo,
-          p
+          p,
+          effectivePageSize
         );
         if (hit) {
           applyPage(
@@ -657,7 +684,11 @@ export function OrdersList() {
         const filtered = data.total ?? 0;
         const counts = data.statusCounts ?? statusCountsRef.current;
         const shopify = shopifyTotalRef.current;
-        let pages = data.totalPages ?? 1;
+        let pages = Math.max(
+          1,
+          data.totalPages ?? 1,
+          filtered > 0 ? Math.ceil(filtered / effectivePageSize) : 0
+        );
         if (
           status === "all" &&
           source === "all" &&
@@ -665,9 +696,21 @@ export function OrdersList() {
           !range.dateTo &&
           shopify > 0
         ) {
-          pages = Math.ceil(shopify / PAGE_SIZE);
+          pages = Math.max(pages, Math.ceil(shopify / effectivePageSize));
         } else if (status === "all" && counts.all > 0) {
-          pages = Math.ceil(counts.all / PAGE_SIZE);
+          pages = Math.max(pages, Math.ceil(counts.all / effectivePageSize));
+        }
+        if (nextOrders.length >= effectivePageSize && pages <= p) {
+          pages = p + 1;
+        }
+
+        // Keep pageSize state aligned with what we actually fetched
+        if (
+          options?.limitOverride != null &&
+          options.limitOverride !== pageSize
+        ) {
+          setPageSize(effectivePageSize);
+          setPageSizeInput(String(effectivePageSize));
         }
 
         applyPage(
@@ -681,7 +724,8 @@ export function OrdersList() {
           pages,
           shopify,
           counts,
-          preset
+          preset,
+          effectivePageSize
         );
       } catch (err) {
         if (mountedRef.current) {
@@ -707,6 +751,8 @@ export function OrdersList() {
     [
       applyPage,
       buildQuery,
+      debouncedSearch,
+      pageSize,
       refreshShopifyTotal,
       store?.shopify_connected,
       syncOneShopifyPage,
@@ -733,7 +779,8 @@ export function OrdersList() {
       statusFilter,
       range.dateFrom,
       range.dateTo,
-      page
+      page,
+      pageSize
     );
     if (hit) {
       applyPage(
@@ -770,7 +817,7 @@ export function OrdersList() {
       });
     }, AUTO_REFRESH_MS);
     return () => clearInterval(interval);
-  }, [store, page, statusFilter, sourceFilter, loadPage]);
+  }, [store, page, pageSize, statusFilter, sourceFilter, loadPage]);
 
   useEffect(() => {
     if (!store) return;
@@ -1019,20 +1066,55 @@ export function OrdersList() {
   }
 
   async function goToPage(p: number) {
-    if (p === page || p < 1) return;
-    setPage(p);
-    setSuccessMsg(null);
+    const pagesAvailable = Math.max(
+      totalPages,
+      filteredTotal > 0 ? Math.ceil(filteredTotal / pageSize) : 1
+    );
+    const target = Math.max(1, Math.floor(p));
+    if (target === page) return;
+    if (target > pagesAvailable) return;
 
-    if (
-      statusFilter === "all" &&
-      sourceFilter !== "whatsapp_ai" &&
-      store?.shopify_connected
-    ) {
-      void ensureSyncedThroughPage(p);
+    setSuccessMsg(null);
+    setPage(target);
+
+    try {
+      if (
+        statusFilter === "all" &&
+        sourceFilter !== "whatsapp_ai" &&
+        store?.shopify_connected
+      ) {
+        await ensureSyncedThroughPage(target);
+      }
+      await loadPage(target, sourceFilter, statusFilter, {
+        force: true,
+        showLoading: true,
+        backgroundSync: false,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load page");
     }
-    await loadPage(p, sourceFilter, statusFilter, {
+  }
+
+  function applyRowsPerPage(raw: string | number) {
+    const n = typeof raw === "number" ? raw : Number.parseInt(String(raw), 10);
+    if (!Number.isFinite(n)) {
+      setPageSizeInput(String(pageSize));
+      return;
+    }
+    const next = Math.min(100, Math.max(1, Math.floor(n)));
+    setPageSizeInput(String(next));
+    setPageSize(next);
+    setPage(1);
+    clearOrdersListCache();
+    syncedPagesRef.current = 0;
+    nextPageInfoRef.current = null;
+    setSuccessMsg(null);
+    // Fetch immediately with the new limit (don't wait for state/effect)
+    void loadPage(1, sourceFilter, statusFilter, {
+      force: true,
       showLoading: true,
       backgroundSync: false,
+      limitOverride: next,
     });
   }
 
@@ -1102,6 +1184,13 @@ export function OrdersList() {
   const allPageSelected =
     orders.length > 0 && orders.every((o) => selectedIds.has(o.id));
 
+  // Derive from matching count so Next isn't stuck when totalPages was wrong/stale
+  const effectiveTotalPages = Math.max(
+    1,
+    totalPages,
+    filteredTotal > 0 ? Math.ceil(filteredTotal / pageSize) : 0
+  );
+
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -1116,8 +1205,8 @@ export function OrdersList() {
                 {orders.length > 0 && (
                   <>
                     {" · "}
-                    showing {(page - 1) * PAGE_SIZE + 1}–
-                    {(page - 1) * PAGE_SIZE + orders.length} ({PAGE_SIZE} per
+                    showing {(page - 1) * pageSize + 1}–
+                    {(page - 1) * pageSize + orders.length} ({pageSize} per
                     page)
                   </>
                 )}
@@ -1740,25 +1829,59 @@ export function OrdersList() {
         </>
       )}
 
-      {totalPages > 1 && (
-        <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-3">
-          <p className="text-sm text-slate-600">
-            Page {page} of {totalPages}
-          </p>
-          <div className="flex gap-2">
+      {(effectiveTotalPages > 1 || orders.length > 0) && (
+        <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap items-center gap-3">
+            <p className="text-sm text-slate-600">
+              Page {page}
+              {effectiveTotalPages > 0 ? ` of ${effectiveTotalPages}` : ""}
+              {filteredTotal > 0
+                ? ` · ${filteredTotal.toLocaleString()} matching`
+                : ""}
+            </p>
+            <div className="flex items-center gap-2 text-sm text-slate-700">
+              <span className="whitespace-nowrap font-medium">Rows per page</span>
+              <input
+                type="number"
+                min={1}
+                max={100}
+                step={1}
+                inputMode="numeric"
+                value={pageSizeInput}
+                onChange={(e) => setPageSizeInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    applyRowsPerPage(pageSizeInput);
+                  }
+                }}
+                className="w-20 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm font-semibold text-slate-900 shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                aria-label="Rows per page"
+              />
+              <button
+                type="button"
+                onClick={() => applyRowsPerPage(pageSizeInput)}
+                disabled={loading}
+                className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+              >
+                Apply
+              </button>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5">
             <button
               type="button"
-              onClick={() => goToPage(page - 1)}
-              disabled={page <= 1 || loading || syncing}
-              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium disabled:opacity-50"
+              onClick={() => void goToPage(page - 1)}
+              disabled={page <= 1 || loading}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              Previous
+              Back
             </button>
             <button
               type="button"
-              onClick={() => goToPage(page + 1)}
-              disabled={page >= totalPages || loading || syncing}
-              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium disabled:opacity-50"
+              onClick={() => void goToPage(page + 1)}
+              disabled={page >= effectiveTotalPages || loading}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
             >
               Next
             </button>

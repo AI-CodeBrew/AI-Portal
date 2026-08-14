@@ -547,8 +547,9 @@ export async function listShopifyCatalogProducts(
   previousCursor: string | null;
   hasNextPage: boolean;
   hasPreviousPage: boolean;
+  totalCount: number | null;
 }> {
-  const limit = Math.min(Math.max(options.limit ?? 25, 1), 50);
+  const limit = Math.min(Math.max(options.limit ?? 10, 1), 100);
   const search = options.query?.trim() ?? "";
   const direction = options.direction ?? "next";
   const cursor = options.cursor?.trim() || null;
@@ -710,7 +711,39 @@ export async function listShopifyCatalogProducts(
       : null,
     hasNextPage: connection.pageInfo.hasNextPage,
     hasPreviousPage: connection.pageInfo.hasPreviousPage,
+    totalCount: await fetchShopifyProductsCount(
+      shopDomain,
+      encryptedToken,
+      queryFilter
+    ),
   };
+}
+
+async function fetchShopifyProductsCount(
+  shopDomain: string,
+  encryptedToken: string,
+  queryFilter: string
+): Promise<number | null> {
+  try {
+    const res = await shopifyGraphql(
+      shopDomain,
+      encryptedToken,
+      `
+      query ProductsCount($query: String!) {
+        productsCount(query: $query) { count }
+      }
+    `,
+      { query: queryFilter }
+    );
+    if (!res.ok) return null;
+    const data = (await res.json()) as {
+      data?: { productsCount?: { count?: number } };
+    };
+    const count = data.data?.productsCount?.count;
+    return typeof count === "number" ? count : null;
+  } catch {
+    return null;
+  }
 }
 
 async function listShopifyCatalogProductsRest(
@@ -728,8 +761,9 @@ async function listShopifyCatalogProductsRest(
   previousCursor: string | null;
   hasNextPage: boolean;
   hasPreviousPage: boolean;
+  totalCount: number | null;
 }> {
-  const limit = Math.min(Math.max(options.limit ?? 25, 1), 50);
+  const limit = Math.min(Math.max(options.limit ?? 10, 1), 100);
   const search = options.query?.trim().toLowerCase() ?? "";
 
   // REST cursor pagination only works without title filter; for search load a page and filter
@@ -797,6 +831,7 @@ async function listShopifyCatalogProductsRest(
       previousCursor: null,
       hasNextPage: false,
       hasPreviousPage: false,
+      totalCount: null,
     };
   }
 
@@ -809,6 +844,7 @@ async function listShopifyCatalogProductsRest(
     previousCursor: previous,
     hasNextPage: Boolean(next),
     hasPreviousPage: Boolean(previous),
+    totalCount: null,
   };
 }
 

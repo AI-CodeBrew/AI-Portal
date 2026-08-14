@@ -20,16 +20,37 @@ export type InboxConversation = {
   marketing_opt_in: boolean;
 };
 
+const DEFAULT_LIMIT = 10;
+const MAX_LIMIT = 100;
+
 export async function GET(request: NextRequest) {
   try {
     const { storeId } = await requireResellerStore();
     const supabase = createAdminClient();
     const filter = request.nextUrl.searchParams.get("filter") ?? "all";
     const search = (request.nextUrl.searchParams.get("q") ?? "").trim();
+    const page = Math.max(
+      1,
+      parseInt(request.nextUrl.searchParams.get("page") ?? "1", 10) || 1
+    );
+    const limit = Math.min(
+      MAX_LIMIT,
+      Math.max(
+        1,
+        parseInt(
+          request.nextUrl.searchParams.get("limit") ?? String(DEFAULT_LIMIT),
+          10
+        ) || DEFAULT_LIMIT
+      )
+    );
+
+    // closing_soon / search need post-filtering — load candidates then page.
+    // Other filters can use DB range after we know we don't need full enrich first.
+    const needsPostFilter = filter === "closing_soon" || Boolean(search);
 
     let query = supabase
       .from("whatsapp_conversations")
-      .select("*")
+      .select("*", needsPostFilter ? undefined : { count: "exact" })
       .eq("store_id", storeId)
       .neq("status", "closed")
       .order("updated_at", { ascending: false });
@@ -46,11 +67,22 @@ export async function GET(request: NextRequest) {
         .order("last_customer_message_at", { ascending: true });
     }
 
-    let { data: conversations, error } = await query;
+    if (!needsPostFilter) {
+      const from = (page - 1) * limit;
+      query = query.range(from, from + limit - 1);
+    }
+
+    let { data: conversations, error, count } = await query;
 
     if (error) {
       if (error.message.includes("ai_exhausted") && filter === "exhausted") {
-        return NextResponse.json({ conversations: [] });
+        return NextResponse.json({
+          conversations: [],
+          total: 0,
+          page,
+          limit,
+          totalPages: 1,
+        });
       }
       if (
         error.message.includes("ai_exhausted") ||
@@ -58,7 +90,7 @@ export async function GET(request: NextRequest) {
       ) {
         let fallback = supabase
           .from("whatsapp_conversations")
-          .select("*")
+          .select("*", needsPostFilter ? undefined : { count: "exact" })
           .eq("store_id", storeId)
           .neq("status", "closed")
           .order("updated_at", { ascending: false });
@@ -67,9 +99,14 @@ export async function GET(request: NextRequest) {
         } else if (filter === "ai") {
           fallback = fallback.eq("status", "ai_handling");
         }
+        if (!needsPostFilter) {
+          const from = (page - 1) * limit;
+          fallback = fallback.range(from, from + limit - 1);
+        }
         const retry = await fallback;
         conversations = retry.data ?? [];
         error = retry.error;
+        count = retry.count;
       }
       if (error) {
         return NextResponse.json({ error: error.message }, { status: 500 });
@@ -126,7 +163,8 @@ export async function GET(request: NextRequest) {
         ai_exhausted: (c.ai_exhausted as boolean | null) ?? null,
         last_customer_message_at:
           (c.last_customer_message_at as string | null) ?? null,
-        window_type: ((c.window_type as WindowType | null) ?? "service") as WindowType,
+        window_type: ((c.window_type as WindowType | null) ??
+          "service") as WindowType,
         marketing_opt_in: Boolean(c.marketing_opt_in),
       };
     });
@@ -157,7 +195,27 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    return NextResponse.json({ conversations: enriched });
+    let total: number;
+    let pageRows: InboxConversation[];
+
+    if (needsPostFilter) {
+      total = enriched.length;
+      const from = (page - 1) * limit;
+      pageRows = enriched.slice(from, from + limit);
+    } else {
+      total = count ?? enriched.length;
+      pageRows = enriched;
+    }
+
+    const totalPages = Math.max(1, Math.ceil(total / limit) || 1);
+
+    return NextResponse.json({
+      conversations: pageRows,
+      total,
+      page,
+      limit,
+      totalPages,
+    });
   } catch {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

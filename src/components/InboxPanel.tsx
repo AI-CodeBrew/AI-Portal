@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { cachedJsonFetch } from "@/lib/client-fetch-cache";
+import { cachedJsonFetch, invalidateCachedJson } from "@/lib/client-fetch-cache";
 import { ChatMessageBody } from "@/components/ChatMessageBody";
 import { createClient } from "@/lib/supabase/client";
 import type { WhatsappConversation, WhatsappMessage } from "@/lib/types";
@@ -12,13 +12,14 @@ import { useWindowCountdown } from "@/components/whatsapp-window/useWindowCountd
 
 type InboxFilter = "all" | "ai" | "handoff" | "exhausted" | "closing_soon";
 
-const FILTER_LABELS: Record<InboxFilter, string> = {
-  all: "All",
-  ai: "AI handling",
-  handoff: "Human",
-  exhausted: "AI exhausted",
-  closing_soon: "Closing soon",
-};
+const INBOX_PAGE_SIZE = 10;
+const FILTERS: { key: InboxFilter; label: string }[] = [
+  { key: "all", label: "All" },
+  { key: "ai", label: "AI" },
+  { key: "handoff", label: "Human" },
+  { key: "exhausted", label: "Exhausted" },
+  { key: "closing_soon", label: "Closing soon" },
+];
 
 function displayName(conv: WhatsappConversation): string {
   const name = conv.customer_name?.trim();
@@ -47,38 +48,33 @@ function ChatWindowHeader({
   );
 
   return (
-    <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
+    <div className="border-b border-slate-200 bg-white px-4 py-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
+        <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <p className="font-semibold text-slate-900">
+            <p className="truncate font-semibold text-slate-900">
               {displayName(selected)}
             </p>
             <WindowCountdownBadge status={windowStatus} size="lg" />
+            <span
+              className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                isManual
+                  ? "bg-amber-100 text-amber-900"
+                  : "bg-emerald-100 text-emerald-900"
+              }`}
+            >
+              {isManual ? "Human" : "AI"}
+            </span>
           </div>
-          <p className="mt-0.5 text-xs text-slate-600">
+          <p className="mt-0.5 truncate text-xs text-slate-500">
             {selected.customer_name?.trim()
               ? `+${selected.customer_phone} · `
               : ""}
-            {selected.window_type === "free_entry_point"
-              ? "72h CTWA window · "
-              : "24h service window · "}
-            {isManual
-              ? "You are replying — AI is paused for this chat"
-              : "AI is handling replies automatically"}
+            {isManual ? "You are replying" : "AI is handling replies"}
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
-          <span
-            className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-              isManual
-                ? "bg-amber-100 text-amber-900"
-                : "bg-emerald-100 text-emerald-900"
-            }`}
-          >
-            {isManual ? "Human" : "AI"}
-          </span>
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
           {isManual ? (
             <button
               type="button"
@@ -86,7 +82,7 @@ function ChatWindowHeader({
               disabled={switchingMode || deleting}
               className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
             >
-              {switchingMode ? "Switching..." : "Switch to AI"}
+              {switchingMode ? "Switching..." : "Back to AI"}
             </button>
           ) : (
             <button
@@ -95,16 +91,16 @@ function ChatWindowHeader({
               disabled={switchingMode || deleting}
               className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-50"
             >
-              {switchingMode ? "Switching..." : "Take over (Human)"}
+              {switchingMode ? "Switching..." : "Take over"}
             </button>
           )}
           <button
             type="button"
             onClick={onDelete}
             disabled={deleting || switchingMode}
-            className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:opacity-50"
+            className="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"
           >
-            {deleting ? "Deleting..." : "Delete chat"}
+            {deleting ? "Deleting..." : "Delete"}
           </button>
         </div>
       </div>
@@ -116,7 +112,14 @@ export function InboxPanel() {
   const [filter, setFilter] = useState<InboxFilter>("all");
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [conversations, setConversations] = useState<WhatsappConversation[]>([]);
+  const [conversations, setConversations] = useState<WhatsappConversation[]>(
+    []
+  );
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(INBOX_PAGE_SIZE);
+  const [pageSizeInput, setPageSizeInput] = useState(String(INBOX_PAGE_SIZE));
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [messages, setMessages] = useState<WhatsappMessage[]>([]);
   const [sending, setSending] = useState(false);
@@ -132,31 +135,60 @@ export function InboxPanel() {
     return () => clearTimeout(t);
   }, [search]);
 
-  const fetchConversations = useCallback(async () => {
-    const params = new URLSearchParams({ filter });
-    if (debouncedSearch) params.set("q", debouncedSearch);
-    const cacheKey = `inbox:list:${params.toString()}`;
-    setLoading(true);
-    const { data } = await cachedJsonFetch<{
-      conversations?: WhatsappConversation[];
-    }>(cacheKey, `/api/inbox?${params}`, {
-      ttlMs: 20_000,
-      staleWhileRevalidate: true,
-    });
-    const list = (data.conversations ?? []) as WhatsappConversation[];
-    setConversations(list);
-    setLoading(false);
-    setSelectedId((prev) => {
-      if (list.length && !list.some((c) => c.id === prev)) {
-        return list[0]!.id;
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch]);
+
+  const fetchConversations = useCallback(
+    async (opts?: { page?: number; limit?: number; silent?: boolean; force?: boolean }) => {
+      const p = opts?.page ?? page;
+      const limit = opts?.limit ?? pageSize;
+      const params = new URLSearchParams({
+        filter,
+        page: String(p),
+        limit: String(limit),
+      });
+      if (debouncedSearch) params.set("q", debouncedSearch);
+      const cacheKey = `inbox:list:${params.toString()}`;
+      if (!opts?.silent) setLoading(true);
+
+      try {
+        const { data } = await cachedJsonFetch<{
+          conversations?: WhatsappConversation[];
+          total?: number;
+          totalPages?: number;
+          page?: number;
+          limit?: number;
+        }>(cacheKey, `/api/inbox?${params}`, {
+          ttlMs: 15_000,
+          staleWhileRevalidate: !opts?.force,
+          force: opts?.force ?? false,
+        });
+
+        const list = (data.conversations ?? []) as WhatsappConversation[];
+        const nextTotal = data.total ?? list.length;
+        const nextPages = Math.max(
+          1,
+          data.totalPages ?? (Math.ceil(nextTotal / limit) || 1)
+        );
+
+        setConversations(list);
+        setTotal(nextTotal);
+        setTotalPages(nextPages);
+        setSelectedId((prev) => {
+          if (list.length && !list.some((c) => c.id === prev)) {
+            return list[0]!.id;
+          }
+          if (!list.length) return null;
+          return prev;
+        });
+        if (!list.length) setMessages([]);
+      } finally {
+        if (!opts?.silent) setLoading(false);
       }
-      if (!list.length) return null;
-      return prev;
-    });
-    if (!list.length) {
-      setMessages([]);
-    }
-  }, [filter, debouncedSearch]);
+    },
+    [filter, debouncedSearch, page, pageSize]
+  );
 
   useEffect(() => {
     setSelectedIds((prev) =>
@@ -165,8 +197,8 @@ export function InboxPanel() {
   }, [conversations]);
 
   useEffect(() => {
-    void fetchConversations();
-  }, [fetchConversations]);
+    void fetchConversations({ page, limit: pageSize });
+  }, [page, pageSize, filter, debouncedSearch, fetchConversations]);
 
   const storeId = conversations[0]?.store_id;
 
@@ -185,7 +217,8 @@ export function InboxPanel() {
           filter: `store_id=eq.${storeId}`,
         },
         () => {
-          void fetchConversations();
+          invalidateCachedJson(`inbox:list:`);
+          void fetchConversations({ silent: true });
         }
       )
       .subscribe();
@@ -218,7 +251,7 @@ export function InboxPanel() {
         },
         () => {
           void fetchMessages(selectedId);
-          void fetchConversations();
+          void fetchConversations({ silent: true });
         }
       )
       .subscribe();
@@ -239,7 +272,8 @@ export function InboxPanel() {
   async function refreshAfterSend() {
     if (!selectedId) return;
     await fetchMessages(selectedId);
-    await fetchConversations();
+    invalidateCachedJson(`inbox:list:`);
+    await fetchConversations({ silent: true });
   }
 
   async function switchMode(mode: "ai" | "manual") {
@@ -255,7 +289,8 @@ export function InboxPanel() {
         const data = await res.json();
         throw new Error(data.error ?? "Failed to update mode");
       }
-      await fetchConversations();
+      invalidateCachedJson(`inbox:list:`);
+      await fetchConversations({ silent: true });
     } finally {
       setSwitchingMode(false);
     }
@@ -327,9 +362,12 @@ export function InboxPanel() {
 
       setSelectedIds([]);
       setSelectionMode(false);
-      await fetchConversations();
+      invalidateCachedJson(`inbox:list:`);
+      await fetchConversations({ force: true });
     } catch (err) {
-      setSendError(err instanceof Error ? err.message : "Failed to delete chats");
+      setSendError(
+        err instanceof Error ? err.message : "Failed to delete chats"
+      );
     } finally {
       setDeleting(false);
     }
@@ -337,6 +375,25 @@ export function InboxPanel() {
 
   async function deleteSelectedConversations() {
     await deleteConversationsByIds(selectedIds);
+  }
+
+  function applyRowsPerPage(raw: string | number) {
+    const n = typeof raw === "number" ? raw : Number.parseInt(String(raw), 10);
+    if (!Number.isFinite(n)) {
+      setPageSizeInput(String(pageSize));
+      return;
+    }
+    const next = Math.min(100, Math.max(1, Math.floor(n)));
+    setPageSizeInput(String(next));
+    setPage(1);
+    setPageSize(next);
+    invalidateCachedJson(`inbox:list:`);
+  }
+
+  function goToPage(next: number) {
+    const target = Math.max(1, Math.min(totalPages, Math.floor(next)));
+    if (target === page) return;
+    setPage(target);
   }
 
   const selected = conversations.find((c) => c.id === selectedId);
@@ -349,7 +406,7 @@ export function InboxPanel() {
     if (filter === "closing_soon") {
       return "No conversations are in the closing-soon window right now.";
     }
-    return "Send a test message to your business number. If nothing appears, check Integrations → WhatsApp — your webhook URL in Meta must point to your live site (not localhost).";
+    return "Send a test message to your business number. If nothing appears, check Integrations → WhatsApp.";
   }, [debouncedSearch, filter]);
 
   const allConversationsSelected =
@@ -360,32 +417,43 @@ export function InboxPanel() {
     selected?.window_type ?? "service"
   );
 
+  const rangeStart = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const rangeEnd = Math.min(page * pageSize, total);
+  const effectiveTotalPages = Math.max(
+    1,
+    totalPages,
+    total > 0 ? Math.ceil(total / pageSize) : 1
+  );
+
   return (
-    <div className="space-y-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex flex-wrap gap-2">
-          {(Object.keys(FILTER_LABELS) as InboxFilter[]).map((key) => (
+    <div className="space-y-3">
+      <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:p-4">
+        <div className="flex flex-wrap gap-1.5">
+          {FILTERS.map(({ key, label }) => (
             <button
               key={key}
               type="button"
-              onClick={() => setFilter(key)}
-              className={`rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors ${
+              onClick={() => {
+                setFilter(key);
+                setPage(1);
+              }}
+              className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors sm:text-sm ${
                 filter === key
-                  ? "bg-blue-600 text-white"
-                  : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                  ? "bg-slate-900 text-white"
+                  : "bg-slate-100 text-slate-700 hover:bg-slate-200"
               }`}
             >
-              {FILTER_LABELS[key]}
+              {label}
             </button>
           ))}
         </div>
-        <div className="relative w-full sm:max-w-xs">
+        <div className="relative w-full sm:max-w-sm">
           <input
             type="search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by name or phone..."
-            className="w-full rounded-lg border border-slate-300 bg-white py-2 pl-3 pr-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+            placeholder="Search name or phone…"
+            className="w-full rounded-lg border border-slate-300 bg-slate-50 py-2 pl-3 pr-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100"
             aria-label="Search conversations"
           />
         </div>
@@ -398,87 +466,150 @@ export function InboxPanel() {
       ) : null}
 
       {loading && conversations.length === 0 ? (
-        <p className="text-slate-600">Loading inbox...</p>
-      ) : conversations.length === 0 ? (
+        <div className="rounded-xl border border-slate-200 bg-white p-10 text-center text-sm text-slate-600">
+          Loading inbox…
+        </div>
+      ) : conversations.length === 0 && total === 0 ? (
         <div className="rounded-xl border border-dashed border-slate-300 bg-white p-12 text-center shadow-sm">
           <p className="text-base font-medium text-slate-800">
-            {debouncedSearch || filter !== "all" ? "No matches" : "No WhatsApp conversations yet"}
+            {debouncedSearch || filter !== "all"
+              ? "No matches"
+              : "No WhatsApp conversations yet"}
           </p>
           <p className="mt-2 text-sm text-slate-600">{emptyHint}</p>
         </div>
       ) : (
-        <div className="flex h-[calc(100vh-16rem)] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-          <div className="flex w-80 shrink-0 flex-col border-r border-slate-200 bg-slate-50">
-            <div className="border-b border-slate-200 bg-white px-3 py-2">
+        <div className="flex h-[calc(100vh-14rem)] min-h-[420px] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+          <div className="flex w-full max-w-md shrink-0 flex-col border-r border-slate-200 bg-slate-50 sm:w-96">
+            <div className="flex items-center justify-between gap-2 border-b border-slate-200 bg-white px-3 py-2">
+              <p className="text-xs font-medium text-slate-600">
+                {total > 0 ? (
+                  <>
+                    <span className="font-semibold text-slate-900">
+                      {rangeStart}–{rangeEnd}
+                    </span>{" "}
+                    of {total.toLocaleString()}
+                  </>
+                ) : (
+                  "No chats"
+                )}
+              </p>
               {selectionMode ? (
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <label className="flex items-center gap-2 text-xs font-medium text-slate-700">
-                      <input
-                        type="checkbox"
-                        checked={allConversationsSelected}
-                        onChange={() => {
-                          if (allConversationsSelected) {
-                            setSelectedIds([]);
-                          } else {
-                            selectAllConversations();
-                          }
-                        }}
-                        className="h-4 w-4 rounded border-slate-300 text-red-600 focus:ring-red-500"
-                      />
-                      Select all
-                    </label>
-                    <span className="text-xs text-slate-500">
-                      {selectedIds.length} selected
-                    </span>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => void deleteSelectedConversations()}
-                      disabled={deleting || selectedIds.length === 0}
-                      className="rounded-lg bg-red-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-50"
-                    >
-                      {deleting ? "Deleting..." : "Delete selected"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={exitSelectionMode}
-                      disabled={deleting}
-                      className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                    >
-                      Cancel
-                    </button>
-                  </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (allConversationsSelected) setSelectedIds([]);
+                      else selectAllConversations();
+                    }}
+                    className="rounded-md px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
+                  >
+                    {allConversationsSelected ? "Clear" : "Select page"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void deleteSelectedConversations()}
+                    disabled={deleting || selectedIds.length === 0}
+                    className="rounded-md bg-red-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+                  >
+                    Delete ({selectedIds.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={exitSelectionMode}
+                    className="rounded-md px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-100"
+                  >
+                    Done
+                  </button>
                 </div>
               ) : (
                 <button
                   type="button"
                   onClick={() => setSelectionMode(true)}
-                  disabled={deleting}
-                  className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                  disabled={deleting || conversations.length === 0}
+                  className="rounded-md px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-100 disabled:opacity-50"
                 >
-                  Select multiple
+                  Select
                 </button>
               )}
             </div>
-            <div className="flex-1 overflow-y-auto">
-            {conversations.map((conv) => (
-              <ConversationListRow
-                key={conv.id}
-                conv={conv}
-                selected={selectedId === conv.id}
-                onSelect={() => setSelectedId(conv.id)}
-                onFollowUpSent={() => void refreshAfterSend()}
-                selectionMode={selectionMode}
-                checked={selectedIds.includes(conv.id)}
-                onToggleSelect={() => toggleConversationSelection(conv.id)}
-              />
-            ))}
+
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              {loading ? (
+                <p className="px-4 py-6 text-center text-xs text-slate-500">
+                  Updating…
+                </p>
+              ) : null}
+              {conversations.map((conv) => (
+                <ConversationListRow
+                  key={conv.id}
+                  conv={conv}
+                  selected={selectedId === conv.id}
+                  onSelect={() => setSelectedId(conv.id)}
+                  onFollowUpSent={() => void refreshAfterSend()}
+                  selectionMode={selectionMode}
+                  checked={selectedIds.includes(conv.id)}
+                  onToggleSelect={() => toggleConversationSelection(conv.id)}
+                />
+              ))}
+            </div>
+
+            <div className="space-y-2 border-t border-slate-200 bg-white px-3 py-2.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="flex items-center gap-1.5 text-xs text-slate-600">
+                  <span className="font-medium">Rows</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={100}
+                    step={1}
+                    inputMode="numeric"
+                    value={pageSizeInput}
+                    onChange={(e) => setPageSizeInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        applyRowsPerPage(pageSizeInput);
+                      }
+                    }}
+                    className="w-14 rounded-md border border-slate-300 px-1.5 py-1 text-xs font-semibold text-slate-900 focus:border-blue-500 focus:outline-none"
+                    aria-label="Rows per page"
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={() => applyRowsPerPage(pageSizeInput)}
+                  disabled={loading}
+                  className="rounded-md bg-slate-900 px-2.5 py-1 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
+                >
+                  Apply
+                </button>
+                <span className="ml-auto text-[11px] text-slate-500">
+                  Page {page} / {effectiveTotalPages}
+                </span>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => goToPage(page - 1)}
+                  disabled={page <= 1 || loading}
+                  className="flex-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Back
+                </button>
+                <button
+                  type="button"
+                  onClick={() => goToPage(page + 1)}
+                  disabled={page >= effectiveTotalPages || loading}
+                  className="flex-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Next
+                </button>
+              </div>
             </div>
           </div>
 
-          <div className="flex flex-1 flex-col bg-white">
+          <div className="flex min-w-0 flex-1 flex-col bg-slate-50">
             {selected ? (
               <ChatWindowHeader
                 selected={selected}
@@ -489,28 +620,40 @@ export function InboxPanel() {
                 onDelete={deleteConversation}
               />
             ) : (
-              <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
-                <p className="font-semibold text-slate-900">Select conversation</p>
+              <div className="border-b border-slate-200 bg-white px-4 py-6 text-center">
+                <p className="text-sm font-medium text-slate-700">
+                  Select a chat to read and reply
+                </p>
               </div>
             )}
 
-            <div className="flex-1 space-y-3 overflow-y-auto bg-slate-50 p-4">
-              {messages.map((msg) => (
-                <div
-                  key={msg.id}
-                  className={`flex ${msg.direction === "out" ? "justify-end" : "justify-start"}`}
-                >
-                  <div
-                    className={`max-w-[75%] rounded-xl px-4 py-2.5 text-sm leading-relaxed ${
-                      msg.direction === "out"
-                        ? "bg-blue-600 text-white shadow-sm"
-                        : "border border-slate-200 bg-white text-slate-900 shadow-sm"
-                    }`}
-                  >
-                    <ChatMessageBody content={msg.content} />
-                  </div>
+            <div className="flex-1 space-y-3 overflow-y-auto p-4">
+              {!selected ? (
+                <div className="flex h-full items-center justify-center text-sm text-slate-400">
+                  Pick a conversation from the list
                 </div>
-              ))}
+              ) : messages.length === 0 ? (
+                <div className="flex h-full items-center justify-center text-sm text-slate-400">
+                  No messages yet
+                </div>
+              ) : (
+                messages.map((msg) => (
+                  <div
+                    key={msg.id}
+                    className={`flex ${msg.direction === "out" ? "justify-end" : "justify-start"}`}
+                  >
+                    <div
+                      className={`max-w-[75%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
+                        msg.direction === "out"
+                          ? "bg-blue-600 text-white shadow-sm"
+                          : "border border-slate-200 bg-white text-slate-900 shadow-sm"
+                      }`}
+                    >
+                      <ChatMessageBody content={msg.content} />
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
 
             {selected && (

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireResellerStore } from "@/lib/auth";
 import {
   createStoreProduct,
-  listStoreProducts,
+  listStoreProductsSummary,
 } from "@/lib/products/products-service";
 import { getStoreProductQuota } from "@/lib/store/plan-access";
 import type { ProductInput } from "@/lib/products/types";
@@ -11,7 +11,7 @@ export async function GET() {
   try {
     const { storeId } = await requireResellerStore();
     const [result, quota] = await Promise.all([
-      listStoreProducts(storeId),
+      listStoreProductsSummary(storeId),
       getStoreProductQuota(storeId),
     ]);
     if (result.error) {

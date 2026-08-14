@@ -17,7 +17,7 @@ export type AdminOrderRow = {
   } | null;
 };
 
-export const ADMIN_ORDERS_PAGE_SIZE = 50;
+export const ADMIN_ORDERS_PAGE_SIZE = 10;
 
 const orderSelect = `
   id,

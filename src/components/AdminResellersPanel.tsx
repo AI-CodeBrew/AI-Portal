@@ -4,6 +4,10 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { AI_PLANS, PLAN_ORDER, normalizePlanId, type PlanId } from "@/lib/ai/plans";
 import type { AdminResellerRow } from "@/lib/admin/resellers";
+import {
+  AdminPaginationBar,
+  type AdminPageSize,
+} from "@/components/AdminPaginationBar";
 
 function ConnectionBadge({
   connected,
@@ -262,6 +266,8 @@ export function AdminResellersPanel({
   const [detailReseller, setDetailReseller] = useState<AdminResellerRow | null>(
     null
   );
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<AdminPageSize>(10);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -272,6 +278,13 @@ export function AdminResellersPanel({
       return true;
     });
   }, [resellers, search, filter]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const paged = useMemo(() => {
+    const start = (safePage - 1) * pageSize;
+    return filtered.slice(start, start + pageSize);
+  }, [filtered, safePage, pageSize]);
 
   function handlePlanUpdated(storeId: string, planId: PlanId) {
     setResellers((prev) =>
@@ -341,14 +354,18 @@ export function AdminResellersPanel({
             type="search"
             placeholder="Search name, email, store..."
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setPage(1);
+            }}
             className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm sm:w-56"
           />
           <select
             value={filter}
-            onChange={(e) =>
-              setFilter(e.target.value as "all" | "at_limit" | "no_store")
-            }
+            onChange={(e) => {
+              setFilter(e.target.value as "all" | "at_limit" | "no_store");
+              setPage(1);
+            }}
             className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
           >
             <option value="all">All resellers</option>
@@ -393,7 +410,7 @@ export function AdminResellersPanel({
                 </td>
               </tr>
             ) : (
-              filtered.map((r) => (
+              paged.map((r) => (
                 <tr
                   key={r.id}
                   className="cursor-pointer hover:bg-slate-50"
@@ -479,10 +496,22 @@ export function AdminResellersPanel({
             )}
           </tbody>
         </table>
+        <AdminPaginationBar
+          page={safePage}
+          totalPages={totalPages}
+          pageSize={pageSize}
+          totalItems={filtered.length}
+          itemLabel="resellers"
+          onPageChange={setPage}
+          onPageSizeChange={(size) => {
+            setPageSize(size);
+            setPage(1);
+          }}
+        />
       </div>
 
       <div className="space-y-4 md:hidden">
-        {filtered.map((r) => (
+        {paged.map((r) => (
           <div
             key={r.id}
             className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
@@ -537,6 +566,20 @@ export function AdminResellersPanel({
             )}
           </div>
         ))}
+        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white md:hidden">
+          <AdminPaginationBar
+            page={safePage}
+            totalPages={totalPages}
+            pageSize={pageSize}
+            totalItems={filtered.length}
+            itemLabel="resellers"
+            onPageChange={setPage}
+            onPageSizeChange={(size) => {
+              setPageSize(size);
+              setPage(1);
+            }}
+          />
+        </div>
       </div>
 
       {detailReseller && (

@@ -19,7 +19,7 @@ export type OrdersListCache = {
     confirmed: number;
     cancelled: number;
   };
-  /** key = `${source}:${status}:${dateKey}:${page}` */
+  /** key = `${source}:${status}:${dateKey}:${pageSize}:${page}` */
   pages: Record<string, OrdersPageCacheEntry>;
   nextPageInfo: string | null;
   syncedPages: number;
@@ -34,7 +34,9 @@ export type OrdersListCache = {
 
 const PAGE_TTL_MS = 5 * 60 * 1000;
 const AUTO_REFRESH_MS = 10 * 60 * 1000;
-export const ORDERS_PAGE_SIZE = 50;
+/** Default page size for reseller orders list. */
+export const ORDERS_PAGE_SIZE = 10;
+export const ORDERS_PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
 
 let cache: OrdersListCache | null = null;
 
@@ -43,9 +45,10 @@ export function pageCacheKey(
   status: StatusFilter,
   dateFrom: string | null,
   dateTo: string | null,
-  page: number
+  page: number,
+  pageSize: number = ORDERS_PAGE_SIZE
 ): string {
-  return `${source}:${status}:${dateFrom ?? ""}:${dateTo ?? ""}:${page}`;
+  return `${source}:${status}:${dateFrom ?? ""}:${dateTo ?? ""}:${pageSize}:${page}`;
 }
 
 export function getOrdersListCache(): OrdersListCache | null {
@@ -61,10 +64,12 @@ export function getCachedPage(
   status: StatusFilter,
   dateFrom: string | null,
   dateTo: string | null,
-  page: number
+  page: number,
+  pageSize: number = ORDERS_PAGE_SIZE
 ): OrdersPageCacheEntry | null {
   if (!cache) return null;
-  const entry = cache.pages[pageCacheKey(source, status, dateFrom, dateTo, page)];
+  const entry =
+    cache.pages[pageCacheKey(source, status, dateFrom, dateTo, page, pageSize)];
   if (!entry) return null;
   if (Date.now() - entry.fetchedAt > PAGE_TTL_MS) return null;
   return entry;
@@ -91,10 +96,11 @@ export function setCachedPage(
       | "lastDateTo"
       | "lastPage"
     >
-  >
+  >,
+  pageSize: number = ORDERS_PAGE_SIZE
 ): void {
   const pages = { ...(cache?.pages ?? {}) };
-  pages[pageCacheKey(source, status, dateFrom, dateTo, page)] = {
+  pages[pageCacheKey(source, status, dateFrom, dateTo, page, pageSize)] = {
     ...entry,
     fetchedAt: Date.now(),
   };

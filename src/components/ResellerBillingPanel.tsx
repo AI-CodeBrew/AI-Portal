@@ -32,7 +32,8 @@ export function ResellerBillingPanel() {
   const [topupLoading, setTopupLoading] = useState<TopupPackId | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  const [currentPlanId, setCurrentPlanId] = useState<PlanId>("basic");
+  // null until API returns — never flash Basic as current
+  const [currentPlanId, setCurrentPlanId] = useState<PlanId | null>(null);
   const [lastCheckout, setLastCheckout] = useState<{
     planName: string;
     amount: number;
@@ -44,13 +45,16 @@ export function ResellerBillingPanel() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/store/billing/checkout");
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Failed to load billing");
+      const [billingRes, usageRes] = await Promise.all([
+        fetch("/api/store/billing/checkout"),
+        fetch("/api/store/ai-usage"),
+      ]);
+      const data = await billingRes.json();
+      if (!billingRes.ok) throw new Error(data.error ?? "Failed to load billing");
       setAvailable(Boolean(data.billing?.available));
       setCurrency(data.billing?.currency || "AED");
       setPayments(data.payments ?? []);
-      const usageRes = await fetch("/api/store/ai-usage");
+
       const usageData = await usageRes.json();
       if (usageData.usage?.planId) {
         setCurrentPlanId(usageData.usage.planId as PlanId);
@@ -171,7 +175,7 @@ export function ResellerBillingPanel() {
                 </p>
                 <button
                   type="button"
-                  disabled={!available || topupLoading === id}
+                  disabled={!available || topupLoading === id || loading}
                   onClick={() => buyTopup(id)}
                   className="mt-3 w-full rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
                 >
@@ -220,6 +224,25 @@ export function ResellerBillingPanel() {
           </div>
         )}
 
+        {loading || currentPlanId == null ? (
+          <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            {PLAN_ORDER.map((id) => (
+              <div
+                key={id}
+                className="flex min-h-[220px] flex-col rounded-xl border border-slate-200 bg-slate-50 p-4 animate-pulse"
+              >
+                <div className="h-5 w-24 rounded bg-slate-200" />
+                <div className="mt-2 h-3 w-32 rounded bg-slate-200" />
+                <div className="mt-4 h-6 w-20 rounded bg-slate-200" />
+                <div className="mt-4 flex-1 space-y-2">
+                  <div className="h-3 w-full rounded bg-slate-200" />
+                  <div className="h-3 w-5/6 rounded bg-slate-200" />
+                  <div className="h-3 w-4/5 rounded bg-slate-200" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
         <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {PLAN_ORDER.map((id) => {
             const plan = AI_PLANS[id];
@@ -262,7 +285,7 @@ export function ResellerBillingPanel() {
                 </div>
                 {id === "basic" ? (
                   <p className="mt-4 text-center text-xs font-medium text-slate-500">
-                    Default for new stores
+                    {isCurrent ? "Your current plan" : "Default for new stores"}
                   </p>
                 ) : id === "enterprise" ? (
                   <p className="mt-4 text-center text-xs leading-relaxed text-slate-600">
@@ -295,6 +318,7 @@ export function ResellerBillingPanel() {
             );
           })}
         </div>
+        )}
       </div>
 
       {payments.length > 0 && (

@@ -3,7 +3,7 @@ import { requireResellerStore } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { OrderSource, OrderStatus } from "@/lib/types";
 
-const DEFAULT_LIMIT = 50;
+const DEFAULT_LIMIT = 10;
 const MAX_LIMIT = 100;
 
 function applyDateFilters<T extends { gte: (c: string, v: string) => T; lte: (c: string, v: string) => T }>(

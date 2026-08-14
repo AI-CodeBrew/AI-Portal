@@ -1,12 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { AdminTopProduct } from "@/lib/admin/top-products";
+import {
+  AdminPaginationBar,
+  type AdminPageSize,
+} from "@/components/AdminPaginationBar";
 
 export function AdminTopProductsPanel() {
   const [products, setProducts] = useState<AdminTopProduct[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<AdminPageSize>(10);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -26,6 +32,13 @@ export function AdminTopProductsPanel() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const totalPages = Math.max(1, Math.ceil(products.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const paged = useMemo(() => {
+    const start = (safePage - 1) * pageSize;
+    return products.slice(start, start + pageSize);
+  }, [products, safePage, pageSize]);
 
   return (
     <div className="space-y-4">
@@ -85,35 +98,51 @@ export function AdminTopProductsPanel() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {products.map((p, i) => (
-                <tr key={`${p.title}-${i}`} className="hover:bg-slate-50">
-                  <td className="px-4 py-3 text-slate-500">{i + 1}</td>
-                  <td className="px-4 py-3">
-                    <p className="font-semibold text-slate-900">{p.title}</p>
-                    {p.topReseller && (
-                      <p className="text-xs text-slate-500">
-                        e.g. {p.topReseller}
-                      </p>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-right font-semibold text-slate-900">
-                    {p.unitsSold.toLocaleString()}
-                  </td>
-                  <td className="px-4 py-3 text-right text-slate-700">
-                    {p.currency
-                      ? `${p.currency} ${p.revenue.toLocaleString()}`
-                      : p.revenue.toLocaleString()}
-                  </td>
-                  <td className="px-4 py-3 text-right text-slate-600">
-                    {p.orderCount.toLocaleString()}
-                  </td>
-                  <td className="px-4 py-3 text-right text-slate-600">
-                    {p.resellerCount}
-                  </td>
-                </tr>
-              ))}
+              {paged.map((p, i) => {
+                const rank = (safePage - 1) * pageSize + i + 1;
+                return (
+                  <tr key={`${p.title}-${rank}`} className="hover:bg-slate-50">
+                    <td className="px-4 py-3 text-slate-500">{rank}</td>
+                    <td className="px-4 py-3">
+                      <p className="font-semibold text-slate-900">{p.title}</p>
+                      {p.topReseller && (
+                        <p className="text-xs text-slate-500">
+                          e.g. {p.topReseller}
+                        </p>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-right font-semibold text-slate-900">
+                      {p.unitsSold.toLocaleString()}
+                    </td>
+                    <td className="px-4 py-3 text-right text-slate-700">
+                      {p.currency
+                        ? `${p.currency} ${p.revenue.toLocaleString()}`
+                        : p.revenue.toLocaleString()}
+                    </td>
+                    <td className="px-4 py-3 text-right text-slate-600">
+                      {p.orderCount.toLocaleString()}
+                    </td>
+                    <td className="px-4 py-3 text-right text-slate-600">
+                      {p.resellerCount}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
+          <AdminPaginationBar
+            page={safePage}
+            totalPages={totalPages}
+            pageSize={pageSize}
+            totalItems={products.length}
+            itemLabel="products"
+            loading={loading}
+            onPageChange={setPage}
+            onPageSizeChange={(size) => {
+              setPageSize(size);
+              setPage(1);
+            }}
+          />
         </div>
       )}
     </div>

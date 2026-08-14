@@ -52,6 +52,8 @@ export async function listStoreShopifyProducts(
       previousCursor: string | null;
       hasNextPage: boolean;
       hasPreviousPage: boolean;
+      totalCount: number | null;
+      pageSize: number;
       currency: string;
       whatsappConnected: boolean;
     }
@@ -71,11 +73,12 @@ export async function listStoreShopifyProducts(
     currency = "USD";
   }
 
+  const pageSize = Math.min(Math.max(options.limit ?? 10, 1), 100);
   const page = await listShopifyCatalogProducts(
     store.shop_domain,
     store.shopify_access_token,
     {
-      limit: options.limit ?? 25,
+      limit: pageSize,
       query: options.query,
       cursor: options.cursor,
       direction: options.direction,
@@ -86,6 +89,7 @@ export async function listStoreShopifyProducts(
 
   return {
     ...page,
+    pageSize,
     products: page.products.map((p) => ({
       ...p,
       currency: p.currency ?? currency,

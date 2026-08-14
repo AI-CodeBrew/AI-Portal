@@ -6,6 +6,10 @@ import { formatMoney } from "@/lib/currency";
 import type { AdminResellerRow } from "@/lib/admin/resellers";
 import type { AdminOrderRow } from "@/lib/admin/orders";
 import { ADMIN_ORDERS_PAGE_SIZE } from "@/lib/admin/orders";
+import {
+  AdminPaginationBar,
+  type AdminPageSize,
+} from "@/components/AdminPaginationBar";
 
 function resellerLabel(r: AdminResellerRow): string {
   return (
@@ -55,6 +59,9 @@ export function AdminOrdersPanel({
     validInitial
   );
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<AdminPageSize>(
+    ADMIN_ORDERS_PAGE_SIZE as AdminPageSize
+  );
   const [orders, setOrders] = useState<AdminOrderRow[]>([]);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
@@ -69,7 +76,7 @@ export function AdminOrdersPanel({
     setLoading(true);
     const params = new URLSearchParams({
       page: String(page),
-      pageSize: String(ADMIN_ORDERS_PAGE_SIZE),
+      pageSize: String(pageSize),
     });
     if (selectedStoreId !== "all") {
       params.set("storeId", selectedStoreId);
@@ -86,7 +93,7 @@ export function AdminOrdersPanel({
     } finally {
       setLoading(false);
     }
-  }, [page, selectedStoreId]);
+  }, [page, pageSize, selectedStoreId]);
 
   useEffect(() => {
     fetchOrders();
@@ -107,13 +114,11 @@ export function AdminOrdersPanel({
   }
 
   function goToPage(next: number) {
-    if (next < 1 || next > totalPages) return;
+    if (next < 1 || (totalPages > 0 && next > totalPages)) return;
     setPage(next);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  const rangeStart = total === 0 ? 0 : (page - 1) * ADMIN_ORDERS_PAGE_SIZE + 1;
-  const rangeEnd = Math.min(page * ADMIN_ORDERS_PAGE_SIZE, total);
   const colSpan = selectedStoreId === "all" ? 7 : 6;
 
   return (
@@ -126,7 +131,7 @@ export function AdminOrdersPanel({
               : `Orders — ${selectedReseller ? resellerLabel(selectedReseller) : "Reseller"}`}
           </p>
           <p className="text-xs text-slate-600">
-            {ADMIN_ORDERS_PAGE_SIZE} orders per page
+            {pageSize} orders per page
           </p>
         </div>
 
@@ -253,35 +258,19 @@ export function AdminOrdersPanel({
         </table>
       </div>
 
-      {totalPages > 0 && (
-      <div className="flex flex-col gap-3 border-t border-slate-200 bg-slate-50 px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-4">
-          <p className="text-sm text-slate-600">
-            Showing {rangeStart}–{rangeEnd} of {total.toLocaleString()} order
-            {total === 1 ? "" : "s"}
-          </p>
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => goToPage(page - 1)}
-              disabled={page <= 1 || loading}
-              className="min-h-11 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 disabled:cursor-not-allowed disabled:opacity-50 hover:bg-slate-100"
-            >
-              Previous
-            </button>
-            <span className="text-sm text-slate-600">
-              Page {page} of {totalPages}
-            </span>
-            <button
-              type="button"
-              onClick={() => goToPage(page + 1)}
-              disabled={page >= totalPages || loading}
-              className="min-h-11 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 disabled:cursor-not-allowed disabled:opacity-50 hover:bg-slate-100"
-            >
-              Next
-            </button>
-          </div>
-        </div>
-      )}
+      <AdminPaginationBar
+        page={page}
+        totalPages={Math.max(1, totalPages)}
+        pageSize={pageSize}
+        totalItems={total}
+        itemLabel="orders"
+        loading={loading}
+        onPageChange={goToPage}
+        onPageSizeChange={(size) => {
+          setPageSize(size);
+          setPage(1);
+        }}
+      />
     </div>
   );
 }

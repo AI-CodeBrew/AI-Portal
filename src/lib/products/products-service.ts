@@ -19,6 +19,7 @@ import type {
   StoreProduct,
   StoreProductBundle,
   StoreProductOption,
+  StoreProductSummary,
   StoreProductVariant,
 } from "./types";
 
@@ -298,6 +299,66 @@ export async function listStoreProducts(
     }))
   );
   return { products };
+}
+
+/** List-only fields (no images, description, variants, bundles, ad links). */
+export async function listStoreProductsSummary(
+  storeId: string
+): Promise<{ products: StoreProductSummary[]; error?: string }> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("store_products")
+    .select("id, name, tagline, price, currency, sku")
+    .eq("store_id", storeId)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    const hint = error.message.includes("store_products")
+      ? " — Run migration 011_store_products.sql in Supabase"
+      : "";
+    return { products: [], error: error.message + hint };
+  }
+
+  const products = (data ?? []).map((row) => ({
+    id: row.id as string,
+    name: row.name as string,
+    tagline: (row.tagline as string | null) ?? null,
+    price: Number(row.price) || 0,
+    currency: (row.currency as string) || "AED",
+    sku: row.sku as string,
+  }));
+
+  if (products.length === 0) {
+    return { products };
+  }
+
+  const ids = products.map((p) => p.id);
+  const { data: optionRows } = await supabase
+    .from("store_product_options")
+    .select("product_id, name, values, sort_order")
+    .eq("store_id", storeId)
+    .in("product_id", ids)
+    .order("sort_order");
+
+  const optionsByProduct = new Map<
+    string,
+    Array<{ name: string; values: string[] }>
+  >();
+  for (const row of optionRows ?? []) {
+    const list = optionsByProduct.get(row.product_id) ?? [];
+    list.push({
+      name: row.name as string,
+      values: Array.isArray(row.values) ? (row.values as string[]) : [],
+    });
+    optionsByProduct.set(row.product_id, list);
+  }
+
+  return {
+    products: products.map((p) => ({
+      ...p,
+      options: optionsByProduct.get(p.id) ?? [],
+    })),
+  };
 }
 
 function normalizeProductRow(row: Record<string, unknown>): StoreProduct {

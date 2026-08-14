@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { AdminResellerRow } from "@/lib/admin/resellers";
 import type {
   AdminChatCounts,
@@ -9,6 +9,10 @@ import type {
 } from "@/lib/admin/chats";
 import type { WhatsappMessage } from "@/lib/types";
 import { ChatMessageBody } from "@/components/ChatMessageBody";
+import {
+  AdminPaginationBar,
+  type AdminPageSize,
+} from "@/components/AdminPaginationBar";
 
 const FILTERS: {
   value: AdminChatFilter;
@@ -73,6 +77,15 @@ export function AdminChatsPanel({
   const [messages, setMessages] = useState<WhatsappMessage[]>([]);
   const [loadingConversations, setLoadingConversations] = useState(true);
   const [loadingMessages, setLoadingMessages] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState<AdminPageSize>(10);
+
+  const totalPages = Math.max(1, Math.ceil(conversations.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const pagedConversations = useMemo(() => {
+    const start = (safePage - 1) * pageSize;
+    return conversations.slice(start, start + pageSize);
+  }, [conversations, safePage, pageSize]);
 
   const loadConversations = useCallback(
     async (opts?: { keepSelection?: string | null }) => {
@@ -85,6 +98,7 @@ export function AdminChatsPanel({
         const data = await res.json();
         const list = (data.conversations ?? []) as AdminConversation[];
         setConversations(list);
+        setPage(1);
         if (data.counts) setCounts(data.counts);
 
         const keep = opts?.keepSelection;
@@ -225,57 +239,74 @@ export function AdminChatsPanel({
 
       <div className="flex h-[calc(100vh-14rem)] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
         {/* Conversations */}
-        <div className="w-72 shrink-0 overflow-y-auto border-r border-slate-200 bg-slate-50 sm:w-80">
+        <div className="flex w-72 shrink-0 flex-col border-r border-slate-200 bg-slate-50 sm:w-80">
           <div className="border-b border-slate-200 px-3 py-3">
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
               Conversations
               {selectedStoreId ? " · filtered by reseller" : ""}
             </p>
           </div>
-          {loadingConversations ? (
-            <p className="px-3 py-6 text-sm text-slate-600">Loading...</p>
-          ) : conversations.length === 0 ? (
-            <p className="px-3 py-6 text-sm text-slate-600">No chats match</p>
-          ) : (
-            conversations.map((conv) => {
-              const active = selectedConversationId === conv.id;
-              return (
-                <button
-                  key={conv.id}
-                  type="button"
-                  onClick={() => setSelectedConversationId(conv.id)}
-                  className={`block w-full border-b border-slate-200 px-3 py-3 text-left text-sm transition-colors hover:bg-white ${
-                    active
-                      ? "border-l-4 border-l-violet-600 bg-white font-semibold text-violet-700"
-                      : "border-l-4 border-l-transparent text-slate-700"
-                  }`}
-                >
-                  <span className="flex items-center gap-2">
-                    <span className="truncate">+{conv.customer_phone}</span>
-                    {conv.unread && (
-                      <span className="h-2 w-2 shrink-0 rounded-full bg-violet-500" />
-                    )}
-                  </span>
-                  {!selectedStoreId && (
-                    <span className="mt-0.5 block truncate text-xs font-normal text-slate-500">
-                      {storeLabel(conv, resellersWithStore)}
-                    </span>
-                  )}
-                  <span
-                    className={`mt-0.5 block text-xs font-normal ${
-                      conv.status === "human_handoff"
-                        ? "text-amber-700"
-                        : conv.unread
-                          ? "text-violet-600"
-                          : "text-slate-500"
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {loadingConversations ? (
+              <p className="px-3 py-6 text-sm text-slate-600">Loading...</p>
+            ) : conversations.length === 0 ? (
+              <p className="px-3 py-6 text-sm text-slate-600">No chats match</p>
+            ) : (
+              pagedConversations.map((conv) => {
+                const active = selectedConversationId === conv.id;
+                return (
+                  <button
+                    key={conv.id}
+                    type="button"
+                    onClick={() => setSelectedConversationId(conv.id)}
+                    className={`block w-full border-b border-slate-200 px-3 py-3 text-left text-sm transition-colors hover:bg-white ${
+                      active
+                        ? "border-l-4 border-l-violet-600 bg-white font-semibold text-violet-700"
+                        : "border-l-4 border-l-transparent text-slate-700"
                     }`}
                   >
-                    {conversationStatusLabel(conv.status)}
-                    {conv.unread ? " · Unread" : ""}
-                  </span>
-                </button>
-              );
-            })
+                    <span className="flex items-center gap-2">
+                      <span className="truncate">+{conv.customer_phone}</span>
+                      {conv.unread && (
+                        <span className="h-2 w-2 shrink-0 rounded-full bg-violet-500" />
+                      )}
+                    </span>
+                    {!selectedStoreId && (
+                      <span className="mt-0.5 block truncate text-xs font-normal text-slate-500">
+                        {storeLabel(conv, resellersWithStore)}
+                      </span>
+                    )}
+                    <span
+                      className={`mt-0.5 block text-xs font-normal ${
+                        conv.status === "human_handoff"
+                          ? "text-amber-700"
+                          : conv.unread
+                            ? "text-violet-600"
+                            : "text-slate-500"
+                      }`}
+                    >
+                      {conversationStatusLabel(conv.status)}
+                      {conv.unread ? " · Unread" : ""}
+                    </span>
+                  </button>
+                );
+              })
+            )}
+          </div>
+          {conversations.length > 0 && (
+            <AdminPaginationBar
+              page={safePage}
+              totalPages={totalPages}
+              pageSize={pageSize}
+              totalItems={conversations.length}
+              itemLabel="chats"
+              loading={loadingConversations}
+              onPageChange={setPage}
+              onPageSizeChange={(size) => {
+                setPageSize(size);
+                setPage(1);
+              }}
+            />
           )}
         </div>
 
