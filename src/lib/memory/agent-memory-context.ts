@@ -113,12 +113,31 @@ export async function updateProfileFromTurn(params: {
     patch.objections = ["price_or_decline"];
   }
 
-  // Capture product interest from assistant pitch markers lightly
+  // Capture product interest from pitch cards: "Title — Rs. 3000" / *Title*
+  const pitchTitle = assistantReply.match(
+    /(?:^|\n)(?:\[Ref:[^\]]+\]\s*\n)?(?:\[Image:[^\]]+\]\s*\n)?([^*\n][^\n]{2,80}?)\s*(?:—|-)\s*(?:Rs\.?|PKR|AED|\$|€)/im
+  );
+  const boldTitle = assistantReply.match(/\*([^*]{3,60})\*/);
   const productMatch = assistantReply.match(
     /(?:product|item)\s*[:\-]?\s*([^\n.]{3,60})/i
   );
-  if (productMatch?.[1]) {
-    patch.interested_products = [productMatch[1].trim()];
+  const interested =
+    pitchTitle?.[1]?.replace(/\*([^*]+)\*/g, "$1").trim() ||
+    boldTitle?.[1]?.trim() ||
+    productMatch?.[1]?.trim();
+  if (interested && interested.length >= 3 && interested.length <= 80) {
+    patch.interested_products = [interested];
+  }
+
+  // Light preference signals for Mem0/profile continuity
+  if (/\b(COD|cash on delivery)\b/i.test(userMessage)) {
+    patch.agent_notes = "Prefers COD";
+  }
+  if (/\b(roman urdu|urdu)\b/i.test(userMessage) || /\b(mujhy?|chahiye|kitna)\b/i.test(userMessage)) {
+    patch.language = "en"; // roman urdu still latin script; keep en for UI
+    patch.agent_notes = [patch.agent_notes, "Often chats in Roman Urdu"]
+      .filter(Boolean)
+      .join("; ");
   }
 
   await mergeCustomerSalesProfile(storeId, customerPhone, patch);

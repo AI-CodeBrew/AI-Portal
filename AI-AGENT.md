@@ -256,6 +256,8 @@ When you change AI behavior, update **this doc** and the relevant file:
 
 | Date | Change |
 |------|--------|
+| 2026-08-14 | Stress-test `scripts/train-sales-conversations.ts` + Mem0 seed for coach phone; identity/off-topic in runSalesAgent; Roman Urdu mehnga ≠ catalog; buy-it / I'll take it before bare-product; memory questions use Mem0 not search. |
+| 2026-08-14 | “I want to buy it” sticks to the pitched product → checkout (phone/address), never search/browse for “it” or another item. |
 | 2026-08-14 | “How are you” / “hey bro how are you” → natural “I'm fine…” reply; anti-spam “ask me a product” only for empty hi/hey loops. |
 | 2026-08-14 | Roman Urdu product asks + bare names (e.g. Audionic buds) → search, not English greeting; reply in same language/script as customer. |
 | 2026-08-14 | Anti-spam greetings: first hi = one welcome; hello/hey again → “How can I help you?” only — never re-send opening intro. |

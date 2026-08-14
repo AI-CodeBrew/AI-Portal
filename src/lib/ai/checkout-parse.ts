@@ -9,7 +9,30 @@ import { looksLikeVariantSelection } from "./variant-selection";
 import { looksLikeExactNamedProductQuery } from "./exact-routes";
 
 const CHECKOUT_INTENT =
-  /\b(place\s+(an\s+)?order|want\s+to\s+(order|buy)|order\s+(this|it|now)|buy\s+(this|it|now)|checkout|confirm\s+(my\s+)?order|i('m| am)?\s+(ready|ordering)|deal)\b/i;
+  /\b(place\s+(an\s+)?order|want(?:a|\s+to)\s+(order|buy)|want\s+(it|this|that)|order\s+(this|it|now)|buy\s+(this|it|now)|i('ll| will)\s+take\s+(it|this|that)|take\s+(it|this|that)|book\s+it|checkout|confirm\s+(my\s+)?order|i('m| am)?\s+(ready|ordering)|deal)\b/i;
+
+/**
+ * Customer wants the product already pitched ("I want to buy it") —
+ * not a new catalog search / browse.
+ */
+export function looksLikeBuyActiveProductIntent(text: string): boolean {
+  const t = text.trim();
+  if (t.length < 4 || t.length > 120) return false;
+  if (looksLikeStillShoppingMessage(t)) return false;
+
+  return (
+    /\b(?:i\s+)?(?:want(?:a|\s+to)\s+(?:order|buy)|wanna\s+(?:buy|order)|want)\s+(?:it|this|that|this\s+one|that\s+one|the\s+product|same(?:\s+one)?)\b/i.test(
+      t
+    ) ||
+    /\b(?:buy|order|take|book)\s+(?:it|this|that|this\s+one|that\s+one)\b/i.test(
+      t
+    ) ||
+    /\bi('ll| will)\s+take\s+(?:it|this|that)\b/i.test(t) ||
+    /^(yes|yeah|yep|sure|ok|okay)[,!.\s]+(i\s+)?(want(?:a|\s+to)\s+)?(buy|order|take)(\s+(it|this|that))?\b/i.test(
+      t
+    )
+  );
+}
 
 /** Affirmations that are still shopping — not ready to place an order. */
 export function looksLikeStillShoppingMessage(text: string): boolean {
@@ -73,13 +96,21 @@ export function looksLikeCheckoutMessage(
   history?: Array<{ role: "user" | "assistant"; content: string }>
 ): boolean {
   const t = text.trim();
-  if (t.length < 8) return false;
+  if (t.length < 4) return false;
 
   // Still shopping / browsing — never treat as checkout
   if (looksLikeStillShoppingMessage(t)) return false;
 
+  // "I want to buy it" / "I'll take this" → checkout for pitched product
+  // (must win over bare-product heuristics like treating "take" as a product name)
+  if (looksLikeBuyActiveProductIntent(t)) {
+    return true;
+  }
+
   // New product question — never treat as checkout, even mid order flow
   if (looksLikeProductQuestion(t, history ?? [])) return false;
+
+  if (t.length < 8) return false;
 
   const digits = t.replace(/\D/g, "");
   const hasPhone = digits.length >= 8;

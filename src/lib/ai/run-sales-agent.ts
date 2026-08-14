@@ -31,6 +31,7 @@ import {
   looksLikeOffTopicChat,
   assistantAlreadyWelcomed,
   tryDirectGreetingReply,
+  tryDirectOffTopicReply,
 } from "./greeting-reply";
 import { resolveExactDirectRoute, looksLikeExactNamedProductQuery } from "./exact-routes";
 import {
@@ -159,6 +160,14 @@ export async function runSalesAgent(
     console.error("[run-sales-agent] greeting reply failed:", err);
   }
 
+  // Identity / jokes — never catalog search ("who are you" ≠ product "who")
+  try {
+    const offTopic = tryDirectOffTopicReply(enrichedCtx, latestUser);
+    if (offTopic) return offTopic;
+  } catch (err) {
+    console.error("[run-sales-agent] off-topic reply failed:", err);
+  }
+
   // Fast path ONLY for clear structural intents (SKU, checkout details, browse, policy).
   // Price/discount/ambiguous chat → LLM (intent router may tip tool handlers, else Gemini).
   const exactRoute = resolveExactDirectRoute(latestUser, history);
@@ -211,7 +220,7 @@ export async function runSalesAgent(
     }
   }
 
-  // Gemini failed — last-resort recovery for clear declines only
+  // Gemini failed — last-resort recovery for clear declines / price talk
   if (looksLikeOrderDecline(latestUser)) {
     try {
       const recovery = await tryDirectSalesRecoveryReply(
@@ -225,17 +234,7 @@ export async function runSalesAgent(
     }
   }
 
-  try {
-    const catalogPick = await tryDirectCatalogProductPickReply(
-      enrichedCtx,
-      latestUser,
-      history
-    );
-    if (catalogPick) return catalogPick;
-  } catch (err) {
-    console.error("[run-sales-agent] catalog product pick fallback failed:", err);
-  }
-
+  // Buy-the-pitched-product before catalog error fallbacks
   try {
     if (looksLikeCheckoutMessage(latestUser, history)) {
       const checkout = await tryDirectCheckoutReply(
@@ -247,6 +246,17 @@ export async function runSalesAgent(
     }
   } catch (err) {
     console.error("[run-sales-agent] checkout fallback failed:", err);
+  }
+
+  try {
+    const catalogPick = await tryDirectCatalogProductPickReply(
+      enrichedCtx,
+      latestUser,
+      history
+    );
+    if (catalogPick) return catalogPick;
+  } catch (err) {
+    console.error("[run-sales-agent] catalog product pick fallback failed:", err);
   }
 
   try {

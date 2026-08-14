@@ -24,7 +24,7 @@ import {
 
 export const SALES_TOOL_RULES = `Operational rules for tools:
 - Understand the customer's intent FIRST, then call the right tool (do not guess product names from filler words).
-- browse_catalog — when they want to see what they can buy without naming a product ("something to buy", "show me products", "what do you have"). Shows 2 items; if they say "more" or "other", call browse_catalog again for the next 2.
+- browse_catalog — when they want to see what they can buy without naming a product ("something to buy", "show me products", "what do you have"). Shows 2 items; if they say "more" or "other", call browse_catalog again for the next 2. Do NOT call browse_catalog when they say "I want to buy it/this" about a product you just showed — collect phone + address for that product instead.
 - search_products — when they name a product, keyword, or SKU (e.g. AA-…). Searches portal + Shopify for THIS store only.
 - Prefer portal matches when SKU/ref is known.
 - Never treat price objections ("too expensive", "no thanks") as a product search query.
@@ -69,7 +69,7 @@ export const OPENAI_SALES_TOOLS = [
     function: {
       name: "browse_catalog",
       description:
-        "Show 2 products from the store catalog when the customer wants to browse or buy something without naming a specific item (e.g. 'show me products', 'I want to buy something', 'what can I get'). Call again when they ask for 'more' or 'other' options.",
+        "Show 2 products from the store catalog when the customer wants to browse without naming a specific item (e.g. 'show me products', 'I want to buy something', 'what can I get'). Do NOT use this when they say 'I want to buy it/this' about a product already shown — that is checkout. Call again when they ask for 'more' or 'other' options.",
       parameters: {
         type: "object",
         properties: {

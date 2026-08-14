@@ -837,11 +837,19 @@ export function productSearchTokens(query: string): string[] {
     "about",
     "this",
     "that",
+    "it",
+    "its",
+    "one",
+    "ones",
+    "them",
+    "those",
+    "these",
     "product",
     "products",
     "item",
     "items",
     "want",
+    "wanna",
     "order",
     "ordering",
     "looking",
@@ -857,6 +865,37 @@ export function productSearchTokens(query: string): string[] {
     "i",
     "get",
     "buy",
+    "interested",
+    "interest",
+    "before",
+    "was",
+    "were",
+    "did",
+    "take",
+    "took",
+    "taking",
+    "remember",
+    "again",
+    "live",
+    "prefer",
+    "prefers",
+    "cod",
+    "cash",
+    "delivery",
+    "shipping",
+    "budget",
+    "under",
+    "name",
+    "named",
+    "city",
+    "dubai",
+    "who",
+    "whom",
+    "whose",
+    "what",
+    "when",
+    "where",
+    "why",
     "how",
     "much",
     "price",
@@ -986,7 +1025,7 @@ export function productSearchTokens(query: string): string[] {
 export function looksLikeObjectionPhrase(text: string): boolean {
   const t = text.trim();
   if (t.length < 2) return false;
-  return /\b(don'?t\s+want|dont\s+want|do\s+not\s+want|not\s+(interested|now|today|ordering|buying|want)|no\s+thanks|no\s+thank\s+you|nah+|nope|not\s+for\s+me|maybe\s+later|skip|cancel|i'?ll\s+pass|no\s+order|won'?t\s+(order|buy)|expens\w*|xpens\w*|costly|too\s+(much|pricey|costly|expensive)|(?:price|cost|rate)\s+(is\s+)?(too\s+)?high|high\s+(price|cost)|can'?t\s+afford|\bbudget\b|over\s+budget|out\s+of\s+(my\s+)?budget|overpriced|not\s+worth|discount|discounts|any\s+offers?|better\s+(price|deal|offer)|special\s+(price|offer|deal)|last\s+price|best\s+price|final\s+price|reduce\s+(the\s+)?price|lower\s+(the\s+)?price|cheaper|sasta|offer\s+(me|please)|give\s+(me\s+)?(a\s+)?(discount|offer)|can\s+(you|u)\s+give|\d+\s*%\s*off|%\s*off|percent(?:age)?\s+off|bulk\s*(order|discount|deal|off|price)?|on\s+bulk)\b/i.test(
+  return /\b(don'?t\s+want|dont\s+want|do\s+not\s+want|not\s+(interested|now|today|ordering|buying|want)|no\s+thanks|no\s+thank\s+you|nah+|nope|not\s+for\s+me|maybe\s+later|skip|cancel|i'?ll\s+pass|no\s+order|won'?t\s+(order|buy)|expens\w*|xpens\w*|costly|too\s+(much|pricey|costly|expensive)|(?:price|cost|rate)\s+(is\s+)?(too\s+)?high|high\s+(price|cost)|can'?t\s+afford|\bbudget\b|over\s+budget|out\s+of\s+(my\s+)?budget|overpriced|not\s+worth|discount|discounts|any\s+offers?|better\s+(price|deal|offer)|special\s+(price|offer|deal)|last\s+price|best\s+price|final\s+price|reduce\s+(the\s+)?price|lower\s+(the\s+)?price|cheaper|sasta|mehnga|mehngi|mehangi|mehanga|qeemat|zyada\s+(hai|he)|bohot\s+(zyada|mehnga|mehngi|mehangi)|offer\s+(me|please)|give\s+(me\s+)?(a\s+)?(discount|offer)|can\s+(you|u)\s+give|\d+\s*%\s*off|%\s*off|percent(?:age)?\s+off|bulk\s*(order|discount|deal|off|price)?|on\s+bulk)\b/i.test(
     t
   );
 }
@@ -1134,12 +1173,19 @@ export function extractProductSearchQuery(text: string): string | null {
   }
 
   const orderNamed = text.match(
-    /\bwant\s+to\s+(?:order|buy)\s+(?:a\s+|an\s+|the\s+)?(.+?)(?:\?|\.|!|$|\bdo you have\b|\bplease\b)/i
+    /\bwant(?:a|\s+to)\s+(?:order|buy)\s+(?:a\s+|an\s+|the\s+)?(.+?)(?:\?|\.|!|$|\bdo you have\b|\bplease\b)/i
   );
   if (orderNamed?.[1]) {
     const phrase = orderNamed[1].replace(/[?.!]+$/g, "").trim();
-    const tokens = productSearchTokens(phrase);
-    if (tokens.length) return tokens.join(" ").slice(0, 80);
+    // Pronouns only ("it" / "this" / "that") → not a new product name
+    if (
+      !/^(it|this|that|this\s+one|that\s+one|the\s+product|same(?:\s+one)?)$/i.test(
+        phrase
+      )
+    ) {
+      const tokens = productSearchTokens(phrase);
+      if (tokens.length) return tokens.join(" ").slice(0, 80);
+    }
   }
 
   const availabilityAsk = text.match(
@@ -1180,6 +1226,14 @@ export function looksLikeBareProductNameQuery(message: string): boolean {
   if (looksLikeObjectionPhrase(t)) return false;
   if (looksLikeCatalogBrowseRequest(t)) return false;
   if (/\n/.test(t)) return false;
+  // Profile / preference / memory sentences — not product search
+  if (
+    /\b(my name is|i (?:live|prefer|like|hate|want)|remember me|hey again|what (product )?(was|were|did) i|was i (interested|looking)|looking at before)\b/i.test(
+      t
+    )
+  ) {
+    return false;
+  }
   // Not a full sentence question about something else
   if (/^(who|what|when|where|why|how)\b/i.test(t) && t.split(/\s+/).length > 4) {
     return false;

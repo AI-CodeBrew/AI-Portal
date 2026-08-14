@@ -17,6 +17,7 @@ import {
   tryDirectProductImageReply,
 } from "./product-reply";
 import { formatVariantOptionReprompt } from "./variant-selection";
+import { looksLikeBuyActiveProductIntent } from "./checkout-parse";
 
 const GEMINI_API_BASE =
   "https://generativelanguage.googleapis.com/v1beta/models";
@@ -71,10 +72,10 @@ Return ONLY valid JSON:
 
 Rules:
 - Use conversation context. Short replies like "yes", "that one", "ok", "yellow" refer to the LAST product/options the assistant showed.
-- checkout: customer shares phone + delivery address to place order (not just "yes" or "looking for a product").
-- catalog_browse / catalog_more: wants to see products / other products.
-- catalog_product_pick: picks one from a recently shown browse list.
-- product_search: named product, price of a named item, or SKU.
+- checkout: customer shares phone + delivery address to place order, OR says they want to buy/order the product just shown ("I want to buy it", "I'll take this", "order it") without naming a different product.
+- catalog_browse / catalog_more: wants to see products / other products — NOT "I want to buy it" after a product pitch.
+- catalog_product_pick: picks one from a recently shown browse list by name.
+- product_search: named product, price of a named item, or SKU. NEVER product_search for "it" / "this" / "that" alone — that is checkout for the pitched product.
 - variant_selection: chooses size/color for a product already discussed.
 - objection_recovery: costly, expensive, discount, offer, % off, bulk, won't buy, not interested — any price pushback. NOT product_search.
 - product_image: wants a photo.
@@ -332,6 +333,17 @@ export async function tryIntentRoutedReply(
   // Conversational / price / unclear → main Gemini sales agent
   if (LLM_OWNED_INTENTS.has(routed.intent) || routed.confidence < CONFIDENCE_ACT) {
     return null;
+  }
+
+  // "I want to buy it" → checkout for pitched product, never search/browse
+  if (
+    looksLikeBuyActiveProductIntent(latestUser) &&
+    (routed.intent === "product_search" ||
+      routed.intent === "catalog_browse" ||
+      routed.intent === "catalog_more" ||
+      routed.intent === "catalog_product_pick")
+  ) {
+    return tryDirectCheckoutReply(ctx, latestUser, history);
   }
 
   // Don't treat price talk as product search even if classifier slips

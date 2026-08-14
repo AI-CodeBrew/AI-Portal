@@ -30,6 +30,15 @@ export function looksLikeDeliveryEtaQuestion(message: string): boolean {
   if (DELIVERY_EXCLUDE.test(t) && !DELIVERY_ETA_PATTERN.test(t)) return false;
   // "delivery address" / checkout details — not ETA
   if (/\bdelivery\s+address\b/i.test(t)) return false;
+  // Cost complaints about shipping — not ETA
+  if (
+    /\b(expensive|costly|mehnga|hate|high)\b.*\b(shipping|delivery|ship)\b/i.test(
+      t
+    ) ||
+    /\b(shipping|delivery)\b.*\b(expensive|costly|mehnga|fee|charges?)\b/i.test(t)
+  ) {
+    return false;
+  }
   return DELIVERY_ETA_PATTERN.test(t);
 }
 

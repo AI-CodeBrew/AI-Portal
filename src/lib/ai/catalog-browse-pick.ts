@@ -123,7 +123,15 @@ export function looksLikeCatalogProductPick(
 
   if (messageMatchesShownCatalogTitle(t, titles)) return true;
 
-  // "i want Audionic ENC" — not bare color/size answers like "yellow"
+  // "i want Audionic ENC" — not bare "i want to buy it" (pronouns = pitched product)
+  if (
+    /\b(?:want(?:a|\s+to)\s+(?:order|buy)|buy|order|take)\s+(?:it|this|that|this\s+one|that\s+one|the\s+product|same(?:\s+one)?)[\s!.?,]*$/i.test(
+      t
+    )
+  ) {
+    return false;
+  }
+
   const hasPickIntent =
     /\b(i\s+)?(?:want|need|order|buy|get|take|interested in|go with|choose|pick|i(?:'ll| will) take)\b/i.test(
       t

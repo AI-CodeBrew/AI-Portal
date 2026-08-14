@@ -55,6 +55,31 @@ export function looksLikeExactNamedProductQuery(text: string): boolean {
   if (looksLikeObjectionPhrase(t)) return false;
   if (looksLikeCasualGreeting(t)) return false;
   if (looksLikeCatalogBrowseRequest(t)) return false;
+  // Buy the pitched product — not a new catalog query
+  if (
+    /\b(?:want(?:a|\s+to)\s+(?:order|buy)|buy|order|take|book)\s+(?:it|this|that|this\s+one|that\s+one)\b/i.test(
+      t
+    ) ||
+    /\bi('ll| will)\s+take\s+(?:it|this|that)\b/i.test(t)
+  ) {
+    return false;
+  }
+  // Memory / history questions — LLM + Mem0, not catalog search
+  if (
+    /\b(what (product )?(was|were|did) i|was i (interested|looking)|looking at before|remember (me|what)|interested in before)\b/i.test(
+      t
+    )
+  ) {
+    return false;
+  }
+  // Identity / chitchat — never treat as a product name
+  if (
+    /\b(who\s+(are|r)\s+(you|u)|who\s+is\s+this|what(?:'s| is)\s+your\s+name|are you (an? )?(ai|bot)|hey\s+again|remember\s+me)\b/i.test(
+      t
+    )
+  ) {
+    return false;
+  }
   if (extractSkuFromText(t)) return true;
 
   if (looksLikeRomanUrduProductAsk(t)) {

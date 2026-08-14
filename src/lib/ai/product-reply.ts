@@ -30,15 +30,16 @@ import {
   looksLikeProductConfirmAffirmation,
 } from "./product-confirm";
 import {
+  looksLikeBuyActiveProductIntent,
+  looksLikeCheckoutMessage,
+} from "./checkout-parse";
+import {
   formatVariantSelectionReply,
   looksLikeVariantSelection,
   matchVariantFromMessage,
   messageMatchesListedProductOption,
   assistantAskedWhichVariant,
 } from "./variant-selection";
-import {
-  looksLikeCheckoutMessage,
-} from "./checkout-parse";
 
 export type SearchProduct = {
   title?: string;
@@ -773,6 +774,7 @@ function shouldTryDirectProductLookup(
   history: Array<{ role: "user" | "assistant"; content: string }> = []
 ): boolean {
   if (looksLikeCheckoutMessage(message, history)) return false;
+  if (looksLikeBuyActiveProductIntent(message)) return false;
   if (looksLikeVariantSelection(message, history)) return false;
 
   const route = resolveExactDirectRoute(message, history);

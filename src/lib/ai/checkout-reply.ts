@@ -5,6 +5,7 @@ import {
 } from "./sales-recovery";
 import {
   findProductRefFromHistory,
+  looksLikeBuyActiveProductIntent,
   looksLikeCheckoutMessage,
   looksLikeProductQuestion,
   parseCheckoutDetails,
@@ -13,9 +14,11 @@ import {
 } from "./checkout-parse";
 import { resolveOrderLineFromChatRef } from "@/lib/orders/whatsapp-create";
 import { orderDetailsTemplate } from "./order-details-template";
+import { findActiveProductContext } from "./product-reply";
 
 export {
   looksLikeCheckoutMessage,
+  looksLikeBuyActiveProductIntent,
   parseCheckoutDetails,
   validateCheckoutMessage,
 } from "./checkout-parse";
@@ -51,9 +54,20 @@ function formatOrderSuccess(params: {
 
 function formatCheckoutMissingReply(
   issues: CheckoutValidationIssue[],
-  defaultQty?: number
+  defaultQty?: number,
+  productLabel?: string | null
 ): string {
-  const lines: string[] = ["Almost there — to confirm your order I need:"];
+  const lines: string[] = [];
+
+  if (productLabel) {
+    lines.push(`Great — locking in *${productLabel}*.`);
+  }
+
+  lines.push(
+    productLabel
+      ? "To confirm your order I need:"
+      : "Almost there — to confirm your order I need:"
+  );
 
   if (
     issues.includes("missing_phone") ||
@@ -129,9 +143,15 @@ export async function tryDirectCheckoutReply(
       looksLikeCheckoutMessage(latestUserMessage, history) ||
       pendingOffer
     ) {
+      const active = findActiveProductContext(history, latestUserMessage);
+      const productLabel =
+        looksLikeBuyActiveProductIntent(latestUserMessage) || active
+          ? active?.title ?? null
+          : null;
       return formatCheckoutMissingReply(
         validation.issues,
-        pendingOffer?.defaultQty
+        pendingOffer?.defaultQty,
+        productLabel
       );
     }
     return null;
