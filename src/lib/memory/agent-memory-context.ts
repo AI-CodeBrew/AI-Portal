@@ -117,15 +117,19 @@ export async function updateProfileFromTurn(params: {
   const pitchTitle = assistantReply.match(
     /(?:^|\n)(?:\[Ref:[^\]]+\]\s*\n)?(?:\[Image:[^\]]+\]\s*\n)?([^*\n][^\n]{2,80}?)\s*(?:—|-)\s*(?:Rs\.?|PKR|AED|\$|€)/im
   );
-  const boldTitle = assistantReply.match(/\*([^*]{3,60})\*/);
   const productMatch = assistantReply.match(
     /(?:product|item)\s*[:\-]?\s*([^\n.]{3,60})/i
   );
   const interested =
     pitchTitle?.[1]?.replace(/\*([^*]+)\*/g, "$1").trim() ||
-    boldTitle?.[1]?.trim() ||
     productMatch?.[1]?.trim();
-  if (interested && interested.length >= 3 && interested.length <= 80) {
+  if (
+    interested &&
+    interested.length >= 3 &&
+    interested.length <= 80 &&
+    !/^(want it|which|hi!?|hey|i'?m |tell me|ask me|how can)/i.test(interested) &&
+    !/show you|help you|product you want/i.test(interested)
+  ) {
     patch.interested_products = [interested];
   }
 

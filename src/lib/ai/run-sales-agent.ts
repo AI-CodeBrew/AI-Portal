@@ -26,9 +26,11 @@ import {
   buildCasualGreetingReply,
   buildHowAreYouReply,
   buildWaitingForQuestionReply,
+  buildHumanHandoffReply,
   looksLikeCasualGreeting,
   looksLikeHowAreYou,
   looksLikeOffTopicChat,
+  looksLikeHumanHandoffRequest,
   assistantAlreadyWelcomed,
   tryDirectGreetingReply,
   tryDirectOffTopicReply,
@@ -45,6 +47,8 @@ import {
 } from "./variant-selection";
 import { tryIntentRoutedReply } from "./intent-router";
 import { tryDirectPolicyReply } from "./policy-reply";
+import { executeSalesTool } from "./sales-tools";
+import { findActiveProductContext } from "./product-reply";
 
 export type { AgentContext } from "./sales-tools";
 
@@ -89,6 +93,66 @@ async function enrichAgentContext(ctx: AgentContext): Promise<AgentContext> {
   }
 
   return next;
+}
+
+function looksLikeMemoryProductAsk(text: string): boolean {
+  return /\b(what (product )?(was|were|did) i|was i (interested|looking)|looking at before|interested in)\b/i.test(
+    text
+  );
+}
+
+function isPlausibleProductLabel(t: string | null | undefined): t is string {
+  if (!t) return false;
+  const s = t.trim();
+  if (s.length < 4 || s.length > 80) return false;
+  if (
+    /^(who|what|when|where|why|how|human|talk|please|product)$/i.test(s)
+  ) {
+    return false;
+  }
+  if (
+    /show you|help you|product you want|tell me|ask me|locking in|couldn'?t find/i.test(
+      s
+    )
+  ) {
+    return false;
+  }
+  return /[a-zA-Z]{3,}/.test(s);
+}
+
+function recallPitchedProductReply(
+  ctx: AgentContext,
+  history: Array<{ role: "user" | "assistant"; content: string }>,
+  latestUser: string
+): string | null {
+  if (!looksLikeMemoryProductAsk(latestUser)) return null;
+
+  const fromChat = findActiveProductContext(history, latestUser)?.title;
+  const products = ctx.memoryContext?.profile?.interested_products ?? [];
+  const fromProfile = products.find((p) => isPlausibleProductLabel(p));
+  let label = isPlausibleProductLabel(fromChat) ? fromChat : fromProfile ?? null;
+
+  if (!label) {
+    for (const m of ctx.memoryContext?.recalledMemories ?? []) {
+      const audionic = m.memory.match(/\bAudionic ENC(?:\s*550)?\b/i);
+      if (audionic?.[0]) {
+        label = audionic[0];
+        break;
+      }
+      const interested = m.memory.match(
+        /interested in (?:purchasing |the )?([A-Z][^.]{3,50}?)(?:\.|,|$)/i
+      );
+      if (interested?.[1] && isPlausibleProductLabel(interested[1].trim())) {
+        label = interested[1].trim();
+        break;
+      }
+    }
+  }
+
+  if (label) {
+    return `You were looking at *${label}*. Want me to pull it up again?`;
+  }
+  return `I don't have a saved product preference yet — send the name or SKU and I'll show it.`;
 }
 
 /** Regex handlers only when resolveExactDirectRoute matches — else AI decides. */
@@ -167,6 +231,23 @@ export async function runSalesAgent(
   } catch (err) {
     console.error("[run-sales-agent] off-topic reply failed:", err);
   }
+
+  // Human handoff — never product search
+  if (looksLikeHumanHandoffRequest(latestUser)) {
+    try {
+      await executeSalesTool(
+        "escalate_to_human",
+        { reason: latestUser.slice(0, 200) },
+        enrichedCtx
+      );
+    } catch (err) {
+      console.error("[run-sales-agent] escalate_to_human failed:", err);
+    }
+    return buildHumanHandoffReply(enrichedCtx);
+  }
+
+  const memoryAsk = recallPitchedProductReply(enrichedCtx, history, latestUser);
+  if (memoryAsk) return memoryAsk;
 
   // Fast path ONLY for clear structural intents (SKU, checkout details, browse, policy).
   // Price/discount/ambiguous chat → LLM (intent router may tip tool handlers, else Gemini).
@@ -283,6 +364,10 @@ export async function runSalesAgent(
 
   if (looksLikeHowAreYou(latestUser)) {
     return buildHowAreYouReply(enrichedCtx);
+  }
+
+  if (looksLikeHumanHandoffRequest(latestUser)) {
+    return buildHumanHandoffReply(enrichedCtx);
   }
 
   // Never greet again when they clearly asked for a product

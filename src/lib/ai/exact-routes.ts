@@ -72,6 +72,14 @@ export function looksLikeExactNamedProductQuery(text: string): boolean {
   ) {
     return false;
   }
+  // Human handoff — not a product
+  if (
+    /\b((talk|speak|chat|connect|transfer)\s+(to\s+)?(a\s+)?(human|person|agent)|live\s+agent|real\s+person)\b/i.test(
+      t
+    )
+  ) {
+    return false;
+  }
   // Identity / chitchat — never treat as a product name
   if (
     /\b(who\s+(are|r)\s+(you|u)|who\s+is\s+this|what(?:'s| is)\s+your\s+name|are you (an? )?(ai|bot)|hey\s+again|remember\s+me)\b/i.test(

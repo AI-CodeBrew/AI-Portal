@@ -72,6 +72,21 @@ export function looksLikeOffTopicChat(text: string): boolean {
   return false;
 }
 
+/** Customer asks for a human agent — not a product search. */
+export function looksLikeHumanHandoffRequest(text: string): boolean {
+  const t = text.trim();
+  if (t.length < 4) return false;
+  return /\b((talk|speak|chat|connect|transfer|switch)\s+(to\s+)?(a\s+)?(human|person|agent|someone|representative|rep|manager|operator)|real\s+person|live\s+agent|customer\s+service|human\s+please|call\s+me|phone\s+me)\b/i.test(
+    t
+  );
+}
+
+export function buildHumanHandoffReply(ctx: AgentContext): string {
+  const store = storeLabel(ctx);
+  const agent = agentLabel(ctx, store);
+  return `No problem — I'll connect you with a teammate from ${store}. ${agent} here will step aside; someone will follow up on this chat shortly.`;
+}
+
 function storeLabel(ctx: AgentContext): string {
   return (
     ctx.store.store_name ||

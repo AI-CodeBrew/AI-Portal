@@ -1,10 +1,6 @@
 /**
- * Multi-turn sales agent stress test + Mem0 / profile training for a coach customer.
- *
- * Mem0 is per store+phone (not global model training). This script:
- * 1) Runs many realistic WhatsApp turns through runSalesAgent
- * 2) Asserts critical behaviors (greeting, buy-it sticks, policies, etc.)
- * 3) Writes successful turns into Mem0 + customer profile so returning chats recall facts
+ * Full sales stress test: greetings, buy-it, policies, AND rebuttal ladder.
+ * Writes turns + playbook facts into Mem0 for the coach customer.
  *
  * Run:
  *   npx tsx --tsconfig tsconfig.json --env-file=.env.local scripts/train-sales-conversations.ts
@@ -29,14 +25,16 @@ type Turn = {
   expect?: Array<string | RegExp>;
   reject?: Array<string | RegExp>;
   label?: string;
+  /** Clear history before this turn (new objection track) */
+  resetHistory?: boolean;
 };
 
-type Scenario = {
-  name: string;
-  turns: Turn[];
-};
+type Scenario = { name: string; turns: Turn[] };
 
 const COACH_PHONE = "971500007771";
+const CATALOG_FAIL = /couldn'?t find|in our catalog|catalog check mein issue|Did you mean/i;
+const BROWSE_LIST = /Here are a couple of things you can order/i;
+const WAITING_SPAM = /Ask me a product name when you're ready/i;
 
 const results: Array<{
   scenario: string;
@@ -46,20 +44,19 @@ const results: Array<{
   detail: string;
 }> = [];
 
-function clip(s: string, n = 220) {
+function clip(s: string, n = 200) {
   const t = s.replace(/\s+/g, " ").trim();
   return t.length > n ? `${t.slice(0, n)}…` : t;
 }
 
 function matches(reply: string, rule: string | RegExp): boolean {
-  if (typeof rule === "string") {
-    return reply.toLowerCase().includes(rule.toLowerCase());
-  }
-  return rule.test(reply);
+  return typeof rule === "string"
+    ? reply.toLowerCase().includes(rule.toLowerCase())
+    : rule.test(reply);
 }
 
 async function main() {
-  console.log("\n=== Sales conversation stress test + Mem0 training ===\n");
+  console.log("\n=== Full rebuttal + handling stress test + Mem0 train ===\n");
   console.log(`Mem0 enabled: ${isMemoryEnabled()}`);
 
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -85,8 +82,6 @@ async function main() {
   }
 
   const store = storeRow as Store;
-  console.log(`Store: ${store.store_name ?? store.id}`);
-
   const { data: products } = await admin
     .from("store_products")
     .select("name, sku, price, currency, status")
@@ -96,8 +91,8 @@ async function main() {
 
   const productName = products?.[0]?.name ?? "Audionic ENC 550";
   const productSku = products?.[0]?.sku ?? "AA-6CH6DZ33WZ";
-  console.log(`Catalog product: ${productName} (${productSku})`);
-  console.log(`Products available: ${products?.length ?? 0}\n`);
+  const productBrand = productName.split(/\s+/)[0]!;
+  console.log(`Store: ${store.store_name} | Product: ${productName} (${productSku})\n`);
 
   let conversationId: string;
   {
@@ -127,22 +122,26 @@ async function main() {
         .select("id")
         .single();
       if (error || !created) {
-        console.error("Failed to create conversation:", error?.message);
+        console.error(error?.message);
         process.exit(1);
       }
       conversationId = created.id;
     }
   }
-  console.log(`Conversation: ${conversationId}`);
-  const sessionKey = buildSalesSessionKey(store.id, COACH_PHONE);
-  console.log(`Mem0 session: ${sessionKey}\n`);
 
+  const sessionKey = buildSalesSessionKey(store.id, COACH_PHONE);
   const aiConfig = await resolveStoreAiConfig(store.id);
-  const history: Array<{ role: "user" | "assistant"; content: string }> = [];
+  const recoveryPct = aiConfig?.effectiveRecoveryDiscountPercent ?? 20;
+  console.log(`Conversation: ${conversationId}`);
+  console.log(`Mem0 session: ${sessionKey}`);
+  console.log(`Recovery %: ${recoveryPct}\n`);
+
+  let history: Array<{ role: "user" | "assistant"; content: string }> = [];
 
   async function say(turn: Turn, scenarioName: string, turnIdx: number) {
-    history.push({ role: "user", content: turn.user });
+    if (turn.resetHistory) history = [];
 
+    history.push({ role: "user", content: turn.user });
     await admin.from("whatsapp_messages").insert({
       conversation_id: conversationId,
       direction: "in",
@@ -177,14 +176,14 @@ async function main() {
         turn: turnIdx,
         user: turn.user,
         ok: false,
-        detail: `runSalesAgent threw: ${err instanceof Error ? err.message : err}`,
+        detail: `threw: ${err instanceof Error ? err.message : err}`,
       });
       history.pop();
+      console.log(`❌ [${scenarioName} #${turnIdx}] threw\n`);
       return;
     }
 
     history.push({ role: "assistant", content: reply });
-
     await admin.from("whatsapp_messages").insert({
       conversation_id: conversationId,
       direction: "out",
@@ -208,169 +207,229 @@ async function main() {
     const hitReject = (turn.reject ?? []).filter((r) => matches(reply, r));
     const ok = failedExpect.length === 0 && hitReject.length === 0;
 
-    const detail = ok
-      ? `ok — ${clip(reply)}`
-      : [
-          failedExpect.length
-            ? `missing: ${failedExpect.map(String).join(" | ")}`
-            : null,
-          hitReject.length
-            ? `rejected hit: ${hitReject.map(String).join(" | ")}`
-            : null,
-          clip(reply),
-        ]
-          .filter(Boolean)
-          .join(" · ");
-
     results.push({
       scenario: scenarioName,
       turn: turnIdx,
       user: turn.user,
       ok,
-      detail,
+      detail: ok
+        ? `ok — ${clip(reply)}`
+        : [
+            failedExpect.length
+              ? `missing: ${failedExpect.map(String).join(" | ")}`
+              : null,
+            hitReject.length
+              ? `rejected: ${hitReject.map(String).join(" | ")}`
+              : null,
+            clip(reply),
+          ]
+            .filter(Boolean)
+            .join(" · "),
     });
 
     console.log(
       `${ok ? "✅" : "❌"} [${scenarioName} #${turnIdx}] ${turn.label ?? turn.user}`
     );
-    console.log(`   → ${clip(reply, 160)}\n`);
+    console.log(`   → ${clip(reply, 150)}\n`);
   }
+
+  const pitchThen = (rebuttals: Turn[]): Turn[] => [
+    {
+      label: "pitch",
+      user: `tell me about ${productName}`,
+      expect: [new RegExp(productBrand, "i")],
+      reject: [CATALOG_FAIL, WAITING_SPAM],
+      resetHistory: true,
+    },
+    ...rebuttals,
+  ];
 
   const scenarios: Scenario[] = [
     {
-      name: "smalltalk-then-shop",
+      name: "smalltalk",
       turns: [
         {
           label: "hi",
-          user: "hey bro",
-          expect: [
-            /how can i help|looking for|product|help you|tell me which|ask me a product/i,
-          ],
+          user: "hey",
+          expect: [/product|help|show you/i],
+          resetHistory: true,
         },
         {
           label: "how are you",
-          user: "hey bro how are you",
+          user: "how are you doing?",
           expect: [/fine|well|good|thanks|doing/i],
-          reject: [/ask me a product name when you're ready/i],
+          reject: [WAITING_SPAM],
         },
         {
           label: "who are you",
-          user: "who are you?",
-          expect: [/maisonnor|here to help/i],
-          reject: [/\bAI\b|\bbot\b|virtual assistant|language model|couldn'?t find/i],
+          user: "are you a bot?",
+          expect: [/here to help|maisonnor|umer/i],
+          reject: [/virtual assistant|language model|i'?m an? ai\b/i, CATALOG_FAIL],
         },
       ],
     },
     {
-      name: "product-then-buy-it",
-      turns: [
+      name: "buy-it-stick",
+      turns: pitchThen([
         {
-          label: "ask product",
-          user: `tell me about ${productName}`,
-          expect: [
-            new RegExp(productName.split(/\s+/)[0]!, "i"),
-            /AED|Rs|PKR|\$|price|—|-/i,
-          ],
-        },
-        {
-          label: "buy it (must stick)",
+          label: "buy it",
           user: "i want to buy it",
-          expect: [/phone|address|order|confirm|locking|delivery/i],
+          expect: [/phone|address|locking|order/i],
+          reject: [BROWSE_LIST, CATALOG_FAIL, WAITING_SPAM],
+        },
+      ]),
+    },
+    {
+      name: "rebuttal-price-ladder-en",
+      turns: pitchThen([
+        {
+          label: "1st costly (no %)",
+          user: "too expensive",
+          expect: [/.+/],
           reject: [
-            /Here are a couple of things you can order/i,
-            /Which one interests you/i,
-            /ask me a product name/i,
-            /couldn'?t find/i,
+            CATALOG_FAIL,
+            BROWSE_LIST,
+            WAITING_SPAM,
+            new RegExp(`${recoveryPct}\\s*%`, "i"),
+            /\d+\s*%\s*off/i,
           ],
         },
         {
-          label: "delivery eta",
+          label: "2nd discount ask",
+          user: "any discount please?",
+          expect: [/.+/],
+          reject: [CATALOG_FAIL, BROWSE_LIST, WAITING_SPAM],
+        },
+        {
+          label: "3rd still refuse",
+          user: "still too much, I won't buy",
+          expect: [/.+/],
+          reject: [CATALOG_FAIL, BROWSE_LIST],
+        },
+      ]),
+    },
+    {
+      name: "rebuttal-roman-urdu",
+      turns: pitchThen([
+        {
+          label: "mehnga",
+          user: "bohot mehnga hai bhai",
+          reject: [CATALOG_FAIL, BROWSE_LIST, WAITING_SPAM],
+        },
+        {
+          label: "sasta chahiye",
+          user: "kuch sasta offer hai?",
+          reject: [CATALOG_FAIL, BROWSE_LIST],
+        },
+        {
+          label: "accept deal",
+          user: "ok deal, I want it",
+          expect: [/phone|address|locking|order|delivery/i],
+          reject: [CATALOG_FAIL, BROWSE_LIST],
+        },
+      ]),
+    },
+    {
+      name: "rebuttal-variants",
+      turns: pitchThen([
+        {
+          label: "cost is high",
+          user: "cost is high for me",
+          reject: [CATALOG_FAIL, BROWSE_LIST, /Did you mean/i],
+        },
+      ]),
+    },
+    {
+      name: "rebuttal-bulk",
+      turns: pitchThen([
+        {
+          label: "bulk %",
+          user: "can I get 20% off on bulk?",
+          reject: [CATALOG_FAIL, BROWSE_LIST, /Did you mean/i],
+        },
+      ]),
+    },
+    {
+      name: "rebuttal-think-later",
+      turns: pitchThen([
+        {
+          label: "maybe later",
+          user: "I'll think about it, maybe later",
+          reject: [CATALOG_FAIL, BROWSE_LIST],
+        },
+      ]),
+    },
+    {
+      name: "rebuttal-competitor",
+      turns: pitchThen([
+        {
+          label: "cheaper elsewhere",
+          user: "I saw cheaper online somewhere else",
+          reject: [CATALOG_FAIL, BROWSE_LIST, WAITING_SPAM],
+        },
+      ]),
+    },
+    {
+      name: "policy-delivery-return",
+      turns: [
+        {
+          label: "eta",
           user: "how long for delivery?",
-          expect: [/3\s*[-–]?\s*5\s*days|3-5/i],
+          expect: [/3\s*[-–]?\s*5/i],
+          reject: [CATALOG_FAIL],
+          resetHistory: true,
+        },
+        {
+          label: "damaged",
+          user: "courier damaged my product, what now?",
+          expect: [/photo|refund|failed|support|whatsapp/i],
+          reject: [CATALOG_FAIL],
         },
       ],
     },
     {
-      name: "roman-urdu-product",
+      name: "sku-browse-take",
       turns: [
         {
-          label: "roman urdu ask",
-          user: "mujy audionic buds leny hen",
-          expect: [/audionic|enc|buds|product|AED|Rs|price|—|-/i],
-          reject: [/how can i help you\? ask me a product/i],
-        },
-        {
-          label: "price objection 1",
-          user: "bohot mehnga hai",
-          reject: [
-            /Did you mean/i,
-            /Here are a couple of things/i,
-            /couldn'?t find/i,
-            /in our catalog/i,
-            /Ask me a product name when you're ready/i,
-          ],
-        },
-        {
-          label: "discount ask 2",
-          user: "any discount?",
-          reject: [/Did you mean/i, /couldn'?t find/i],
-        },
-      ],
-    },
-    {
-      name: "sku-and-policy",
-      turns: [
-        {
-          label: "sku lookup",
+          label: "sku",
           user: productSku,
-          expect: [new RegExp(productName.split(/\s+/)[0]!, "i")],
+          expect: [new RegExp(productBrand, "i")],
+          resetHistory: true,
         },
-        {
-          label: "damaged return",
-          user: "product damaged by courier what do i do?",
-          expect: [/photo|support|whatsapp|refund|failed/i],
-        },
-      ],
-    },
-    {
-      name: "browse-vs-buy",
-      turns: [
         {
           label: "browse",
-          user: "show me products",
+          user: "show me other products",
           expect: [/order from us|product|AED|Rs|—|-/i],
         },
         {
-          label: "pick named",
+          label: "want named again",
           user: `i want ${productName}`,
-          expect: [new RegExp(productName.split(/\s+/)[0]!, "i")],
+          expect: [new RegExp(productBrand, "i")],
           reject: [/Here are a couple more/i],
         },
         {
           label: "take it",
           user: "ok I'll take it",
-          expect: [/phone|address|order|confirm|locking|delivery/i],
-          reject: [
-            /Here are a couple of things you can order/i,
-            /couldn'?t find|catalog check/i,
-          ],
+          expect: [/phone|address|locking|order/i],
+          reject: [BROWSE_LIST, CATALOG_FAIL],
         },
       ],
     },
     {
-      name: "preferences-for-mem0",
+      name: "handoff-and-prefs",
       turns: [
         {
-          label: "name + city + COD",
-          user: "My name is Ahmed, I live in Dubai, I prefer COD and I like Audionic ENC earbuds",
+          label: "human",
+          user: "I want to talk to a human please",
           expect: [/.+/],
-          reject: [/couldn'?t find|in our catalog/i],
+          reject: [CATALOG_FAIL],
+          resetHistory: true,
         },
         {
-          label: "budget note",
-          user: "My budget is under 3500 AED and I hate expensive shipping",
+          label: "prefs",
+          user: "My name is Ahmed, I live in Dubai, prefer COD, budget under 3500 AED",
           expect: [/.+/],
-          reject: [/3\s*[-–]?\s*5\s*days|couldn'?t find|in our catalog/i],
+          reject: [CATALOG_FAIL, /3\s*[-–]?\s*5\s*days/i],
         },
       ],
     },
@@ -380,102 +439,106 @@ async function main() {
     console.log(`--- ${scenario.name} ---`);
     for (let i = 0; i < scenario.turns.length; i++) {
       await say(scenario.turns[i]!, scenario.name, i + 1);
-      await new Promise((r) => setTimeout(r, 800));
+      await new Promise((r) => setTimeout(r, 700));
     }
   }
 
-  console.log("--- seeding explicit Mem0 preferences ---");
-  const seedPairs: Array<[string, string]> = [
+  // Playbook facts for Mem0 (coach customer + pattern library for this session)
+  console.log("--- seeding Mem0 rebuttal playbook ---");
+  const playbook: Array<[string, string]> = [
     [
-      "Remember: I prefer cash on delivery (COD) in Dubai.",
-      "Got it — COD in Dubai noted for your orders.",
+      "When I say a product is too expensive the first time, reassure quality — do not give % off yet.",
+      "Understood — first price objection = value pitch only, no discount percent.",
     ],
     [
-      `I'm interested in ${productName} (${productSku}).`,
-      `Noted — ${productName} is on your wishlist.`,
+      `On a second discount ask after pitching ${productName}, you may offer about ${recoveryPct}% off and ask for phone + address.`,
+      `Yes — second refusal can use ~${recoveryPct}% off on the pitched product, then collect checkout details.`,
     ],
     [
-      "I often chat in Roman Urdu. Keep replies short on WhatsApp.",
-      "Understood — short Roman Urdu-friendly replies.",
+      "If I still refuse after the % offer, offer a 2-pack bundle deal once, then stop pushing.",
+      "Got it — third step is bundle deal once, then soft close or human handoff.",
     ],
     [
-      "If I say I want to buy it, I mean the last product you showed — don't show a different one.",
-      "Yes — when you say buy it, we continue with the same product and ask for phone + address.",
+      "Roman Urdu like 'bohot mehnga' or 'sasta offer' is a price objection, never a product search.",
+      "Correct — mehnga/sasta = price talk in the same product thread.",
+    ],
+    [
+      "If I say I want to buy it / I'll take it, lock the last shown product and ask phone + address — never show a different product.",
+      "Yes — buy-it always continues the pitched product into checkout details.",
+    ],
+    [
+      "I prefer COD in Dubai. Interested in Audionic ENC earbuds. Keep replies short; I often use Roman Urdu.",
+      "Noted — Ahmed-style prefs: COD, Dubai, Audionic ENC, short Roman Urdu OK.",
+    ],
+    [
+      "Delivery takes 3-5 days. Damaged by courier → photos + failed-delivery note to support WhatsApp for refund.",
+      "Policy locked — ETA 3–5 days; damaged courier flow uses photos + support WhatsApp.",
     ],
   ];
-  for (const [u, a] of seedPairs) {
-    await extractAndStoreMemories({
-      sessionKey,
-      userMessage: u,
-      assistantReply: a,
-    });
-    console.log(`  seeded: ${clip(u, 80)}`);
-    await new Promise((r) => setTimeout(r, 600));
+
+  for (const [u, a] of playbook) {
+    await extractAndStoreMemories({ sessionKey, userMessage: u, assistantReply: a });
+    console.log(`  seeded: ${clip(u, 70)}`);
+    await new Promise((r) => setTimeout(r, 500));
   }
 
   await new Promise((r) => setTimeout(r, 2000));
 
-  console.log("--- returning-with-memory ---");
+  console.log("\n--- returning memory checks ---");
   await say(
     {
-      label: "return hi",
+      label: "hey again",
       user: "hey again",
-      expect: [/help|product|welcome|again|ahmed|audionic|how can/i],
-      reject: [/couldn'?t find|in our catalog/i],
+      expect: [/help|product|how can/i],
+      reject: [CATALOG_FAIL],
+      resetHistory: true,
     },
-    "returning-with-memory",
+    "returning",
     1
   );
   await say(
     {
-      label: "recall product preference",
+      label: "what was I interested in",
       user: "what product was I interested in?",
       expect: [/audionic|enc|buds|earbud|550/i],
-      reject: [/couldn'?t find|in our catalog/i],
+      reject: [CATALOG_FAIL],
     },
-    "returning-with-memory",
+    "returning",
     2
   );
+  await say(
+    {
+      label: "price again with memory",
+      user: `show ${productName} again — is there any discount?`,
+      reject: [CATALOG_FAIL, WAITING_SPAM],
+    },
+    "returning",
+    3
+  );
 
-  console.log("\n--- Mem0 recall check ---");
   const recalls = await recallMemories(
     sessionKey,
-    "What product do I like, where do I live, and how do I pay?",
-    8
+    "How should price objections and buy-it be handled? What do I prefer?",
+    10
   );
-  if (recalls.length) {
-    console.log(`✅ Recalled ${recalls.length} memories:`);
-    for (const r of recalls) {
-      console.log(`   • ${clip(r.memory, 160)}`);
-    }
-  } else {
-    console.log("❌ Mem0 recall returned 0 — check embeddings / migration 040");
-  }
+  console.log(`\nMem0 recalled ${recalls.length}:`);
+  for (const r of recalls) console.log(`  • ${clip(r.memory, 140)}`);
 
   const ok = results.filter((r) => r.ok).length;
   const bad = results.filter((r) => !r.ok).length;
-  console.log("\n=== Summary ===");
-  console.log(
-    `Turns passed: ${ok}  Failed: ${bad}  Mem0 recalls: ${recalls.length}`
-  );
+  console.log(`\n=== Summary: ${ok} passed, ${bad} failed, Mem0=${recalls.length} ===`);
   if (bad) {
-    console.log("\nFailures:");
     for (const r of results.filter((x) => !x.ok)) {
       console.log(`- [${r.scenario} #${r.turn}] ${r.user}`);
       console.log(`  ${r.detail}`);
     }
     process.exitCode = 1;
   } else {
-    console.log(
-      "All conversation checks passed. Coach customer Mem0+profile trained."
-    );
-    console.log(
-      "Note: Mem0 is per phone — real customers get memories from their own chats after deploy."
-    );
+    console.log("All handling checks passed. Mem0 playbook trained for coach phone.");
   }
 }
 
-main().catch((err) => {
-  console.error(err);
+main().catch((e) => {
+  console.error(e);
   process.exit(1);
 });

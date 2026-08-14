@@ -256,6 +256,7 @@ When you change AI behavior, update **this doc** and the relevant file:
 
 | Date | Change |
 |------|--------|
+| 2026-08-14 | Full rebuttal stress test 30/32 → fixed human handoff + memory-interest fallback; Mem0 playbook seeded (price ladder, buy-it, Roman Urdu objections, COD). |
 | 2026-08-14 | Stress-test `scripts/train-sales-conversations.ts` + Mem0 seed for coach phone; identity/off-topic in runSalesAgent; Roman Urdu mehnga ≠ catalog; buy-it / I'll take it before bare-product; memory questions use Mem0 not search. |
 | 2026-08-14 | “I want to buy it” sticks to the pitched product → checkout (phone/address), never search/browse for “it” or another item. |
 | 2026-08-14 | “How are you” / “hey bro how are you” → natural “I'm fine…” reply; anti-spam “ask me a product” only for empty hi/hey loops. |
