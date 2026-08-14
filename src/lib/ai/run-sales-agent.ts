@@ -24,10 +24,17 @@ import {
 } from "./sales-recovery";
 import {
   buildCasualGreetingReply,
+  buildWaitingForQuestionReply,
+  looksLikeCasualGreeting,
   looksLikeOffTopicChat,
+  assistantAlreadyWelcomed,
+  tryDirectGreetingReply,
 } from "./greeting-reply";
-import { resolveExactDirectRoute } from "./exact-routes";
-import { catalogBrowseActiveInHistory } from "@/lib/products/products-service";
+import { resolveExactDirectRoute, looksLikeExactNamedProductQuery } from "./exact-routes";
+import {
+  catalogBrowseActiveInHistory,
+  looksLikeRomanUrduProductAsk,
+} from "@/lib/products/products-service";
 import { looksLikeCheckoutMessage } from "./checkout-parse";
 import {
   looksLikeVariantSelection,
@@ -137,6 +144,18 @@ export async function runSalesAgent(
   });
   const latestUser =
     [...history].reverse().find((m) => m.role === "user")?.content ?? "";
+
+  // Returning / repeat hi — history-aware (won't spam opening)
+  try {
+    const greeting = tryDirectGreetingReply(
+      enrichedCtx,
+      latestUser,
+      history
+    );
+    if (greeting) return greeting;
+  } catch (err) {
+    console.error("[run-sales-agent] greeting reply failed:", err);
+  }
 
   // Fast path ONLY for clear structural intents (SKU, checkout details, browse, policy).
   // Price/discount/ambiguous chat → LLM (intent router may tip tool handlers, else Gemini).
@@ -250,10 +269,31 @@ export async function runSalesAgent(
     console.error("[run-sales-agent] direct product fallback failed:", err);
   }
 
-  // Last resort after LLM/tools fail — only if still shopping a shown list
-  if (catalogBrowseActiveInHistory(history) && !looksLikeOffTopicChat(latestUser)) {
-    return "Which product from the list did you mean? Reply with the name (e.g. Audionic ENC) and I'll pull it up.";
+  // Never greet again when they clearly asked for a product
+  if (
+    looksLikeCasualGreeting(latestUser) ||
+    (looksLikeOffTopicChat(latestUser) &&
+      !looksLikeExactNamedProductQuery(latestUser))
+  ) {
+    if (assistantAlreadyWelcomed(history)) {
+      return buildWaitingForQuestionReply();
+    }
+    return buildCasualGreetingReply(enrichedCtx);
   }
 
+  if (
+    looksLikeExactNamedProductQuery(latestUser) ||
+    looksLikeRomanUrduProductAsk(latestUser)
+  ) {
+    return "Catalog check mein issue aa gaya — product name dobara bhejo ya SKU bhejo, main show karta hoon.";
+  }
+
+  if (catalogBrowseActiveInHistory(history)) {
+    return "Which product from the list did you mean? Reply with the name and I'll show you.";
+  }
+
+  if (assistantAlreadyWelcomed(history)) {
+    return buildWaitingForQuestionReply();
+  }
   return buildCasualGreetingReply(enrichedCtx);
 }

@@ -51,7 +51,7 @@ import {
 } from "@/lib/ads/ad-links-service";
 import { parseAdRefFromMessage } from "@/lib/ads/whatsapp-ad-links";
 import { extractOutboundMedia } from "@/lib/ai/message-markers";
-import { buildCasualGreetingReply, tryDirectOffTopicReply, looksLikeExactGreetingOnly } from "@/lib/ai/greeting-reply";
+import { buildCasualGreetingReply, tryDirectOffTopicReply, tryDirectGreetingReply, looksLikeExactGreetingOnly } from "@/lib/ai/greeting-reply";
 import {
   getStoreWhatsAppCredentials,
   resolveMetaSecret,
@@ -188,6 +188,13 @@ async function resolveContextualDirectReply(
 
   const policy = await tryDirectPolicyReply(agentCtx, inboundText);
   if (policy) return policy;
+
+  const greeting = tryDirectGreetingReply(
+    greetingCtx,
+    inboundText,
+    chatHistory
+  );
+  if (greeting) return greeting;
 
   const direct = await tryDirectProductReply(agentCtx, inboundText, chatHistory);
   return (
@@ -518,8 +525,16 @@ export async function handleWhatsAppWebhookMessage(
           let openingSentThisTurn = false;
           if (isNewConversation && !looksLikeProductInquiry(inboundText)) {
             try {
+              // Don't re-send opening if this thread already has an outbound welcome
+              const { count: priorOut } = await supabase
+                .from("whatsapp_messages")
+                .select("id", { count: "exact", head: true })
+                .eq("conversation_id", conversation.id)
+                .eq("direction", "out");
+
               const aiSettings = await resolveStoreAiConfig(activeStore.id);
               if (
+                !priorOut &&
                 aiSettings.sendOpeningMessage &&
                 aiSettings.openingMessage?.trim()
               ) {
@@ -541,7 +556,6 @@ export async function handleWhatsAppWebhookMessage(
                   customerPhone,
                   openingText
                 );
-                // Only show in portal if WhatsApp accepted the message
                 if (openingResult.ok) {
                   openingSentThisTurn = true;
                   await supabase.from("whatsapp_messages").insert({
@@ -560,8 +574,12 @@ export async function handleWhatsAppWebhookMessage(
             }
           }
 
-          // Opening already welcomed them — don't also send casual "Hi I'm …" greeting
-          if (openingSentThisTurn && looksLikeExactGreetingOnly(inboundText)) {
+          // Opening / repeat hi — skip agent if only greeting (opening already sent)
+          // or let agent return short "How can I help you?" for repeat hellos
+          if (
+            openingSentThisTurn &&
+            looksLikeExactGreetingOnly(inboundText)
+          ) {
             continue;
           }
 

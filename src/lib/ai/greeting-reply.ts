@@ -1,9 +1,9 @@
 import type { AgentContext } from "./sales-tools";
 
 const GREETING_ONLY =
-  /^(hi+|hey+|heya+|hello+|hola+|yo+|sup+|assalam+|salam+|assalamu+|good morning|good evening|good afternoon|good night)[\s!.?,]*$/i;
+  /^(hi+|hey+|heya+|hello+|hola+|yo+|sup+|assalam+|salam+|assalamu+|good morning|good evening|good afternoon|good night)([\s,!.?-]*(again|back|there|bro|sis|friend))?[\s!.?,]*$/i;
 
-/** Whole-message greeting only — exact match, not "hey there" or "hi whats up". */
+/** Whole-message greeting only — exact match, not "hey there whats the price". */
 export function looksLikeExactGreetingOnly(text: string): boolean {
   return GREETING_ONLY.test(text.trim());
 }
@@ -19,22 +19,27 @@ export function looksLikeHowAreYou(text: string): boolean {
   );
 }
 
-/** Casual openers that are not product lookups — "hi whats up", "hey there", "heyyy", etc. */
+/** Casual openers that are not product lookups — "hi whats up", "hey again", "heyyy", etc. */
 export function looksLikeCasualGreeting(text: string): boolean {
   const t = text.trim();
   if (t.length < 2) return false;
   if (GREETING_ONLY.test(t)) return true;
+  if (
+    /^(hi+|hey+|heya+|hello+|salam+|assalam+)\s*(again|back)?[\s!.?,]*$/i.test(t)
+  ) {
+    return true;
+  }
   if (/^(what'?s? up|whatsa? up|sup+|yo+|howdy|how are you|how r u|how are u)[\s!.?,]*$/i.test(t)) {
     return true;
   }
   if (
-    /^(hi+|hello+|hey+|heya+|salam+|assalam+|assalamu+|good morning|good evening|good afternoon)\b[\s,!.?-]*(there|how are you|what'?s? up|whatsa? up|how r u|friend|bro|sis)?[\s!.?,]*$/i.test(
+    /^(hi+|hello+|hey+|heya+|salam+|assalam+|assalamu+|good morning|good evening|good afternoon)\b[\s,!.?-]*(again|back|there|how are you|what'?s? up|whatsa? up|how r u|friend|bro|sis)?[\s!.?,]*$/i.test(
       t
     )
   ) {
     return true;
   }
-  if (/^hi[\s,!.]*(what'?s? up|whatsa? up|how are you|there)/i.test(t)) return true;
+  if (/^hi[\s,!.]*(what'?s? up|whatsa? up|how are you|there|again)/i.test(t)) return true;
   return false;
 }
 
@@ -52,7 +57,6 @@ export function looksLikeOffTopicChat(text: string): boolean {
   if (/\b(tell me (a|about)?\s*(joke|funny|story)|say something funny)\b/i.test(t)) {
     return true;
   }
-  // "who are you" / "tell me who are you" — identity, not product pick
   if (
     /\b(who\s+(are|r)\s+(you|u)|who\s+is\s+this|tell\s+me\s+who\s+(you\s+are|are\s+you)|what(?:'s| is)\s+your\s+name)\b/i.test(
       t
@@ -78,39 +82,68 @@ function agentLabel(ctx: AgentContext, store: string): string {
   return ctx.aiConfig?.agentName?.trim() || store;
 }
 
-/** Short human greeting — no SKU bot voice. */
+/** True once we've already replied in this chat — don't spam opening/intro again. */
+export function assistantAlreadyWelcomed(
+  history: Array<{ role: "user" | "assistant"; content: string }>
+): boolean {
+  return history.some((m) => m.role === "assistant" && m.content.trim().length > 0);
+}
+
+/** First welcome — introduce once. */
 export function buildCasualGreetingReply(ctx: AgentContext): string {
   const store = storeLabel(ctx);
   const agent = agentLabel(ctx, store);
   const variants = [
-    `Hey 👋 ${agent} here from ${store}. What product are you looking for?`,
-    `Hi! I'm ${agent} at ${store} — send me a product name or SKU and I'll share prices & details.`,
-    `Hey, good to hear from you! I'm ${agent} from ${store} — what can I help you find today?`,
+    `Hey 👋 ${agent} here from ${store}. Ask me a product name and I'll show you.`,
+    `Hi! I'm ${agent} at ${store} — tell me which product you want and I'll show you.`,
+    `Hey, good to hear from you! I'm ${agent} from ${store} — ask me a product and I'll show you.`,
   ];
   const idx = Math.abs(store.length + agent.length) % variants.length;
   return variants[idx]!;
+}
+
+/** Repeat hi/hey — do not re-send opening; wait for a real question. */
+export function buildWaitingForQuestionReply(): string {
+  return "How can I help you? Ask me a product name when you're ready 🙂";
 }
 
 export function buildHowAreYouReply(ctx: AgentContext): string {
   const store = storeLabel(ctx);
   const agent = agentLabel(ctx, store);
   const variants = [
-    `I'm doing well, thanks for asking! 😊 How about you? If you need anything from ${store}, just tell me what you're looking for.`,
-    `All good here, thank you! ${agent} from ${store} — how are you doing today? Happy to help you find something to order.`,
-    `I'm fine, thanks! Hope you're doing great too 🙌 Need any products from ${store}? Send a name or SKU and I'll help.`,
+    `I'm doing well, thanks! How can I help you today?`,
+    `All good here — thanks for asking. How can I help you?`,
+    `I'm fine, thanks! ${agent} here — how can I help you?`,
   ];
   const idx = Math.abs(store.length + agent.length + 1) % variants.length;
   return variants[idx]!;
 }
 
+/**
+ * Greeting handler. First hi → short welcome.
+ * Hello/hey again and again → one short "How can I help you?" — never spam opening.
+ */
 export function tryDirectGreetingReply(
   ctx: AgentContext,
-  latestUserMessage: string
+  latestUserMessage: string,
+  history: Array<{ role: "user" | "assistant"; content: string }> = []
 ): string | null {
-  if (looksLikeHowAreYou(latestUserMessage)) {
+  const isHowAreYou = looksLikeHowAreYou(latestUserMessage);
+  const isGreeting =
+    looksLikeExactGreetingOnly(latestUserMessage) ||
+    looksLikeCasualGreeting(latestUserMessage);
+
+  if (!isHowAreYou && !isGreeting) return null;
+
+  // Already welcomed (or customer keeps saying hi) → don't re-introduce
+  if (assistantAlreadyWelcomed(history)) {
+    return buildWaitingForQuestionReply();
+  }
+
+  if (isHowAreYou) {
     return buildHowAreYouReply(ctx);
   }
-  if (!looksLikeExactGreetingOnly(latestUserMessage)) return null;
+
   return buildCasualGreetingReply(ctx);
 }
 
@@ -125,8 +158,7 @@ export function tryDirectOffTopicReply(
   const t = latestUserMessage.trim();
 
   if (/\bjoke\b/i.test(t)) {
-    return `Ha — I'm ${agent} from ${store}, better at orders than comedy 😄 Need anything from the catalog?`;
+    return `Ha — I'm ${agent} from ${store}, better at orders than comedy 😄 How can I help you?`;
   }
-  // Identity questions ("who are you", "are you AI?", etc.)
-  return `I'm ${agent} from ${store} — here to help with products, prices, and orders. What are you looking for?`;
+  return `I'm ${agent} from ${store} — here to help with products, prices, and orders. How can I help you?`;
 }

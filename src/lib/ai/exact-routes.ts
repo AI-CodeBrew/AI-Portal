@@ -3,6 +3,8 @@ import {
   looksLikeCatalogBrowseMoreRequest,
   looksLikeCatalogBrowseRequest,
   looksLikeObjectionPhrase,
+  looksLikeRomanUrduProductAsk,
+  looksLikeBareProductNameQuery,
   productSearchTokens,
 } from "@/lib/products/products-service";
 import { parseCheckoutDetails, looksLikeCheckoutMessage } from "./checkout-parse";
@@ -13,6 +15,7 @@ import {
   looksLikeReturnOrDamageQuestion,
 } from "./policy-reply";
 import { looksLikeVariantSelection } from "./variant-selection";
+import { looksLikeCasualGreeting } from "./greeting-reply";
 
 /** Routes that may bypass the LLM when the message is an exact pattern match. */
 export type ExactDirectRoute =
@@ -45,24 +48,32 @@ const NAMED_PRODUCT_FILLER = new Set([
   "thanks",
 ]);
 
-/** Explicit "do you have X" / "price of X" with a real product name — not vague browse. */
+/** Explicit "do you have X" / Roman Urdu ask / bare product name — not vague browse. */
 export function looksLikeExactNamedProductQuery(text: string): boolean {
   const t = text.trim();
-  if (t.length < 4) return false;
+  if (t.length < 3) return false;
   if (looksLikeObjectionPhrase(t)) return false;
+  if (looksLikeCasualGreeting(t)) return false;
   if (looksLikeCatalogBrowseRequest(t)) return false;
   if (extractSkuFromText(t)) return true;
 
+  if (looksLikeRomanUrduProductAsk(t)) {
+    const tokens = productSearchTokens(t);
+    return tokens.length >= 1 && tokens.join(" ").length >= 3;
+  }
+
   const m = t.match(EXPLICIT_NAMED_PRODUCT_ASK);
-  if (!m?.[1]) return false;
+  if (m?.[1]) {
+    let phrase = m[1].replace(/[?.!]+$/g, "").trim();
+    phrase = phrase.replace(/^the\s+/i, "").trim();
+    const tokens = productSearchTokens(phrase).filter(
+      (token) => !NAMED_PRODUCT_FILLER.has(token.toLowerCase())
+    );
+    if (tokens.length >= 1 && tokens.join(" ").length >= 3) return true;
+  }
 
-  let phrase = m[1].replace(/[?.!]+$/g, "").trim();
-  phrase = phrase.replace(/^the\s+/i, "").trim();
-
-  const tokens = productSearchTokens(phrase).filter(
-    (token) => !NAMED_PRODUCT_FILLER.has(token.toLowerCase())
-  );
-  return tokens.length >= 1 && tokens.join(" ").length >= 3;
+  // "Audionic buds" after we asked for a product name
+  return looksLikeBareProductNameQuery(t);
 }
 
 /** True only when a deterministic regex handler should run (not fuzzy guessing). */

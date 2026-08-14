@@ -256,6 +256,9 @@ When you change AI behavior, update **this doc** and the relevant file:
 
 | Date | Change |
 |------|--------|
+| 2026-08-14 | Roman Urdu product asks + bare names (e.g. Audionic buds) → search, not English greeting; reply in same language/script as customer. |
+| 2026-08-14 | Anti-spam greetings: first hi = one welcome; hello/hey again → “How can I help you?” only — never re-send opening intro. |
+| 2026-08-14 | Returning “hey again”: greet + ask for a product to show (not old catalog-list “which product from the list / pull it up”). Catalog browse context limited to recent turns. |
 | 2026-08-14 | LLM-first for conversational intents (price/discount/ambiguous): no hardcoded recovery/clarify replies; intent router classifies only; Gemini writes the answer. Fast path kept for SKU/checkout/browse/policy only. |
 | 2026-08-14 | Price-objection loop fix: match “costly / cost is high / % off / bulk”; never “Did you mean same product?” after a pitch; recovery before intent clarify (critical for ad traffic). |
 | 2026-08-14 | Chat fixes: discount/offer → recovery (not catalog search); value before %; no double greeting after opening; “looking for product” / “different products” → browse not checkout; clarify copy no longer pushes address. |

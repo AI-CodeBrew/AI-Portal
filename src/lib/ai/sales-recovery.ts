@@ -616,7 +616,7 @@ export async function tryDirectSalesRecoveryReply(
         latestUserMessage
       )
     ) {
-      return `Prices are already set for quality — which product are you looking at? Send the name or SKU and I'll pull it up.`;
+      return `Prices are already set for quality — which product are you looking at? Ask me a product name and I'll show you.`;
     }
     return null;
   }

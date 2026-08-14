@@ -921,6 +921,46 @@ export function productSearchTokens(query: string): string[] {
     "cheap",
     "overpriced",
     "worth",
+    // Roman Urdu / mixed fillers
+    "mujhe",
+    "mujhy",
+    "mujy",
+    "mjhe",
+    "muje",
+    "chahiye",
+    "chahye",
+    "leni",
+    "leny",
+    "lene",
+    "lena",
+    "dikha",
+    "dkha",
+    "dikhao",
+    "dkhao",
+    "dikhaao",
+    "skty",
+    "sakti",
+    "sakta",
+    "sakte",
+    "ho",
+    "hai",
+    "hen",
+    "hain",
+    "ap",
+    "aap",
+    "ko",
+    "ke",
+    "ki",
+    "ka",
+    "se",
+    "mein",
+    "main",
+    "bhi",
+    "ya",
+    "kro",
+    "karo",
+    "pls",
+    "plz",
   ]);
 
   const isGreetingToken = (token: string) =>
@@ -1026,11 +1066,14 @@ export function looksLikeCatalogBrowseRequest(message: string): boolean {
 export function catalogBrowseActiveInHistory(
   history: Array<{ role: "user" | "assistant"; content: string }>
 ): boolean {
-  return history.some(
+  // Only recent assistant turns — old browse lists from past visits must not trap "hi again"
+  const recentAssistants = history
+    .filter((m) => m.role === "assistant")
+    .slice(-6);
+  return recentAssistants.some(
     (m) =>
-      m.role === "assistant" &&
-      (CATALOG_BROWSE_INTRO.test(m.content) ||
-        CATALOG_BROWSE_MORE_INTRO.test(m.content))
+      CATALOG_BROWSE_INTRO.test(m.content) ||
+      CATALOG_BROWSE_MORE_INTRO.test(m.content)
   );
 }
 
@@ -1063,6 +1106,7 @@ export function looksLikeCatalogBrowseMoreRequest(
 
 /**
  * Extract a catalog search string from free text (SKU preferred, else name words).
+ * Supports English + Roman Urdu shopping phrases.
  */
 export function extractProductSearchQuery(text: string): string | null {
   if (looksLikeObjectionPhrase(text)) return null;
@@ -1070,6 +1114,24 @@ export function extractProductSearchQuery(text: string): string | null {
 
   const sku = extractSkuFromText(text);
   if (sku) return sku;
+
+  // Roman Urdu: "mujy audionic buds leny hen" / "mujhe X chahiye"
+  const romanWant = text.match(
+    /\b(?:mujhy?|mujhe|mujy|mjhe|muje)\s+(.+?)\s+(?:leni|leny|lene|lena|chahiye|chahye)\b/i
+  );
+  if (romanWant?.[1]) {
+    const tokens = productSearchTokens(romanWant[1]);
+    if (tokens.length) return tokens.join(" ").slice(0, 80);
+  }
+
+  // Roman Urdu: "audionic buds dikhao" / "X dkha skty ho"
+  const romanShow = text.match(
+    /\b(.+?)\s+(?:dikha|dkha|dikhao|dkhao|dikhaao|dikha\s*do)(?:\b|$)/i
+  );
+  if (romanShow?.[1]) {
+    const tokens = productSearchTokens(romanShow[1]);
+    if (tokens.length) return tokens.join(" ").slice(0, 80);
+  }
 
   const orderNamed = text.match(
     /\bwant\s+to\s+(?:order|buy)\s+(?:a\s+|an\s+|the\s+)?(.+?)(?:\?|\.|!|$|\bdo you have\b|\bplease\b)/i
@@ -1085,9 +1147,7 @@ export function extractProductSearchQuery(text: string): string | null {
   );
   if (availabilityAsk?.[1]) {
     let phrase = availabilityAsk[1].replace(/[?.!]+$/g, "").trim();
-    // "want to order storage rack" → skip leading order phrasing
     phrase = phrase.replace(/^to\s+(?:order|buy)\s+/i, "").trim();
-    // "this one, Cream Craft…" / "this, …"
     phrase = phrase
       .replace(/^(?:this\s+one|that\s+one|this|that)\s*[,:\-–—]?\s*/i, "")
       .trim();
@@ -1101,6 +1161,34 @@ export function extractProductSearchQuery(text: string): string | null {
   const tokens = productSearchTokens(text);
   if (!tokens.length) return null;
   return tokens.join(" ").slice(0, 80);
+}
+
+/** Roman Urdu / mixed intent to see or buy a named product. */
+export function looksLikeRomanUrduProductAsk(message: string): boolean {
+  const t = message.trim();
+  if (t.length < 6) return false;
+  if (looksLikeObjectionPhrase(t)) return false;
+  return /\b(mujhy?|mujhe|mujy|mjhe|muje|chahiye|chahye|leni|leny|lene|lena|dikha|dkha|dikhao|dkhao|dikhaao|skty|sakta|sakti|sakte)\b/i.test(
+    t
+  );
+}
+
+/** Short bare product name like "Audionic buds" (not a greeting/objection). */
+export function looksLikeBareProductNameQuery(message: string): boolean {
+  const t = message.trim();
+  if (t.length < 3 || t.length > 80) return false;
+  if (looksLikeObjectionPhrase(t)) return false;
+  if (looksLikeCatalogBrowseRequest(t)) return false;
+  if (/\n/.test(t)) return false;
+  // Not a full sentence question about something else
+  if (/^(who|what|when|where|why|how)\b/i.test(t) && t.split(/\s+/).length > 4) {
+    return false;
+  }
+  const tokens = productSearchTokens(t);
+  if (tokens.length < 1) return false;
+  if (tokens.join(" ").length < 3) return false;
+  // Prefer 1–6 content tokens (brand + product type)
+  return tokens.length <= 6;
 }
 
 export async function searchPortalProducts(
