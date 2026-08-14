@@ -24,6 +24,7 @@ import {
 import {
   buildCasualGreetingReply,
   buildHowAreYouReply,
+  looksLikeOffTopicChat,
   tryDirectGreetingReply,
   tryDirectOffTopicReply,
 } from "./greeting-reply";
@@ -263,7 +264,8 @@ export async function runSalesAgent(
     console.error("[run-sales-agent] direct product fallback failed:", err);
   }
 
-  if (catalogBrowseActiveInHistory(history)) {
+  // Last resort after LLM/tools fail — only if still shopping a shown list
+  if (catalogBrowseActiveInHistory(history) && !looksLikeOffTopicChat(latestUser)) {
     return "Which product from the list did you mean? Reply with the name (e.g. Audionic ENC) and I'll pull it up.";
   }
 

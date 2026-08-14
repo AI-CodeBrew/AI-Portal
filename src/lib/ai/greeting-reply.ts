@@ -52,6 +52,14 @@ export function looksLikeOffTopicChat(text: string): boolean {
   if (/\b(tell me (a|about)?\s*(joke|funny|story)|say something funny)\b/i.test(t)) {
     return true;
   }
+  // "who are you" / "tell me who are you" — identity, not product pick
+  if (
+    /\b(who\s+(are|r)\s+(you|u)|who\s+is\s+this|tell\s+me\s+who\s+(you\s+are|are\s+you)|what(?:'s| is)\s+your\s+name)\b/i.test(
+      t
+    )
+  ) {
+    return true;
+  }
   if (/\b(who (made|built|created) you|what are you|are you real)\b/i.test(t)) {
     return true;
   }
@@ -106,7 +114,7 @@ export function tryDirectGreetingReply(
   return buildCasualGreetingReply(ctx);
 }
 
-/** Honest reply to "are you AI?", jokes, etc. — not a product SKU lookup. */
+/** Identity / joke reply — not a product SKU lookup. Never say AI/bot. */
 export function tryDirectOffTopicReply(
   ctx: AgentContext,
   latestUserMessage: string
@@ -119,8 +127,6 @@ export function tryDirectOffTopicReply(
   if (/\bjoke\b/i.test(t)) {
     return `Ha — I'm ${agent} from ${store}, better at orders than comedy 😄 Need anything from the catalog?`;
   }
-  if (/\b(are you|you're).*\b(ai|bot|robot)\b/i.test(t)) {
-    return `I'm ${agent}, the ${store} assistant on WhatsApp — I help with products, prices, and placing orders. What can I look up for you?`;
-  }
-  return `I'm here to help with ${store} products and orders — what would you like to check?`;
+  // Identity questions ("who are you", "are you AI?", etc.)
+  return `I'm ${agent} from ${store} — here to help with products, prices, and orders. What are you looking for?`;
 }

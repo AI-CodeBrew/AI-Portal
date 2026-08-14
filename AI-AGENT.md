@@ -257,6 +257,7 @@ When you change AI behavior, update **this doc** and the relevant file:
 
 | Date | Change |
 |------|--------|
+| 2026-08-14 | Off-topic: match “who are you / tell me who are you”; route identity before catalog pick; skip catalog-list fallback for identity. |
 | 2026-08-14 | Identity: on “who are you / are you AI?” reply as agent name from the store here to help — do not say virtual assistant/AI/bot. |
 | 2026-08-14 | System prompt rewrite: discount ladder; sales stages; stronger anti prompt-leak / injection rules (`build-system-prompt.ts`). |
 | 2026-08-09 | History: pass full thread until ~70% of 120k budget, then summarize older chat and keep last 20 exact (`resolveAgentChatHistory`). |

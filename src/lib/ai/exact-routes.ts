@@ -77,6 +77,11 @@ export function resolveExactDirectRoute(
     return "checkout";
   }
 
+  // Identity / greeting before catalog pick — avoids "who are you" → product-list fallback
+  if (looksLikeHowAreYou(t)) return "how_are_you";
+  if (looksLikeOffTopicChat(t)) return "off_topic";
+  if (looksLikeExactGreetingOnly(t)) return "greeting_only";
+
   if (looksLikeCatalogBrowseMoreRequest(t, history)) return "catalog_more";
   if (looksLikeCatalogBrowseRequest(t)) return "catalog_browse";
 
@@ -87,10 +92,6 @@ export function resolveExactDirectRoute(
   if (extractSkuFromText(t)) return "sku_search";
 
   if (looksLikeExactNamedProductQuery(t)) return "named_product_search";
-
-  if (looksLikeHowAreYou(t)) return "how_are_you";
-  if (looksLikeOffTopicChat(t)) return "off_topic";
-  if (looksLikeExactGreetingOnly(t)) return "greeting_only";
 
   return null;
 }
