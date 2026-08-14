@@ -6,9 +6,11 @@ import type { AgentContext } from "@/lib/ai/sales-tools";
 import {
   tryDirectProductImageReply,
   tryDirectProductReply,
+  tryDirectProductConfirmReply,
   looksLikeProductInquiry,
   tryDirectVariantSelectionReply,
 } from "@/lib/ai/product-reply";
+import { tryDirectPolicyReply } from "@/lib/ai/policy-reply";
 import { tryDirectCheckoutReply } from "@/lib/ai/checkout-reply";
 import { looksLikeCheckoutMessage } from "@/lib/ai/checkout-parse";
 import {
@@ -176,6 +178,16 @@ async function resolveContextualDirectReply(
     const reprompt = formatVariantOptionReprompt(chatHistory);
     if (reprompt) return reprompt;
   }
+
+  const confirmed = await tryDirectProductConfirmReply(
+    agentCtx,
+    inboundText,
+    chatHistory
+  );
+  if (confirmed) return confirmed;
+
+  const policy = await tryDirectPolicyReply(agentCtx, inboundText);
+  if (policy) return policy;
 
   const direct = await tryDirectProductReply(agentCtx, inboundText, chatHistory);
   return (

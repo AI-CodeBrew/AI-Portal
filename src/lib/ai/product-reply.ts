@@ -26,6 +26,10 @@ import {
   pickBestShownCatalogTitle,
 } from "./catalog-browse-pick";
 import {
+  extractPendingProductConfirm,
+  looksLikeProductConfirmAffirmation,
+} from "./product-confirm";
+import {
   formatVariantSelectionReply,
   looksLikeVariantSelection,
   matchVariantFromMessage,
@@ -981,4 +985,29 @@ export async function tryDirectSkuProductReply(
   latestUserMessage: string
 ): Promise<{ reply: string; products: SearchProduct[] } | null> {
   return tryDirectProductReply(ctx, latestUserMessage);
+}
+
+/** Customer said yes after "Did you mean *Product*?" — show that product. */
+export async function tryDirectProductConfirmReply(
+  ctx: AgentContext,
+  latestUserMessage: string,
+  history: Array<{ role: "user" | "assistant"; content: string }> = []
+): Promise<string | null> {
+  if (!looksLikeProductConfirmAffirmation(latestUserMessage, history)) {
+    return null;
+  }
+  const pending = extractPendingProductConfirm(history);
+  if (!pending?.product) return null;
+
+  const query = pending.variant
+    ? `${pending.product} ${pending.variant}`
+    : pending.product;
+
+  // Force named lookup phrasing so shouldTryDirectProductLookup accepts it
+  const direct = await tryDirectProductReply(
+    ctx,
+    `tell me about ${query}`,
+    history
+  );
+  return direct?.reply ?? null;
 }

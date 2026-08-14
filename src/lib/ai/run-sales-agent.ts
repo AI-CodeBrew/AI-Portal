@@ -15,6 +15,7 @@ import {
   tryDirectVariantSelectionReply,
   tryDirectCatalogBrowseReply,
   tryDirectCatalogProductPickReply,
+  tryDirectProductConfirmReply,
 } from "./product-reply";
 import { tryDirectCheckoutReply } from "./checkout-reply";
 import {
@@ -36,6 +37,7 @@ import {
   formatVariantOptionReprompt,
 } from "./variant-selection";
 import { tryIntentRoutedReply } from "./intent-router";
+import { tryDirectPolicyReply } from "./policy-reply";
 
 export type { AgentContext } from "./sales-tools";
 
@@ -101,6 +103,13 @@ async function tryExactDirectReply(
     }
     case "catalog_product_pick": {
       return tryDirectCatalogProductPickReply(ctx, latestUser, history);
+    }
+    case "product_confirm": {
+      return tryDirectProductConfirmReply(ctx, latestUser, history);
+    }
+    case "delivery_policy":
+    case "return_policy": {
+      return tryDirectPolicyReply(ctx, latestUser);
     }
     case "greeting_only": {
       return tryDirectGreetingReply(ctx, latestUser);

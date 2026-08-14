@@ -12,6 +12,11 @@ import {
   looksLikeOffTopicChat,
   looksLikeExactGreetingOnly,
 } from "./greeting-reply";
+import { looksLikeProductConfirmAffirmation } from "./product-confirm";
+import {
+  looksLikeDeliveryEtaQuestion,
+  looksLikeReturnOrDamageQuestion,
+} from "./policy-reply";
 import { looksLikeVariantSelection } from "./variant-selection";
 
 /** Routes that may bypass the LLM when the message is an exact pattern match. */
@@ -23,6 +28,9 @@ export type ExactDirectRoute =
   | "sku_search"
   | "named_product_search"
   | "variant_selection"
+  | "product_confirm"
+  | "delivery_policy"
+  | "return_policy"
   | "greeting_only"
   | "how_are_you"
   | "off_topic";
@@ -76,6 +84,13 @@ export function resolveExactDirectRoute(
   if (parseCheckoutDetails(t) || looksLikeCheckoutMessage(t, history)) {
     return "checkout";
   }
+
+  // "yes" after "Did you mean *X*?" — before greeting so affirmations continue the product
+  if (looksLikeProductConfirmAffirmation(t, history)) return "product_confirm";
+
+  // Factual store policies — before greeting / catalog so Gemini doesn't invent ETAs/refunds
+  if (looksLikeDeliveryEtaQuestion(t)) return "delivery_policy";
+  if (looksLikeReturnOrDamageQuestion(t)) return "return_policy";
 
   // Identity / greeting before catalog pick — avoids "who are you" → product-list fallback
   if (looksLikeHowAreYou(t)) return "how_are_you";

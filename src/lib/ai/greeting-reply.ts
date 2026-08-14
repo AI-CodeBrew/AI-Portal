@@ -1,7 +1,7 @@
 import type { AgentContext } from "./sales-tools";
 
 const GREETING_ONLY =
-  /^(hi+|hey+|heya+|hello+|hola+|yo+|sup+|thanks+|thank\s*you+|ok+|okay+|yes+|no+|assalam+|salam+|assalamu+|good morning|good evening|good afternoon|good night)[\s!.?,]*$/i;
+  /^(hi+|hey+|heya+|hello+|hola+|yo+|sup+|assalam+|salam+|assalamu+|good morning|good evening|good afternoon|good night)[\s!.?,]*$/i;
 
 /** Whole-message greeting only — exact match, not "hey there" or "hi whats up". */
 export function looksLikeExactGreetingOnly(text: string): boolean {

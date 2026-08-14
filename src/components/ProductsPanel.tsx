@@ -18,7 +18,7 @@ type ProductQuota = {
   canAddProduct: boolean;
 };
 
-const CURRENCIES = ["AED", "SAR", "USD", "EUR", "MAD", "EGP", "QAR", "KWD"];
+const CURRENCIES = ["AED", "PKR", "SAR", "USD", "EUR", "MAD", "EGP", "QAR", "KWD"];
 
 type Tab = "basics" | "options" | "bundles" | "discount";
 
