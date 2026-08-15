@@ -32,16 +32,7 @@ export function selectSalesModel(params: {
   return resolveGeminiChatModel();
 }
 
-/** Low / minimal thinking for Flash chat turns. */
-export function chatThinkingConfig(model: string): Record<string, unknown> | null {
-  const id = model.toLowerCase();
-  if (id.includes("flash") && !id.includes("lite")) {
-    // Gemini 3 thinkingBudget: 0 = minimal/off when supported
-    return {
-      thinkingConfig: {
-        thinkingBudget: 0,
-      },
-    };
-  }
+/** Thinking config for Flash. Disabled — thinkingBudget: 0 on gemini-3.6-flash returns 400 INVALID_ARGUMENT. */
+export function chatThinkingConfig(_model: string): Record<string, unknown> | null {
   return null;
 }

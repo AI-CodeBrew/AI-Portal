@@ -865,6 +865,20 @@ export function productSearchTokens(query: string): string[] {
     "i",
     "get",
     "buy",
+    "warranty",
+    "guarantee",
+    "original",
+    "genuine",
+    "copy",
+    "fake",
+    "cod",
+    "looking",
+    "browsing",
+    "wife",
+    "husband",
+    "photo",
+    "image",
+    "pic",
     "human",
     "person",
     "agent",
@@ -1038,7 +1052,7 @@ export function looksLikeObjectionPhrase(text: string): boolean {
 }
 
 const CATALOG_BROWSE_PATTERN =
-  /\b(?:show\s+(?:me\s+)?(?:(?:some|your|a\s+few|any)\s+)?products(?:\s+(?:which|that|i\s+can\s+)?(?:i\s+can\s+)?buy)?|show\s+(?:me\s+)?(?:what\s+(?:you\s+)?(?:have|sell)|something\s+(?:i\s+can\s+)?buy)|what\s+(?:can\s+)?(?:i|we)\s+(?:can\s+)?buy|what\s+(?:do\s+you\s+)?(?:have|sell)|what\s+products|your\s+(?:catalog|products)|browse(?:\s+the\s+catalog)?|recommend\s+(?:me\s+)?something|any\s+suggestions?|something\s+to\s+buy|looking\s+for\s+(?:a\s+)?products?|share\s+(?:me\s+)?(?:some\s+)?(?:different|other|more)\s+products?|(?:different|other|more)\s+products?|winning\s+products)\b/i;
+  /\b(?:show\s+(?:me\s+)?(?:(?:some|your|a\s+few|any)\s+)?products(?:\s+(?:which|that|i\s+can\s+)?(?:i\s+can\s+)?buy)?|show\s+(?:me\s+)?(?:what\s+(?:you\s+)?(?:have|sell)|something\s+(?:i\s+can\s+)?buy)|what\s+(?:can\s+)?(?:i|we)\s+(?:can\s+)?buy|what\s+(?:do\s+you\s+)?(?:have|sell)|what\s+products|your\s+(?:catalog|products)|browse(?:\s+the\s+catalog)?|recommend\s+(?:me\s+)?something|any\s+suggestions?|something\s+to\s+buy|want(?:a|\s+to)\s+(?:buy|order|get)\s+(?:something|anything)(?:\s+else)?|(?:buy|order)\s+something(?:\s+else)?|looking\s+for\s+(?:a\s+)?products?|share\s+(?:me\s+)?(?:some\s+)?(?:different|other|more)\s+products?|(?:different|other|more)\s+products?|winning\s+products)\b/i;
 
 const CATALOG_BROWSE_MORE_PATTERN =
   /\b(?:(?:show\s+(?:me\s+)?)?(?:some\s+)?(?:other|more|different|another)(?:\s+products?)?|something\s+else|anything\s+else|what\s+else|next\s+(?:ones?|products?|options?)?|any\s+others?|different\s+ones?|more\s+options?|share\s+(?:me\s+)?(?:some\s+)?(?:other|different|more)(?:\s+products?)?)\b/i;
@@ -1095,6 +1109,8 @@ const CATALOG_BROWSE_GENERIC = new Set([
   "looking",
   "share",
   "winning",
+  "else",
+  "wanna",
 ]);
 
 /** Customer wants to browse the catalog — not a specific product name. */
@@ -1102,6 +1118,8 @@ export function looksLikeCatalogBrowseRequest(message: string): boolean {
   const t = message.trim();
   if (t.length < 6 || !CATALOG_BROWSE_PATTERN.test(t)) return false;
   if (extractSkuFromText(t)) return false;
+  // Pagination / switch-item phrases belong to "more", not first browse
+  if (CATALOG_BROWSE_MORE_PATTERN.test(t)) return false;
 
   const tokens = productSearchTokens(t).filter(
     (token) => !CATALOG_BROWSE_GENERIC.has(token.toLowerCase())
@@ -1147,7 +1165,31 @@ export function looksLikeCatalogBrowseMoreRequest(
     return true;
   }
 
+  // "something else" / "not this" = switch item, even mid-checkout
+  if (
+    /\b(something|anything)\s+else\b/i.test(t) ||
+    /\b(not\s+(this|that|it)|different\s+(one|item)|change\s+(the\s+)?product)\b/i.test(
+      t
+    )
+  ) {
+    return true;
+  }
+
   return false;
+}
+
+/** Vague shopping — not a named SKU and not "buy it/this". */
+export function looksLikeVagueShoppingIntent(text: string): boolean {
+  const t = text.trim();
+  if (t.length < 6) return false;
+  if (extractSkuFromText(t)) return false;
+  return (
+    /\bwant(?:a|\s+to)\s+(?:buy|order|get)\s+(?:something|anything)(?:\s+else)?\b/i.test(
+      t
+    ) ||
+    /\b(?:buy|order)\s+something(?:\s+else)?\b/i.test(t) ||
+    /\bsomething\s+to\s+buy\b/i.test(t)
+  );
 }
 
 /**
@@ -1157,6 +1199,16 @@ export function looksLikeCatalogBrowseMoreRequest(
 export function extractProductSearchQuery(text: string): string | null {
   if (looksLikeObjectionPhrase(text)) return null;
   if (looksLikeCatalogBrowseRequest(text)) return null;
+  if (looksLikeVagueShoppingIntent(text)) return null;
+  if (/\b(something|anything)\s+else\b/i.test(text)) return null;
+  // Trust / stall / process questions after a pitch — not SKU names
+  if (
+    /\b(original|genuine|copy|fake|warranty|guarantee|quality|does it last|cod|cash on delivery|just looking|just browsing|website|web\s*site|product link|ask my (wife|husband))\b/i.test(
+      text
+    )
+  ) {
+    return null;
+  }
 
   const sku = extractSkuFromText(text);
   if (sku) return sku;
@@ -1232,6 +1284,15 @@ export function looksLikeBareProductNameQuery(message: string): boolean {
   if (t.length < 3 || t.length > 80) return false;
   if (looksLikeObjectionPhrase(t)) return false;
   if (looksLikeCatalogBrowseRequest(t)) return false;
+  if (looksLikeVagueShoppingIntent(t)) return false;
+  if (/\b(something|anything)\s+else\b/i.test(t)) return false;
+  if (
+    /\b(original|genuine|copy|fake|warranty|guarantee|quality|does it last|cod|cash on delivery|just looking|just browsing|website|web\s*site|product link|ask my (wife|husband))\b/i.test(
+      t
+    )
+  ) {
+    return false;
+  }
   if (/\n/.test(t)) return false;
   // Profile / preference / memory sentences — not product search
   if (

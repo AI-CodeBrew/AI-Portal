@@ -190,6 +190,10 @@ async function main() {
       content: reply,
     });
 
+    const failedExpect = (turn.expect ?? []).filter((r) => !matches(reply, r));
+    const hitReject = (turn.reject ?? []).filter((r) => matches(reply, r));
+    const ok = failedExpect.length === 0 && hitReject.length === 0;
+
     await updateProfileFromTurn({
       storeId: store.id,
       customerPhone: COACH_PHONE,
@@ -197,15 +201,13 @@ async function main() {
       assistantReply: reply,
       history,
     });
-    await extractAndStoreMemories({
-      sessionKey,
-      userMessage: turn.user,
-      assistantReply: reply,
-    });
-
-    const failedExpect = (turn.expect ?? []).filter((r) => !matches(reply, r));
-    const hitReject = (turn.reject ?? []).filter((r) => matches(reply, r));
-    const ok = failedExpect.length === 0 && hitReject.length === 0;
+    if (ok) {
+      await extractAndStoreMemories({
+        sessionKey,
+        userMessage: turn.user,
+        assistantReply: reply,
+      });
+    }
 
     results.push({
       scenario: scenarioName,
@@ -367,6 +369,26 @@ async function main() {
           user: "I saw cheaper online somewhere else",
           reject: [CATALOG_FAIL, BROWSE_LIST, WAITING_SPAM],
         },
+        {
+          label: "amazon cheaper",
+          user: "Amazon has it cheaper, match that price",
+          reject: [CATALOG_FAIL, BROWSE_LIST, WAITING_SPAM],
+        },
+      ]),
+    },
+    {
+      name: "rebuttal-quality-link",
+      turns: pitchThen([
+        {
+          label: "quality doubt",
+          user: "not sure about the quality, does it last?",
+          reject: [CATALOG_FAIL, BROWSE_LIST],
+        },
+        {
+          label: "send link",
+          user: "just send me the website link",
+          reject: [CATALOG_FAIL],
+        },
       ]),
     },
     {
@@ -416,6 +438,74 @@ async function main() {
       ],
     },
     {
+      name: "rebuttal-trust-and-stalls",
+      turns: pitchThen([
+        {
+          label: "is original",
+          user: "is this original or copy?",
+          reject: [CATALOG_FAIL, BROWSE_LIST, WAITING_SPAM],
+        },
+        {
+          label: "send photo",
+          user: "send me a photo",
+          expect: [/photo|here|image|audionic|enc/i],
+          reject: [CATALOG_FAIL, WAITING_SPAM],
+        },
+        {
+          label: "ask wife",
+          user: "I need to ask my wife first",
+          reject: [CATALOG_FAIL, BROWSE_LIST],
+        },
+      ]),
+    },
+    {
+      name: "rebuttal-cod-browse",
+      turns: pitchThen([
+        {
+          label: "cod?",
+          user: "do you do COD?",
+          reject: [CATALOG_FAIL, WAITING_SPAM],
+        },
+        {
+          label: "just looking",
+          user: "just looking for now",
+          reject: [CATALOG_FAIL, WAITING_SPAM],
+        },
+      ]),
+    },
+    {
+      name: "returning-vague-shop",
+      turns: [
+        {
+          label: "old pitch",
+          user: `tell me about ${productName}`,
+          expect: [new RegExp(productBrand, "i")],
+          resetHistory: true,
+        },
+        {
+          label: "next-day hi",
+          user: "Heyyyy how are you",
+          expect: [/fine|well|good|thanks|doing/i],
+          reject: [WAITING_SPAM, /locking in/i],
+        },
+        {
+          label: "buy something vague",
+          user: "I want to buy something .",
+          expect: [/product|order from us|looking|want that|something new|show/i],
+          reject: [/locking in/i, CATALOG_FAIL, /couldn't find \*something/i],
+        },
+        {
+          label: "something else",
+          user: "No i want to buy something else",
+          reject: [
+            CATALOG_FAIL,
+            /couldn't find \*something else/i,
+            /locking in/i,
+          ],
+        },
+      ],
+    },
+    {
       name: "handoff-and-prefs",
       turns: [
         {
@@ -429,7 +519,7 @@ async function main() {
           label: "prefs",
           user: "My name is Ahmed, I live in Dubai, prefer COD, budget under 3500 AED",
           expect: [/.+/],
-          reject: [CATALOG_FAIL, /3\s*[-–]?\s*5\s*days/i],
+          reject: [CATALOG_FAIL, /3\s*[-–]?\s*5\s*days/i, /locking in/i],
         },
       ],
     },
@@ -471,8 +561,16 @@ async function main() {
       "Noted — Ahmed-style prefs: COD, Dubai, Audionic ENC, short Roman Urdu OK.",
     ],
     [
-      "Delivery takes 3-5 days. Damaged by courier → photos + failed-delivery note to support WhatsApp for refund.",
-      "Policy locked — ETA 3–5 days; damaged courier flow uses photos + support WhatsApp.",
+      "If I come back the next day and say I want to buy something, show products or ask what I want — do not lock last night's item.",
+      "Yes — after a new hi or long gap, vague shopping browses. Confirm last product only if they say buy it/this.",
+    ],
+    [
+      "If I say something else or not this, show other products. Never search the catalog for the words something else.",
+      "Correct — something else is browse-more, never a product name.",
+    ],
+    [
+      "Original vs copy, COD, quality, website link: answer the fact on the pitched product. Never search the catalog for those words.",
+      "Correct — trust and process questions stay on the last pitched product.",
     ],
   ];
 

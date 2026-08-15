@@ -17,7 +17,11 @@ import {
   tryDirectProductImageReply,
 } from "./product-reply";
 import { formatVariantOptionReprompt } from "./variant-selection";
-import { looksLikeBuyActiveProductIntent } from "./checkout-parse";
+import { looksLikeBuyActiveProductIntent, isProductPitchFresh } from "./checkout-parse";
+import {
+  looksLikeVagueShoppingIntent,
+  looksLikeCatalogBrowseMoreRequest,
+} from "@/lib/products/products-service";
 
 const GEMINI_API_BASE =
   "https://generativelanguage.googleapis.com/v1beta/models";
@@ -72,10 +76,10 @@ Return ONLY valid JSON:
 
 Rules:
 - Use conversation context. Short replies like "yes", "that one", "ok", "yellow" refer to the LAST product/options the assistant showed.
-- checkout: customer shares phone + delivery address to place order, OR says they want to buy/order the product just shown ("I want to buy it", "I'll take this", "order it") without naming a different product.
-- catalog_browse / catalog_more: wants to see products / other products — NOT "I want to buy it" after a product pitch.
+- checkout: customer shares phone + delivery address to place order, OR says they want to buy/order the product just shown ("I want to buy it", "I'll take this", "order it") without naming a different product. NOT "I want to buy something" (that's catalog_browse).
+- catalog_browse / catalog_more: wants to see products / other products / "something else" / "I want to buy something" — NOT "I want to buy it" after a fresh product pitch.
 - catalog_product_pick: picks one from a recently shown browse list by name.
-- product_search: named product, price of a named item, or SKU. NEVER product_search for "it" / "this" / "that" alone — that is checkout for the pitched product.
+- product_search: named product, price of a named item, or SKU. NEVER product_search for "it" / "this" / "that" / "something else" alone.
 - variant_selection: chooses size/color for a product already discussed.
 - objection_recovery: costly, expensive, discount, offer, % off, bulk, won't buy, not interested — any price pushback. NOT product_search.
 - product_image: wants a photo.
@@ -335,9 +339,17 @@ export async function tryIntentRoutedReply(
     return null;
   }
 
-  // "I want to buy it" → checkout for pitched product, never search/browse
+  if (
+    looksLikeVagueShoppingIntent(latestUser) ||
+    looksLikeCatalogBrowseMoreRequest(latestUser, history)
+  ) {
+    return tryDirectCatalogBrowseReply(ctx, latestUser, history);
+  }
+
+  // "I want to buy it" → checkout only while the pitch is still this visit
   if (
     looksLikeBuyActiveProductIntent(latestUser) &&
+    isProductPitchFresh(history) &&
     (routed.intent === "product_search" ||
       routed.intent === "catalog_browse" ||
       routed.intent === "catalog_more" ||

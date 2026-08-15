@@ -22,8 +22,11 @@ const GEMINI_API_BASE =
   "https://generativelanguage.googleapis.com/v1beta/models";
 
 type GeminiPart =
-  | { text: string }
-  | { functionCall: { name: string; args: Record<string, unknown> } }
+  | { text: string; thoughtSignature?: string }
+  | {
+      functionCall: { name: string; args: Record<string, unknown> };
+      thoughtSignature?: string;
+    }
   | { functionResponse: { name: string; response: Record<string, unknown> } };
 
 type GeminiContent = {
@@ -230,15 +233,19 @@ export async function runSalesAgentWithGemini(
     const parts = candidate?.content?.parts ?? [];
     if (!parts.length) break;
 
-    const functionCalls = parts.filter(
-      (p): p is { functionCall: { name: string; args: Record<string, unknown> } } =>
-        "functionCall" in p && Boolean(p.functionCall?.name)
+    const functionCallParts = parts.filter(
+      (
+        p
+      ): p is {
+        functionCall: { name: string; args: Record<string, unknown> };
+        thoughtSignature?: string;
+      } => "functionCall" in p && Boolean(p.functionCall?.name)
     );
     const textParts = parts
       .filter((p): p is { text: string } => "text" in p && Boolean(p.text?.trim()))
       .map((p) => p.text.trim());
 
-    if (!functionCalls.length) {
+    if (!functionCallParts.length) {
       const text =
         textParts.join("\n").trim() ||
         "Hey 👋 What product can I help you with?";
@@ -256,12 +263,12 @@ export async function runSalesAgentWithGemini(
 
     contents.push({
       role: "model",
-      parts: functionCalls.map((p) => ({ functionCall: p.functionCall })),
+      parts: functionCallParts,
     });
 
     const responseParts: GeminiPart[] = [];
 
-    for (const call of functionCalls) {
+    for (const call of functionCallParts) {
       const name = call.functionCall.name;
       let input = { ...(call.functionCall.args ?? {}) };
 

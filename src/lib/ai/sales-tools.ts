@@ -24,7 +24,7 @@ import {
 
 export const SALES_TOOL_RULES = `Operational rules for tools:
 - Understand the customer's intent FIRST, then call the right tool (do not guess product names from filler words).
-- browse_catalog — when they want to see what they can buy without naming a product ("something to buy", "show me products", "what do you have"). Shows 2 items; if they say "more" or "other", call browse_catalog again for the next 2. Do NOT call browse_catalog when they say "I want to buy it/this" about a product you just showed — collect phone + address for that product instead.
+- browse_catalog — when they want to see what they can buy without naming a product ("something to buy", "I want to buy something", "show me products", "something else"). Shows 2 items; if they say "more" or "other" or "something else", call browse_catalog again. Do NOT call browse_catalog when they say "I want to buy it/this" about a product you just showed in this visit — collect phone + address for that product instead. After a long gap, browse or confirm last product — never silently lock last night's item.
 - search_products — when they name a product, keyword, or SKU (e.g. AA-…). Searches portal + Shopify for THIS store only.
 - Prefer portal matches when SKU/ref is known.
 - Never treat price objections ("too expensive", "no thanks") as a product search query.

@@ -256,6 +256,8 @@ When you change AI behavior, update **this doc** and the relevant file:
 
 | Date | Change |
 |------|--------|
+| 2026-08-15 | Pitch follow-ups (original/COD/quality/link/just looking) never catalog-search. Gemini Flash thinkingBudget disabled (400). Closer playbook in prompt. |
+| 2026-08-15 | Returning visit: “I want to buy something” browses (does not lock last-night product). “Something else” browses, never catalog-search. Buy-it checkout only if pitch is fresh (<4h and no new hi). Stale “buy it” asks to confirm last product. |
 | 2026-08-14 | Full rebuttal stress test 30/32 → fixed human handoff + memory-interest fallback; Mem0 playbook seeded (price ladder, buy-it, Roman Urdu objections, COD). |
 | 2026-08-14 | Stress-test `scripts/train-sales-conversations.ts` + Mem0 seed for coach phone; identity/off-topic in runSalesAgent; Roman Urdu mehnga ≠ catalog; buy-it / I'll take it before bare-product; memory questions use Mem0 not search. |
 | 2026-08-14 | “I want to buy it” sticks to the pitched product → checkout (phone/address), never search/browse for “it” or another item. |

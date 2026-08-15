@@ -16,6 +16,7 @@ import {
   tryDirectCatalogBrowseReply,
   tryDirectCatalogProductPickReply,
   tryDirectProductConfirmReply,
+  tryStaleProductNudgeReply,
 } from "./product-reply";
 import { tryDirectCheckoutReply } from "./checkout-reply";
 import {
@@ -47,6 +48,7 @@ import {
 } from "./variant-selection";
 import { tryIntentRoutedReply } from "./intent-router";
 import { tryDirectPolicyReply } from "./policy-reply";
+import { tryDirectPitchFollowupReply, tryDirectProfilePrefsReply } from "./pitch-followup-reply";
 import { executeSalesTool } from "./sales-tools";
 import { findActiveProductContext } from "./product-reply";
 
@@ -172,6 +174,9 @@ async function tryExactDirectReply(
     case "catalog_more": {
       return tryDirectCatalogBrowseReply(ctx, latestUser, history);
     }
+    case "stale_product_nudge": {
+      return tryStaleProductNudgeReply(latestUser, history);
+    }
     case "catalog_product_pick": {
       return tryDirectCatalogProductPickReply(ctx, latestUser, history);
     }
@@ -248,6 +253,16 @@ export async function runSalesAgent(
 
   const memoryAsk = recallPitchedProductReply(enrichedCtx, history, latestUser);
   if (memoryAsk) return memoryAsk;
+
+  const prefsAck = tryDirectProfilePrefsReply(latestUser);
+  if (prefsAck) return prefsAck;
+
+  const pitchFollowup = tryDirectPitchFollowupReply(
+    enrichedCtx,
+    latestUser,
+    history
+  );
+  if (pitchFollowup) return pitchFollowup;
 
   // Fast path ONLY for clear structural intents (SKU, checkout details, browse, policy).
   // Price/discount/ambiguous chat → LLM (intent router may tip tool handlers, else Gemini).
@@ -361,6 +376,16 @@ export async function runSalesAgent(
   } catch (err) {
     console.error("[run-sales-agent] direct product fallback failed:", err);
   }
+
+  const prefsFallback = tryDirectProfilePrefsReply(latestUser);
+  if (prefsFallback) return prefsFallback;
+
+  const pitchFollowupFallback = tryDirectPitchFollowupReply(
+    enrichedCtx,
+    latestUser,
+    history
+  );
+  if (pitchFollowupFallback) return pitchFollowupFallback;
 
   if (looksLikeHowAreYou(latestUser)) {
     return buildHowAreYouReply(enrichedCtx);

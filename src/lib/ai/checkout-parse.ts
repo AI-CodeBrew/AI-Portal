@@ -2,14 +2,16 @@ import { normalizePhone, validateOrderPhone } from "@/lib/phone";
 import {
   extractSkuFromText,
   looksLikeObjectionPhrase,
+  looksLikeVagueShoppingIntent,
   CATALOG_BROWSE_INTRO,
   CATALOG_BROWSE_MORE_INTRO,
 } from "@/lib/products/products-service";
 import { looksLikeVariantSelection } from "./variant-selection";
 import { looksLikeExactNamedProductQuery } from "./exact-routes";
+import { looksLikeCasualGreeting, looksLikeHowAreYou } from "./greeting-reply";
 
 const CHECKOUT_INTENT =
-  /\b(place\s+(an\s+)?order|want(?:a|\s+to)\s+(order|buy)|want\s+(it|this|that)|order\s+(this|it|now)|buy\s+(this|it|now)|i('ll| will)\s+take\s+(it|this|that)|take\s+(it|this|that)|book\s+it|checkout|confirm\s+(my\s+)?order|i('m| am)?\s+(ready|ordering)|deal)\b/i;
+  /\b(place\s+(an\s+)?order|want(?:a|\s+to)\s+(order|buy)\s+(it|this|that)|want\s+(it|this|that)|order\s+(this|it|now)|buy\s+(this|it|now)|i('ll| will)\s+take\s+(it|this|that)|take\s+(it|this|that)|book\s+it|checkout|confirm\s+(my\s+)?order|i('m| am)?\s+(ready|ordering)|deal)\b/i;
 
 /**
  * Customer wants the product already pitched ("I want to buy it") —
@@ -38,9 +40,59 @@ export function looksLikeBuyActiveProductIntent(text: string): boolean {
 export function looksLikeStillShoppingMessage(text: string): boolean {
   const t = text.trim();
   if (t.length < 4) return false;
-  return /\b(looking\s+for\s+(a\s+)?products?|want\s+(to\s+)?(see|browse|find)|show\s+(me\s+)?(products?|options|something)|share\s+(some\s+)?(different|other|more)\s+products?|(different|other|more)\s+products?|winning\s+products|just\s+browsing|see\s+(what\s+)?(you\s+)?have)\b/i.test(
+  if (looksLikeVagueShoppingIntent(t)) return true;
+  return /\b(looking\s+for\s+(a\s+)?products?|want\s+(to\s+)?(see|browse|find)|show\s+(me\s+)?(products?|options|something)|share\s+(some\s+)?(different|other|more)\s+products?|(different|other|more)\s+products?|winning\s+products|just\s+browsing|see\s+(what\s+)?(you\s+)?have|(something|anything)\s+else)\b/i.test(
     t
   );
+}
+
+/** Last pitched product is still "this chat" — not last night after a new hi. */
+export const FRESH_PITCH_MS = 4 * 60 * 60 * 1000;
+
+type TimedChatMsg = {
+  role: "user" | "assistant";
+  content: string;
+  created_at?: string;
+};
+
+function looksLikeProductPitchContent(content: string): boolean {
+  if (CATALOG_BROWSE_INTRO.test(content) || CATALOG_BROWSE_MORE_INTRO.test(content)) {
+    return false;
+  }
+  return (
+    /\[Ref:\s*[^\]]+\]/i.test(content) ||
+    /(?:^|\n)[^\n]+(?:—|-)\s*(?:Rs\.?|PKR|AED|\$|€)/im.test(content) ||
+    /\b(in stock|out of stock)\b/i.test(content) ||
+    /locking in \*/i.test(content)
+  );
+}
+
+export function isProductPitchFresh(
+  history: TimedChatMsg[] = [],
+  maxAgeMs = FRESH_PITCH_MS
+): boolean {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const msg = history[i];
+    if (msg.role !== "assistant" || !looksLikeProductPitchContent(msg.content)) {
+      continue;
+    }
+    for (let j = i + 1; j < history.length; j++) {
+      const later = history[j];
+      if (later.role !== "user") continue;
+      if (
+        looksLikeCasualGreeting(later.content) ||
+        looksLikeHowAreYou(later.content)
+      ) {
+        return false;
+      }
+    }
+    if (msg.created_at) {
+      const age = Date.now() - new Date(msg.created_at).getTime();
+      if (Number.isFinite(age) && age > maxAgeMs) return false;
+    }
+    return true;
+  }
+  return false;
 }
 
 const HAS_CONTACT_HINT =
@@ -100,10 +152,11 @@ export function looksLikeCheckoutMessage(
 
   // Still shopping / browsing — never treat as checkout
   if (looksLikeStillShoppingMessage(t)) return false;
+  if (looksLikeVagueShoppingIntent(t)) return false;
 
-  // "I want to buy it" / "I'll take this" → checkout for pitched product
-  // (must win over bare-product heuristics like treating "take" as a product name)
+  // "I want to buy it" / "I'll take this" → checkout only if we just pitched that product
   if (looksLikeBuyActiveProductIntent(t)) {
+    if (!isProductPitchFresh(history ?? [])) return false;
     return true;
   }
 
@@ -115,7 +168,16 @@ export function looksLikeCheckoutMessage(
   const digits = t.replace(/\D/g, "");
   const hasPhone = digits.length >= 8;
 
-  if (HAS_CONTACT_HINT.test(t) && t.length >= 12) {
+  // Profile / prefs only — not an order (needs a phone or street address to checkout)
+  if (
+    /\b(my name is|i live in|i prefer|prefer\s+cod|budget under)\b/i.test(t) &&
+    !hasPhone &&
+    !/\b(address|street|block|villa|apartment|building)\b/i.test(t)
+  ) {
+    return false;
+  }
+
+  if (HAS_CONTACT_HINT.test(t) && t.length >= 12 && (hasPhone || /\b(address|street|deliver)\b/i.test(t))) {
     return true;
   }
 

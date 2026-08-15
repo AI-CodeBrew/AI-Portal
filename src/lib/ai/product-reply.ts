@@ -4,6 +4,7 @@ import {
   getPrimaryProductImageUrl,
   looksLikeCatalogBrowseMoreRequest,
   looksLikeCatalogBrowseRequest,
+  looksLikeVagueShoppingIntent,
   productSearchTokens,
   sampleActiveCatalogProducts,
   skuMatchKey,
@@ -32,6 +33,7 @@ import {
 import {
   looksLikeBuyActiveProductIntent,
   looksLikeCheckoutMessage,
+  isProductPitchFresh,
 } from "./checkout-parse";
 import {
   formatVariantSelectionReply,
@@ -96,6 +98,17 @@ export type ActiveProductContext = {
   sku: string | null;
   ref: string | null;
 };
+
+function isUsablePitchTitle(t: string | null | undefined): t is string {
+  if (!t) return false;
+  const s = t.trim();
+  if (s.length < 4 || s.length > 80) return false;
+  if (/^(who|what|when|where|why|how|human|talk|please|product)$/i.test(s)) {
+    return false;
+  }
+  if (/show you|help you|locking in|couldn'?t find/i.test(s)) return false;
+  return /[a-zA-Z]{3,}/.test(s);
+}
 
 function isProductPitchMessage(content: string): boolean {
   return (
@@ -665,14 +678,41 @@ export async function tryDirectCatalogBrowseReply(
   history: Array<{ role: "user" | "assistant"; content: string }> = []
 ): Promise<string | null> {
   const isMore = looksLikeCatalogBrowseMoreRequest(latestUserMessage, history);
-  const isBrowse = looksLikeCatalogBrowseRequest(latestUserMessage);
+  const isBrowse =
+    looksLikeCatalogBrowseRequest(latestUserMessage) ||
+    looksLikeVagueShoppingIntent(latestUserMessage);
   if (!isBrowse && !isMore) return null;
 
   const built = await buildCatalogBrowseReplyForAgent(ctx, history, { isMore });
   if (!built) {
     return "Our catalog is being updated — send a product name or SKU and I'll look it up for you.";
   }
+
+  const last = findActiveProductContext(history, latestUserMessage);
+  if (
+    !isMore &&
+    last?.title &&
+    isUsablePitchTitle(last.title) &&
+    !isProductPitchFresh(history)
+  ) {
+    return `Last time we looked at *${last.title}* — want that again, or something new?\n\n${built.reply}`;
+  }
+
   return built.reply;
+}
+
+/** Returning after a gap: "I want to buy it" should confirm, not auto-lock last night's SKU. */
+export function tryStaleProductNudgeReply(
+  latestUserMessage: string,
+  history: Array<{ role: "user" | "assistant"; content: string }> = []
+): string | null {
+  if (!looksLikeBuyActiveProductIntent(latestUserMessage)) return null;
+  if (isProductPitchFresh(history)) return null;
+  const last = findActiveProductContext(history, latestUserMessage);
+  if (last?.title && isUsablePitchTitle(last.title)) {
+    return `Last time we were on *${last.title}*. Still that one, or something else? Reply with the name or say "show me products".`;
+  }
+  return `What would you like to buy? Send a product name or say "show me products".`;
 }
 
 /** Customer picked a product from a recent catalog browse reply. */
@@ -718,6 +758,12 @@ export async function tryDirectCatalogProductPickReply(
 
 function formatProductNotFoundReply(query: string): string {
   const label = query.trim() || "that";
+  if (
+    /^(something|anything|else|other|it|this|that)$/i.test(label) ||
+    /\b(something|anything)\s+else\b/i.test(label)
+  ) {
+    return `No problem — what are you looking for instead? Send a product name or say "show me products".`;
+  }
   return [
     `I couldn't find *${label}* in our catalog.`,
     `Try a different spelling, another product name, or send a SKU and I'll look again.`,

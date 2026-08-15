@@ -5,9 +5,10 @@ import {
   looksLikeObjectionPhrase,
   looksLikeRomanUrduProductAsk,
   looksLikeBareProductNameQuery,
+  looksLikeVagueShoppingIntent,
   productSearchTokens,
 } from "@/lib/products/products-service";
-import { parseCheckoutDetails, looksLikeCheckoutMessage } from "./checkout-parse";
+import { parseCheckoutDetails, looksLikeCheckoutMessage, looksLikeBuyActiveProductIntent, isProductPitchFresh } from "./checkout-parse";
 import { looksLikeCatalogProductPick } from "./catalog-browse-pick";
 import { looksLikeProductConfirmAffirmation } from "./product-confirm";
 import {
@@ -28,7 +29,8 @@ export type ExactDirectRoute =
   | "variant_selection"
   | "product_confirm"
   | "delivery_policy"
-  | "return_policy";
+  | "return_policy"
+  | "stale_product_nudge";
 
 const EXPLICIT_NAMED_PRODUCT_ASK =
   /\b(?:do you have|have you got|got any|how much is|how much for|what(?:'s| is) the price of|price of|tell me about|details (?:on|about|for)|looking for|searching for|i want(?:\s+(?:to buy|info on|the|a|an))?|need info on|i(?:'ll| will) take)\b[\s,:-]*(.+)/i;
@@ -46,6 +48,8 @@ const NAMED_PRODUCT_FILLER = new Set([
   "one",
   "please",
   "thanks",
+  "else",
+  "other",
 ]);
 
 /** Explicit "do you have X" / Roman Urdu ask / bare product name — not vague browse. */
@@ -55,6 +59,7 @@ export function looksLikeExactNamedProductQuery(text: string): boolean {
   if (looksLikeObjectionPhrase(t)) return false;
   if (looksLikeCasualGreeting(t)) return false;
   if (looksLikeCatalogBrowseRequest(t)) return false;
+  if (looksLikeVagueShoppingIntent(t)) return false;
   // Buy the pitched product — not a new catalog query
   if (
     /\b(?:want(?:a|\s+to)\s+(?:order|buy)|buy|order|take|book)\s+(?:it|this|that|this\s+one|that\s+one)\b/i.test(
@@ -75,6 +80,14 @@ export function looksLikeExactNamedProductQuery(text: string): boolean {
   // Human handoff — not a product
   if (
     /\b((talk|speak|chat|connect|transfer)\s+(to\s+)?(a\s+)?(human|person|agent)|live\s+agent|real\s+person)\b/i.test(
+      t
+    )
+  ) {
+    return false;
+  }
+  // Trust / stall / process questions — not SKU names
+  if (
+    /\b(original|genuine|copy|fake|warranty|guarantee|quality|does it last|cod|cash on delivery|just looking|just browsing|ask my (wife|husband)|website|web\s*site|product link|send (me )?(a )?(photo|pic|image|link)|do you (do|accept) cod)\b/i.test(
       t
     )
   ) {
@@ -121,9 +134,17 @@ export function resolveExactDirectRoute(
     return "checkout";
   }
 
-  // Browse / different products before greetings & confirm
   if (looksLikeCatalogBrowseMoreRequest(t, history)) return "catalog_more";
-  if (looksLikeCatalogBrowseRequest(t)) return "catalog_browse";
+  if (looksLikeCatalogBrowseRequest(t) || looksLikeVagueShoppingIntent(t)) {
+    return "catalog_browse";
+  }
+
+  if (
+    looksLikeBuyActiveProductIntent(t) &&
+    !isProductPitchFresh(history)
+  ) {
+    return "stale_product_nudge";
+  }
 
   if (looksLikeProductConfirmAffirmation(t, history)) return "product_confirm";
 
