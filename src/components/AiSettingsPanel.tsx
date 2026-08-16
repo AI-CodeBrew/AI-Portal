@@ -8,6 +8,7 @@ import {
   type AiReplyLength,
   type StoreAiSettings,
 } from "@/lib/ai/ai-settings-types";
+import { SUPPORTED_STORE_CURRENCIES } from "@/lib/currency";
 import type { WhatsAppMessageTemplate } from "@/lib/whatsapp/message-templates";
 import Link from "next/link";
 
@@ -31,6 +32,7 @@ export function AiSettingsPanel() {
     useState<StoreAiSettings | null>(null);
 
   const [agentName, setAgentName] = useState("");
+  const [currency, setCurrency] = useState("");
   const [sendOpeningMessage, setSendOpeningMessage] = useState(true);
   const [openingMessage, setOpeningMessage] = useState("");
   const [replyLength, setReplyLength] = useState<AiReplyLength>("medium");
@@ -63,6 +65,7 @@ export function AiSettingsPanel() {
       setApprovedWaTemplates(data.approvedWhatsAppTemplates ?? []);
       setPlatformDefaults(data.platformDefaults ?? null);
       setAgentName(s.agentName ?? "");
+      setCurrency(s.currency ?? "");
       setSendOpeningMessage(s.sendOpeningMessage !== false);
       setOpeningMessage(s.openingMessage ?? "");
       setReplyLength(s.replyLength ?? "medium");
@@ -103,6 +106,7 @@ export function AiSettingsPanel() {
   function resetGeneral() {
     if (!settings) return;
     setAgentName(settings.agentName ?? "");
+    setCurrency(settings.currency ?? "");
     setSendOpeningMessage(settings.sendOpeningMessage !== false);
     setOpeningMessage(settings.openingMessage ?? "");
     setReplyLength(settings.replyLength ?? "medium");
@@ -149,6 +153,7 @@ export function AiSettingsPanel() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           agentName: agentName || null,
+          currency: currency || null,
           sendOpeningMessage,
           openingMessage: openingMessage || null,
           replyLength,
@@ -175,6 +180,7 @@ export function AiSettingsPanel() {
       if (!res.ok) throw new Error(data.error ?? "Save failed");
       setSettings(data.settings);
       const s = data.settings as StoreAiSettings;
+      setCurrency(s.currency ?? "");
       setWhatsappOrderTemplateId(s.whatsappOrderTemplateId ?? null);
       setRecoveryDiscountPercent(
         s.recoveryDiscountPercent != null
@@ -320,6 +326,31 @@ export function AiSettingsPanel() {
                 />
                 <p className="mt-1.5 text-xs text-slate-500">
                   Customers see this name when chatting.
+                </p>
+              </div>
+
+              <div>
+                <label className="mb-1.5 block text-sm font-semibold text-slate-900">
+                  Store currency
+                </label>
+                <select
+                  value={currency}
+                  onChange={(e) => setCurrency(e.target.value)}
+                  className="w-full rounded-lg border border-slate-200 px-3.5 py-2.5 text-sm text-slate-900 focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-100"
+                >
+                  <option value="">
+                    Auto (Shopify store currency, or PKR)
+                  </option>
+                  {SUPPORTED_STORE_CURRENCIES.map((code) => (
+                    <option key={code} value={code}>
+                      {code}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1.5 text-xs text-slate-500">
+                  Used for every price the AI quotes and every order total —
+                  for both portal and Shopify products. Leave on Auto to use
+                  your connected Shopify store&apos;s currency.
                 </p>
               </div>
 

@@ -1,6 +1,6 @@
 import { runSalesAgentWithGemini } from "./gemini-agent";
 import { runSalesAgentWithAnthropic } from "./anthropic-agent";
-import { getShopCurrency } from "@/lib/shopify";
+import { getEffectiveStoreCurrency } from "@/lib/currency";
 import { resolveStoreAiConfig } from "./store-ai-settings";
 import {
   getActiveLlmConfig,
@@ -61,12 +61,9 @@ export async function isSalesAgentConfigured(): Promise<boolean> {
 async function enrichAgentContext(ctx: AgentContext): Promise<AgentContext> {
   let next = ctx;
 
-  if (!ctx.storeCurrency && ctx.store.shop_domain && ctx.store.shopify_access_token) {
+  if (!ctx.storeCurrency) {
     try {
-      const storeCurrency = await getShopCurrency(
-        ctx.store.shop_domain,
-        ctx.store.shopify_access_token
-      );
+      const storeCurrency = await getEffectiveStoreCurrency(ctx.store.id);
       next = { ...next, storeCurrency };
     } catch {
       // keep without currency

@@ -1,4 +1,4 @@
-import { formatMoney } from "@/lib/currency";
+import { formatMoney, DEFAULT_STORE_CURRENCY } from "@/lib/currency";
 
 function formatOrderSummaryParams(
   orderNumber: string,
@@ -57,7 +57,7 @@ export function buildTemplateBodyParams(
     context.sku?.trim() || (defaults[1] ?? defaults[0]),
     defaults[2] ?? String(total),
     defaults[0],
-    context.currency ?? "AED",
+    context.currency ?? DEFAULT_STORE_CURRENCY,
   ];
 
   const params: string[] = [];

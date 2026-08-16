@@ -9,6 +9,7 @@ import {
   findOrderConversationId,
   resolveOrderWhatsAppTargets,
 } from "@/lib/orders/order-whatsapp-phone";
+import { DEFAULT_STORE_CURRENCY } from "@/lib/currency";
 
 export async function sendOrderFollowUp(
   orderId: string,
@@ -192,7 +193,7 @@ function buildFollowUpParams(input: {
     defaults[1] ?? defaults[0],
     defaults[2] ?? String(input.total),
     defaults[0],
-    input.currency ?? "AED",
+    input.currency ?? DEFAULT_STORE_CURRENCY,
   ];
 
   const params: string[] = [];

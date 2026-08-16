@@ -18,7 +18,6 @@ type ProductQuota = {
   canAddProduct: boolean;
 };
 
-const CURRENCIES = ["AED", "PKR", "SAR", "USD", "EUR", "MAD", "EGP", "QAR", "KWD"];
 
 type Tab = "basics" | "options" | "bundles" | "discount";
 
@@ -39,7 +38,7 @@ function emptyForm() {
     image_url: "",
     image_urls: [] as string[],
     price: "",
-    currency: "AED",
+    currency: "",
     target_country: "UAE",
     sku: "",
     discount_enabled: false,
@@ -659,38 +658,23 @@ export function ProductsPanel() {
                     />
                   </label>
 
-                  <div className="grid grid-cols-[1fr_auto] gap-2">
-                    <label className="block text-sm">
-                      <span className="font-medium text-slate-700">Price</span>
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={form.price}
-                        onChange={(e) =>
-                          setForm((f) => ({ ...f, price: e.target.value }))
-                        }
-                        placeholder="199"
-                        className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
-                      />
-                    </label>
-                    <label className="block text-sm">
-                      <span className="font-medium text-slate-700">Currency</span>
-                      <select
-                        value={form.currency}
-                        onChange={(e) =>
-                          setForm((f) => ({ ...f, currency: e.target.value }))
-                        }
-                        className="mt-1 rounded-lg border border-slate-300 px-3 py-2"
-                      >
-                        {CURRENCIES.map((c) => (
-                          <option key={c} value={c}>
-                            {c}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  </div>
+                  <label className="block text-sm">
+                    <span className="font-medium text-slate-700">Price</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={form.price}
+                      onChange={(e) =>
+                        setForm((f) => ({ ...f, price: e.target.value }))
+                      }
+                      placeholder="199"
+                      className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
+                    />
+                    <span className="mt-1 block text-xs text-slate-500">
+                      Currency is set once for the whole store in AI settings.
+                    </span>
+                  </label>
 
                   <label className="block text-sm sm:col-span-2">
                     <span className="font-medium text-slate-700">

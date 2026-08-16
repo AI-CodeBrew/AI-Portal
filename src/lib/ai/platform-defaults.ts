@@ -101,6 +101,7 @@ export async function getPlatformAiDefaults(): Promise<PlatformAiDefaults> {
   if (error || !data) {
     return {
       agentName: "Max",
+      currency: null,
       openingMessage: FALLBACK_OPENING,
       sendOpeningMessage: true,
       replyLength: "medium",
@@ -122,6 +123,7 @@ export async function getPlatformAiDefaults(): Promise<PlatformAiDefaults> {
 
   return {
     agentName: (data.ai_agent_name as string | null) ?? "Max",
+    currency: null,
     openingMessage:
       (data.ai_opening_message as string | null) ?? FALLBACK_OPENING,
     sendOpeningMessage: true,
@@ -260,6 +262,7 @@ export async function updatePlatformAiDefaults(
 /** Merge store overrides with platform defaults (store wins when set). */
 export async function resolveEffectiveAiSettings(storeSettings: {
   agentName: string | null;
+  currency?: string | null;
   openingMessage: string | null;
   sendOpeningMessage?: boolean;
   replyLength: AiReplyLength | null;
@@ -330,6 +333,7 @@ export async function resolveEffectiveAiSettings(storeSettings: {
 
   return {
     agentName,
+    currency: storeSettings.currency ?? null,
     openingMessage,
     sendOpeningMessage: storeSettings.sendOpeningMessage !== false,
     replyLength,

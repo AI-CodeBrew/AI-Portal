@@ -14,6 +14,7 @@ import {
   buildWhatsAppAdUrl,
 } from "@/lib/ads/whatsapp-ad-links";
 import { allocateUniqueProductSku } from "./global-sku";
+import { getEffectiveStoreCurrency } from "@/lib/currency";
 import type {
   ProductInput,
   StoreProduct,
@@ -249,10 +250,13 @@ async function attachRelations(
     );
   }
 
+  const currency = await getEffectiveStoreCurrency(storeId);
+
   return products.map((p) => {
     const link = linkByProduct.get(p.id);
     return {
       ...p,
+      currency,
       options: optionsByProduct.get(p.id) ?? [],
       variants: variantsByProduct.get(p.id) ?? [],
       bundles: bundlesByProduct.get(p.id) ?? [],
@@ -319,12 +323,13 @@ export async function listStoreProductsSummary(
     return { products: [], error: error.message + hint };
   }
 
+  const currency = await getEffectiveStoreCurrency(storeId);
   const products = (data ?? []).map((row) => ({
     id: row.id as string,
     name: row.name as string,
     tagline: (row.tagline as string | null) ?? null,
     price: Number(row.price) || 0,
-    currency: (row.currency as string) || "AED",
+    currency,
     sku: row.sku as string,
   }));
 
@@ -541,7 +546,8 @@ export async function createStoreProduct(
       image_url: images.image_url,
       image_urls: images.image_urls,
       price: input.price,
-      currency: input.currency || "AED",
+      currency:
+        input.currency || (await getEffectiveStoreCurrency(storeId)),
       target_country: input.target_country || "UAE",
       sku,
       discount_enabled: Boolean(input.discount_enabled),
@@ -594,7 +600,10 @@ export async function updateStoreProduct(
       image_url: images.image_url,
       image_urls: images.image_urls,
       price: input.price,
-      currency: input.currency || existing.currency || "AED",
+      currency:
+        input.currency ||
+        existing.currency ||
+        (await getEffectiveStoreCurrency(storeId)),
       target_country: input.target_country || existing.target_country || "UAE",
       sku,
       discount_enabled: Boolean(input.discount_enabled),

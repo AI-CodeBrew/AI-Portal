@@ -26,6 +26,7 @@ export interface Store {
   owner_email: string | null;
   owner_id: string | null;
   plan_id?: string | null;
+  currency?: string | null;
   created_at: string;
 }
 

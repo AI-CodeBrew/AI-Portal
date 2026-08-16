@@ -18,6 +18,7 @@ import {
   type StoreAiSettings,
 } from "./ai-settings-types";
 import { resolveEffectiveAiSettings } from "./platform-defaults";
+import { invalidateEffectiveStoreCurrency } from "@/lib/currency";
 
 function mapTemplate(row: Record<string, unknown>): AiPromptTemplate {
   return {
@@ -41,7 +42,7 @@ export async function getStoreAiSettingsRaw(
   const { data } = await supabase
     .from("stores")
     .select(
-      "ai_agent_name, ai_opening_message, ai_send_opening_message, ai_reply_length, ai_order_template_id, ai_general_template_id, whatsapp_order_template_id, whatsapp_sales_instructions, shopify_confirm_instructions, auto_confirm_orders, auto_follow_up_template_id, ai_chat_history_limit, ai_session_window_hours, ai_recovery_discount_percent, ai_recovery_bundle_discount_percent, ai_conversation_reply_limit, ai_conversation_reply_window_hours"
+      "ai_agent_name, currency, ai_opening_message, ai_send_opening_message, ai_reply_length, ai_order_template_id, ai_general_template_id, whatsapp_order_template_id, whatsapp_sales_instructions, shopify_confirm_instructions, auto_confirm_orders, auto_follow_up_template_id, ai_chat_history_limit, ai_session_window_hours, ai_recovery_discount_percent, ai_recovery_bundle_discount_percent, ai_conversation_reply_limit, ai_conversation_reply_window_hours"
     )
     .eq("id", storeId)
     .single();
@@ -54,6 +55,7 @@ export async function getStoreAiSettingsRaw(
 
   return {
     agentName: (data?.ai_agent_name as string | null) ?? null,
+    currency: (data?.currency as string | null) ?? null,
     openingMessage: (data?.ai_opening_message as string | null) ?? null,
     sendOpeningMessage: data?.ai_send_opening_message !== false,
     replyLength: (data?.ai_reply_length as AiReplyLength) ?? "medium",
@@ -129,6 +131,7 @@ export async function resolveStoreAiConfig(
 
   return {
     agentName: settings.agentName,
+    currency: settings.currency,
     openingMessage: settings.openingMessage,
     sendOpeningMessage: settings.sendOpeningMessage,
     replyLength: settings.replyLength,
@@ -170,6 +173,9 @@ export async function updateStoreAiSettings(
 
   if (input.agentName !== undefined) {
     payload.ai_agent_name = input.agentName?.trim() || null;
+  }
+  if (input.currency !== undefined) {
+    payload.currency = input.currency?.trim().toUpperCase() || null;
   }
   if (input.openingMessage !== undefined) {
     payload.ai_opening_message = input.openingMessage?.trim() || null;
@@ -304,10 +310,13 @@ export async function updateStoreAiSettings(
       error.message.includes("ai_recovery") ||
       error.message.includes("ai_send_opening_message")
         ? " — Run migrations 009 / 020 / 026 / 035 in Supabase"
-        : "";
+        : error.message.includes("currency")
+          ? " — Run migration 041_store_currency.sql in Supabase"
+          : "";
     return { error: error.message + hint };
   }
 
+  invalidateEffectiveStoreCurrency(storeId);
   return getStoreAiSettings(storeId);
 }
 

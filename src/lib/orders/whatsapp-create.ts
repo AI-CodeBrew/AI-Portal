@@ -7,7 +7,7 @@ import {
   extractSkuFromText,
 } from "@/lib/products/products-service";
 import { toWhatsAppRecipient } from "@/lib/whatsapp";
-import { formatMoney } from "@/lib/currency";
+import { formatMoney, getEffectiveStoreCurrency } from "@/lib/currency";
 import type { Store } from "@/lib/types";
 import type { StoreProduct } from "@/lib/products/types";
 
@@ -453,7 +453,11 @@ export async function createWhatsAppAiOrder(params: {
 
     orderNumber = draft.order_number;
     total = draft.total;
-    currency = (draft.currency || params.storeCurrency || "USD").toUpperCase();
+    currency = (
+      params.storeCurrency ||
+      draft.currency ||
+      "USD"
+    ).toUpperCase();
     items = draft.items;
 
     const { data: order, error } = await supabase
@@ -506,9 +510,7 @@ export async function createWhatsAppAiOrder(params: {
 
     total = subtotal;
     currency = (
-      (await getStoreProduct(store.id, portalLines[0].product_id))?.currency ||
-      params.storeCurrency ||
-      "PKR"
+      params.storeCurrency || (await getEffectiveStoreCurrency(store.id))
     ).toUpperCase();
     orderNumber = nextPortalOrderNumber();
 

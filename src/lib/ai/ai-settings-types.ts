@@ -24,6 +24,10 @@ export interface AiPromptTemplate {
 
 export interface StoreAiSettings {
   agentName: string | null;
+  /** Store-wide currency code (e.g. PKR, AED, USD) — authoritative for portal
+   * and Shopify products alike. Null = fall back to the connected Shopify
+   * shop's currency, then PKR. */
+  currency: string | null;
   openingMessage: string | null;
   /** When false, no opening message is sent (admin default is ignored). */
   sendOpeningMessage: boolean;
