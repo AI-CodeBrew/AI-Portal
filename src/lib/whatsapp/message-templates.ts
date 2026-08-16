@@ -355,6 +355,23 @@ export async function submitWhatsAppTemplateToMeta(
   const ctx = await getStoreWaContext(storeId);
   if ("error" in ctx) return ctx;
 
+  // Resubmitting after a rejection (or any prior submit) — Meta keeps the old
+  // name+language registered, so creating fresh fails with "already exists".
+  // Clear the stale registration first; ignore failures (e.g. nothing to delete).
+  if (existing.meta_template_id || existing.status !== "draft") {
+    try {
+      await fetch(
+        `${GRAPH_API}/${ctx.wabaId}/message_templates?name=${encodeURIComponent(existing.name)}`,
+        {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${ctx.accessToken}` },
+        }
+      );
+    } catch (err) {
+      console.warn("[wa-templates] pre-submit Meta delete failed:", err);
+    }
+  }
+
   const payload = {
     name: existing.name,
     language: existing.language,
