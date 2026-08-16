@@ -51,6 +51,7 @@ export async function POST(request: NextRequest) {
       headerText?: string | null;
       bodyText?: string;
       footerText?: string | null;
+      bodyVariableSamples?: string[] | null;
     };
 
     const result = await createWhatsAppTemplate(storeId, {
@@ -60,6 +61,7 @@ export async function POST(request: NextRequest) {
       headerText: body.headerText,
       bodyText: body.bodyText ?? "",
       footerText: body.footerText,
+      bodyVariableSamples: body.bodyVariableSamples,
     });
 
     if ("error" in result) {

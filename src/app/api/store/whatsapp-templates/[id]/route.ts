@@ -21,6 +21,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       headerText?: string | null;
       bodyText?: string;
       footerText?: string | null;
+      bodyVariableSamples?: string[] | null;
     };
 
     if (body.action === "submit") {
@@ -38,6 +39,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       headerText: body.headerText,
       bodyText: body.bodyText,
       footerText: body.footerText,
+      bodyVariableSamples: body.bodyVariableSamples,
     });
 
     if ("error" in result) {

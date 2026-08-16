@@ -2,6 +2,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import {
   getStoreWhatsAppCredentials,
 } from "@/lib/whatsapp";
+import { countBodyVariables } from "./template-utils";
 
 const GRAPH_API = "https://graph.facebook.com/v21.0";
 
@@ -26,6 +27,8 @@ export interface WhatsAppMessageTemplate {
   header_text: string | null;
   body_text: string;
   footer_text: string | null;
+  /** Sample values for {{1}}, {{2}}, ... — required by Meta for review. */
+  body_variable_samples: string[] | null;
   status: WaTemplateStatus;
   meta_template_id: string | null;
   meta_status: string | null;
@@ -42,6 +45,7 @@ export interface CreateWaTemplateInput {
   headerText?: string | null;
   bodyText: string;
   footerText?: string | null;
+  bodyVariableSamples?: string[] | null;
 }
 
 const NAME_PATTERN = /^[a-z0-9_]+$/;
@@ -56,6 +60,9 @@ function mapRow(row: Record<string, unknown>): WhatsAppMessageTemplate {
     header_text: (row.header_text as string | null) ?? null,
     body_text: row.body_text as string,
     footer_text: (row.footer_text as string | null) ?? null,
+    body_variable_samples: Array.isArray(row.body_variable_samples)
+      ? (row.body_variable_samples as string[])
+      : null,
     status: row.status as WaTemplateStatus,
     meta_template_id: (row.meta_template_id as string | null) ?? null,
     meta_status: (row.meta_status as string | null) ?? null,
@@ -129,6 +136,7 @@ function buildMetaComponents(input: {
   headerText?: string | null;
   bodyText: string;
   footerText?: string | null;
+  bodyVariableSamples?: string[] | null;
 }) {
   const components: Array<Record<string, unknown>> = [];
 
@@ -140,9 +148,13 @@ function buildMetaComponents(input: {
     });
   }
 
+  const bodyText = input.bodyText.trim();
+  const samples = (input.bodyVariableSamples ?? []).filter((s) => s?.trim());
+
   components.push({
     type: "BODY",
-    text: input.bodyText.trim(),
+    text: bodyText,
+    ...(samples.length > 0 ? { example: { body_text: [samples] } } : {}),
   });
 
   if (input.footerText?.trim()) {
@@ -153,6 +165,23 @@ function buildMetaComponents(input: {
   }
 
   return components;
+}
+
+/** Validate that every {{n}} in the body has a non-empty sample value. */
+function validateBodySamples(
+  bodyText: string,
+  samples: string[] | null | undefined
+): string | null {
+  const varCount = countBodyVariables(bodyText);
+  if (varCount === 0) return null;
+  const provided = samples ?? [];
+  if (
+    provided.length < varCount ||
+    provided.slice(0, varCount).some((s) => !s?.trim())
+  ) {
+    return `Add a sample value for each variable ({{1}}-{{${varCount}}}) — Meta requires this for review.`;
+  }
+  return null;
 }
 
 export async function listWhatsAppTemplates(
@@ -192,6 +221,9 @@ export async function createWhatsAppTemplate(
   }
   if (!bodyText) return { error: "Body is required" };
 
+  const sampleError = validateBodySamples(bodyText, input.bodyVariableSamples);
+  if (sampleError) return { error: sampleError };
+
   const category: WaTemplateCategorySelectable =
     input.category === "MARKETING" ? "MARKETING" : "UTILITY";
 
@@ -206,6 +238,9 @@ export async function createWhatsAppTemplate(
       header_text: input.headerText?.trim() || null,
       body_text: bodyText,
       footer_text: input.footerText?.trim() || null,
+      body_variable_samples: input.bodyVariableSamples?.length
+        ? input.bodyVariableSamples
+        : null,
       status: "draft",
       updated_at: new Date().toISOString(),
     })
@@ -217,7 +252,7 @@ export async function createWhatsAppTemplate(
       return { error: "A template with this name and language already exists" };
     }
     const hint = error.message.includes("whatsapp_message_templates")
-      ? " — Run migration 015_whatsapp_message_templates.sql in Supabase"
+      ? " — Run migration 015_whatsapp_message_templates.sql / 042_wa_template_body_samples.sql in Supabase"
       : "";
     return { error: error.message + hint };
   }
@@ -246,7 +281,7 @@ export async function updateWhatsAppTemplate(
     };
   }
 
-  const payload: Record<string, string | null> = {
+  const payload: Record<string, string | string[] | null> = {
     updated_at: new Date().toISOString(),
   };
 
@@ -276,6 +311,20 @@ export async function updateWhatsAppTemplate(
   if (input.footerText !== undefined) {
     payload.footer_text = input.footerText?.trim() || null;
   }
+  if (input.bodyVariableSamples !== undefined) {
+    payload.body_variable_samples = input.bodyVariableSamples?.length
+      ? input.bodyVariableSamples
+      : null;
+  }
+
+  const bodyForValidation =
+    (payload.body_text as string | undefined) ?? existing.body_text;
+  const samplesForValidation =
+    input.bodyVariableSamples !== undefined
+      ? input.bodyVariableSamples
+      : (existing.body_variable_samples as string[] | null);
+  const sampleError = validateBodySamples(bodyForValidation, samplesForValidation);
+  if (sampleError) return { error: sampleError };
 
   const { data, error } = await supabase
     .from("whatsapp_message_templates")
@@ -352,12 +401,19 @@ export async function submitWhatsAppTemplateToMeta(
     return { error: "Template is already awaiting Meta review" };
   }
 
+  const sampleError = validateBodySamples(
+    existing.body_text as string,
+    existing.body_variable_samples as string[] | null
+  );
+  if (sampleError) return { error: sampleError };
+
   const ctx = await getStoreWaContext(storeId);
   if ("error" in ctx) return ctx;
 
   // Resubmitting after a rejection (or any prior submit) — Meta keeps the old
   // name+language registered, so creating fresh fails with "already exists".
   // Clear the stale registration first; ignore failures (e.g. nothing to delete).
+  let didDelete = false;
   if (existing.meta_template_id || existing.status !== "draft") {
     try {
       await fetch(
@@ -367,6 +423,7 @@ export async function submitWhatsAppTemplateToMeta(
           headers: { Authorization: `Bearer ${ctx.accessToken}` },
         }
       );
+      didDelete = true;
     } catch (err) {
       console.warn("[wa-templates] pre-submit Meta delete failed:", err);
     }
@@ -380,36 +437,52 @@ export async function submitWhatsAppTemplateToMeta(
       headerText: existing.header_text,
       bodyText: existing.body_text,
       footerText: existing.footer_text,
+      bodyVariableSamples: existing.body_variable_samples as string[] | null,
     }),
   };
 
-  const res = await fetch(`${GRAPH_API}/${ctx.wabaId}/message_templates`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${ctx.accessToken}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-  const raw = await res.text();
+  // Meta's delete is async — an immediate create can land while the old
+  // registration is still being torn down. Retry a few times on that
+  // specific transient error before giving up.
+  const DELETE_SETTLE_DELAYS_MS = [3000, 6000, 12000, 15000];
+  let raw = "";
   let parsed: {
     id?: string;
     status?: string;
     error?: { message?: string; error_user_msg?: string };
   } = {};
-  try {
-    parsed = JSON.parse(raw) as typeof parsed;
-  } catch {
-    // keep empty
-  }
+  let res: Response | null = null;
 
-  if (!res.ok) {
-    const detail =
-      parsed.error?.error_user_msg ||
-      parsed.error?.message ||
-      raw;
-    return { error: `Meta rejected submit: ${detail}` };
+  if (didDelete) await sleep(1500);
+
+  for (let attempt = 0; ; attempt++) {
+    res = await fetch(`${GRAPH_API}/${ctx.wabaId}/message_templates`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ctx.accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    raw = await res.text();
+    parsed = {};
+    try {
+      parsed = JSON.parse(raw) as typeof parsed;
+    } catch {
+      // keep empty
+    }
+
+    if (res.ok) break;
+
+    const message = parsed.error?.error_user_msg || parsed.error?.message || raw;
+    const isDeleteRace = /being deleted/i.test(message);
+    if (!isDeleteRace || attempt >= DELETE_SETTLE_DELAYS_MS.length - 1) {
+      return { error: `Meta rejected submit: ${message}` };
+    }
+    await sleep(DELETE_SETTLE_DELAYS_MS[attempt]);
   }
 
   const metaStatus = parsed.status || "PENDING";

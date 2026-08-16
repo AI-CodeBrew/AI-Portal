@@ -254,6 +254,21 @@ export function extractLatestQuotedPrice(
 const VARIANT_FOLLOW_UP_PATTERN =
   /\b(color|colors|colour|colours|size|sizes|variant|variants|option|options|different|other)\b/i;
 
+/** "3 more of the same product", "same one again", "reorder", etc. — buying
+ * more of whatever was already discussed/ordered, not a new catalog search. */
+const REORDER_SAME_PRODUCT_PATTERN =
+  /\b(?:want(?:a|\s+to)?|need|order|buy|get|add|take)\b[\s\S]{0,40}\b(?:same|that|this)\s+(?:product|item|one|thing)\b|\b(?:same|that|this)\s+(?:product|item|one|thing)\b[\s\S]{0,20}\bagain\b|\breorder\b|\bre-order\b|\border\s+again\b|\bbuy\s+again\b|\b\d+\s*(?:more|extra|additional)\b[\s\S]{0,20}\b(?:of\s+)?(?:the\s+)?same\b/i;
+
+/** Returns the requested quantity (default 1) when the message is a reorder
+ * of the already-discussed product, else null. */
+function looksLikeReorderSameProductRequest(text: string): number | null {
+  const t = text.trim();
+  if (t.length < 4 || t.length > 200) return null;
+  if (!REORDER_SAME_PRODUCT_PATTERN.test(t)) return null;
+  const qtyMatch = t.match(/\b(\d{1,3})\b/);
+  return qtyMatch ? Math.max(1, parseInt(qtyMatch[1], 10)) : 1;
+}
+
 function looksLikeProductFollowUp(message: string): boolean {
   const t = message.trim();
   if (t.length < 3 || t.length > 140) return false;
@@ -911,7 +926,15 @@ export async function tryDirectProductReply(
   const sku = extractSkuFromText(latestUserMessage) || active?.sku || null;
   const title = active?.title ?? null;
 
+  const reorderQty = looksLikeReorderSameProductRequest(latestUserMessage);
+  const isReorder = reorderQty != null && Boolean(sku || title);
+
   let query = sku || extractProductSearchQuery(latestUserMessage);
+  if (isReorder) {
+    // "3 more of the same product" — resolve to the product already in
+    // chat instead of free-text search, which mangles this phrasing.
+    query = sku || title;
+  }
   if (!query && followUp) {
     query = title || sku;
   }
@@ -967,6 +990,17 @@ export async function tryDirectProductReply(
   }
 
   const product = pickBestProduct(relevant, active);
+
+  if (isReorder) {
+    const intro =
+      reorderQty && reorderQty > 1
+        ? `Sure — ${reorderQty} more of this one:`
+        : "Sure — here it is again:";
+    return {
+      reply: `${intro}\n\n${formatProductsReply([product])}`,
+      products: [product],
+    };
+  }
 
   if (followUp) {
     return {

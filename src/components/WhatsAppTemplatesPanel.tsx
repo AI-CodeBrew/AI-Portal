@@ -6,6 +6,7 @@ import type {
   WaTemplateStatus,
   WhatsAppMessageTemplate,
 } from "@/lib/whatsapp/message-templates";
+import { countBodyVariables } from "@/lib/whatsapp/template-utils";
 
 const CATEGORIES: Array<{ id: WaTemplateCategorySelectable; label: string }> = [
   { id: "UTILITY", label: "Utility (transactional)" },
@@ -67,6 +68,7 @@ function emptyForm() {
     headerText: "",
     bodyText: "",
     footerText: "",
+    bodyVariableSamples: [] as string[],
   };
 }
 
@@ -139,6 +141,7 @@ export function WhatsAppTemplatesPanel() {
       headerText: t.header_text ?? "",
       bodyText: t.body_text,
       footerText: t.footer_text ?? "",
+      bodyVariableSamples: t.body_variable_samples ?? [],
     });
     setModalOpen(true);
     setError(null);
@@ -164,6 +167,7 @@ export function WhatsAppTemplatesPanel() {
           headerText: form.headerText || null,
           bodyText: form.bodyText,
           footerText: form.footerText || null,
+          bodyVariableSamples: form.bodyVariableSamples,
         }),
       });
       const data = await res.json();
@@ -502,6 +506,45 @@ export function WhatsAppTemplatesPanel() {
                   className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
                 />
               </label>
+
+              {countBodyVariables(form.bodyText) > 0 && (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <p className="text-sm font-medium text-slate-700">
+                    Variable samples
+                  </p>
+                  <p className="mt-0.5 text-xs text-slate-500">
+                    Meta requires an example value for each variable to review
+                    the template. Never used in real sends — just for review.
+                  </p>
+                  <div className="mt-3 space-y-2">
+                    {Array.from(
+                      { length: countBodyVariables(form.bodyText) },
+                      (_, i) => i
+                    ).map((i) => (
+                      <label key={i} className="block text-sm">
+                        <span className="font-mono text-xs text-slate-500">
+                          {`{{${i + 1}}}`}
+                        </span>
+                        <input
+                          required
+                          value={form.bodyVariableSamples[i] ?? ""}
+                          onChange={(e) =>
+                            setForm((f) => {
+                              const next = [...f.bodyVariableSamples];
+                              next[i] = e.target.value;
+                              return { ...f, bodyVariableSamples: next };
+                            })
+                          }
+                          placeholder={
+                            i === 0 ? "e.g. Uzair" : "e.g. Radiant Twist Lamp"
+                          }
+                          className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                        />
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <label className="block text-sm">
                 <span className="font-medium text-slate-700">
