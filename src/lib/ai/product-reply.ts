@@ -2,10 +2,6 @@ import {
   extractSkuFromText,
   extractProductSearchQuery,
   getPrimaryProductImageUrl,
-  looksLikeCatalogBrowseMoreRequest,
-  looksLikeCatalogBrowseRequest,
-  looksLikeVagueShoppingIntent,
-  productSearchTokens,
   sampleActiveCatalogProducts,
   skuMatchKey,
   CATALOG_BROWSE_INTRO,
@@ -19,29 +15,8 @@ import {
 } from "@/lib/products/variant-titles";
 import { getShopCurrency, listShopifyCatalogProducts } from "@/lib/shopify";
 import { formatMoney } from "@/lib/currency";
-import { executeSalesTool, type AgentContext } from "./sales-tools";
-import { resolveExactDirectRoute } from "./exact-routes";
-import {
-  extractCatalogBrowseShownProducts,
-  looksLikeCatalogProductPick,
-  pickBestShownCatalogTitle,
-} from "./catalog-browse-pick";
-import {
-  extractPendingProductConfirm,
-  looksLikeProductConfirmAffirmation,
-} from "./product-confirm";
-import {
-  looksLikeBuyActiveProductIntent,
-  looksLikeCheckoutMessage,
-  isProductPitchFresh,
-} from "./checkout-parse";
-import {
-  formatVariantSelectionReply,
-  looksLikeVariantSelection,
-  matchVariantFromMessage,
-  messageMatchesListedProductOption,
-  assistantAskedWhichVariant,
-} from "./variant-selection";
+import { type AgentContext } from "./sales-tools";
+import { extractCatalogBrowseShownProducts } from "./catalog-browse-pick";
 
 export type SearchProduct = {
   title?: string;
@@ -66,49 +41,11 @@ export type SearchProduct = {
   }>;
 };
 
-const IMAGE_ASK_PATTERN =
-  /\b(image|images|photo|photos|picture|pictures|pics|pic)\b/i;
-
-const IMAGE_ASK_VERB =
-  /\b(send|share|show|see|want|need)\b.*\b(image|images|photo|photos|picture|pictures|pic)\b|\b(image|photo|picture)s?\s+(please|pls|of\s+(it|this|the\s+product))\b/i;
-
-function looksLikeImageRequest(message: string): boolean {
-  const t = message.trim();
-  if (!IMAGE_ASK_PATTERN.test(t)) return false;
-  return (
-    IMAGE_ASK_VERB.test(t) ||
-    /^(image|photo|picture|pic)s?\??$/i.test(t) ||
-    /\b(product|it|this)\b.*\b(image|photo|picture)/i.test(t)
-  );
-}
-
-function findSkuInConversation(
-  latestUserMessage: string,
-  history: Array<{ role: "user" | "assistant"; content: string }>
-): string | null {
-  const active = findActiveProductContext(history, latestUserMessage);
-  if (active?.sku) return active.sku;
-  const fromLatest = extractSkuFromText(latestUserMessage);
-  if (fromLatest) return fromLatest;
-  return null;
-}
-
 export type ActiveProductContext = {
   title: string | null;
   sku: string | null;
   ref: string | null;
 };
-
-function isUsablePitchTitle(t: string | null | undefined): t is string {
-  if (!t) return false;
-  const s = t.trim();
-  if (s.length < 4 || s.length > 80) return false;
-  if (/^(who|what|when|where|why|how|human|talk|please|product)$/i.test(s)) {
-    return false;
-  }
-  if (/show you|help you|locking in|couldn'?t find/i.test(s)) return false;
-  return /[a-zA-Z]{3,}/.test(s);
-}
 
 function isProductPitchMessage(content: string): boolean {
   return (
@@ -140,6 +77,20 @@ function isCatalogBrowseMessage(content: string): boolean {
   return (
     CATALOG_BROWSE_INTRO.test(content) || CATALOG_BROWSE_MORE_INTRO.test(content)
   );
+}
+
+const VARIANT_FOLLOW_UP_PATTERN =
+  /\b(color|colors|colour|colours|size|sizes|variant|variants|option|options|different|other)\b/i;
+
+function looksLikeProductFollowUp(message: string): boolean {
+  const t = message.trim();
+  if (t.length < 3 || t.length > 140) return false;
+  if (!VARIANT_FOLLOW_UP_PATTERN.test(t)) return false;
+  if (/^(what|which|any|how many)\b/i.test(t)) return true;
+  if (/\b(it|this|that|the product|same)\b/i.test(t)) return true;
+  if (/^(do(es)?|is there|are there|can i|have you)\b/i.test(t)) return true;
+  if (/^(color|size|variant)s?\??$/i.test(t)) return true;
+  return false;
 }
 
 /** Most recently discussed product in this chat — not older products from earlier in the session. */
@@ -190,40 +141,6 @@ export function findActiveProductContext(
   return null;
 }
 
-function pickBestProduct(
-  products: SearchProduct[],
-  active: ActiveProductContext | null
-): SearchProduct {
-  if (!products.length) {
-    throw new Error("pickBestProduct requires at least one product");
-  }
-  if (!active || products.length === 1) return products[0];
-
-  if (active.sku) {
-    const bySku = products.find(
-      (p) => p.sku?.toUpperCase() === active.sku!.toUpperCase()
-    );
-    if (bySku) return bySku;
-  }
-
-  if (active.title) {
-    const needle = active.title.toLowerCase();
-    const exact = products.find((p) => p.title?.toLowerCase() === needle);
-    if (exact) return exact;
-    const partial = products.find((p) =>
-      p.title?.toLowerCase().includes(needle)
-    );
-    if (partial) return partial;
-    const contained = products.find((p) => {
-      const t = p.title?.toLowerCase() ?? "";
-      return t.length > 2 && needle.includes(t);
-    });
-    if (contained) return contained;
-  }
-
-  return products[0];
-}
-
 /** Latest price mentioned by the assistant (incl. recovery offers). */
 export function extractLatestQuotedPrice(
   history: Array<{ role: "user" | "assistant"; content: string }>
@@ -249,147 +166,6 @@ export function extractLatestQuotedPrice(
     }
   }
   return null;
-}
-
-const VARIANT_FOLLOW_UP_PATTERN =
-  /\b(color|colors|colour|colours|size|sizes|variant|variants|option|options|different|other)\b/i;
-
-/** "3 more of the same product", "same one again", "reorder", etc. — buying
- * more of whatever was already discussed/ordered, not a new catalog search. */
-const REORDER_SAME_PRODUCT_PATTERN =
-  /\b(?:want(?:a|\s+to)?|need|order|buy|get|add|take)\b[\s\S]{0,40}\b(?:same|that|this)\s+(?:product|item|one|thing)\b|\b(?:same|that|this)\s+(?:product|item|one|thing)\b[\s\S]{0,20}\bagain\b|\breorder\b|\bre-order\b|\border\s+again\b|\bbuy\s+again\b|\b\d+\s*(?:more|extra|additional)\b[\s\S]{0,20}\b(?:of\s+)?(?:the\s+)?same\b/i;
-
-/** Returns the requested quantity (default 1) when the message is a reorder
- * of the already-discussed product, else null. */
-function looksLikeReorderSameProductRequest(text: string): number | null {
-  const t = text.trim();
-  if (t.length < 4 || t.length > 200) return null;
-  if (!REORDER_SAME_PRODUCT_PATTERN.test(t)) return null;
-  const qtyMatch = t.match(/\b(\d{1,3})\b/);
-  return qtyMatch ? Math.max(1, parseInt(qtyMatch[1], 10)) : 1;
-}
-
-function looksLikeProductFollowUp(message: string): boolean {
-  const t = message.trim();
-  if (t.length < 3 || t.length > 140) return false;
-  if (!VARIANT_FOLLOW_UP_PATTERN.test(t)) return false;
-  if (/^(what|which|any|how many)\b/i.test(t)) return true;
-  if (/\b(it|this|that|the product|same)\b/i.test(t)) return true;
-  if (/^(do(es)?|is there|are there|can i|have you)\b/i.test(t)) return true;
-  if (/^(color|size|variant)s?\??$/i.test(t)) return true;
-  return false;
-}
-
-function extractRefFromHistory(
-  history: Array<{ role: "user" | "assistant"; content: string }>
-): string | null {
-  return findActiveProductContext(history)?.ref ?? null;
-}
-
-function productDiscussedInHistory(
-  history: Array<{ role: "user" | "assistant"; content: string }>
-): boolean {
-  return history.some(
-    (m) =>
-      m.role === "assistant" &&
-      (/\[Ref:\s*[^\]]+\]/i.test(m.content) ||
-        /(?:—|-)\s*(?:Rs\.?|PKR|AED|\$|€)/i.test(m.content) ||
-        /\b(in stock|out of stock)\b/i.test(m.content))
-  );
-}
-
-/** Answer variant/color/size questions about the product already in chat. */
-export function formatProductFollowUpReply(
-  product: SearchProduct,
-  userMessage: string,
-  history: Array<{ role: "user" | "assistant"; content: string }> = [],
-  active?: ActiveProductContext | null
-): string {
-  const ctx = active ?? findActiveProductContext(history, userMessage);
-  const askColor = /\b(color|colors|colour|colours)\b/i.test(userMessage);
-  const askSize = /\b(size|sizes)\b/i.test(userMessage);
-
-  const options = product.options ?? [];
-  const realVariants = meaningfulVariants(product);
-  const hasVariants = productHasSelectableVariants(product);
-  const refId =
-    !hasVariants
-      ? ctx?.ref ||
-        realVariants[0]?.id ||
-        product.variants?.[0]?.id ||
-        null
-      : null;
-
-  const title = product.title || ctx?.title || "this product";
-  const prefix = refId ? `[Ref: ${refId}]\n` : "";
-  const imagePrefix = productImageLine(product);
-
-  if (!hasVariants) {
-    return `${imagePrefix}${prefix}Just one version for ${title} — no extra options 👍`;
-  }
-
-  const colorOption = options.find((o) =>
-    /color|colour/i.test(o.name ?? "")
-  );
-  const sizeOption = options.find((o) => /size/i.test(o.name ?? ""));
-
-  if (askColor) {
-    if (colorOption?.values?.length) {
-      const vals = colorOption.values.slice(0, 8).join(", ");
-      return `${prefix}Yes — ${title} comes in: ${vals}.\nWhich color do you want?`;
-    }
-    const fromVariants = [
-      ...new Set(
-        realVariants
-          .map(
-            (v) =>
-              v.option_values?.Color ||
-              v.option_values?.Colour ||
-              v.option_values?.color ||
-              v.option_values?.colour
-          )
-          .filter(Boolean)
-      ),
-    ] as string[];
-    if (fromVariants.length > 1) {
-      return `${prefix}Color options: ${fromVariants.join(", ")}.\nWhich one?`;
-    }
-    return `${prefix}This one only comes in a single version — no color options for ${title} 👍`;
-  }
-
-  if (askSize) {
-    if (sizeOption?.values?.length) {
-      return `${prefix}Sizes: ${sizeOption.values.slice(0, 8).join(", ")}.\nWhich size?`;
-    }
-    const fromVariants = [
-      ...new Set(
-        realVariants
-          .map((v) => v.option_values?.Size || v.option_values?.size)
-          .filter(Boolean)
-      ),
-    ] as string[];
-    if (fromVariants.length > 1) {
-      return `${prefix}Sizes: ${fromVariants.join(", ")}.\nWhich size?`;
-    }
-    return `${prefix}Just one size for ${title} — no size options 👍`;
-  }
-
-  if (options.length) {
-    const lines = options
-      .slice(0, 4)
-      .map((o) => `${o.name}: ${(o.values ?? []).slice(0, 6).join(", ")}`);
-    return `${imagePrefix}${prefix}${lines.join("\n")}\n\nWhich option do you need?`;
-  }
-
-  if (realVariants.length > 1) {
-    const lines = realVariants.slice(0, 6).map((v) => {
-      const price = v.price_formatted ? ` — ${v.price_formatted}` : "";
-      return `• ${v.title}${price}`;
-    });
-    return `${imagePrefix}${prefix}Options:\n${lines.join("\n")}\n\nWhich one?`;
-  }
-
-  return `${imagePrefix}${prefix}Which option do you need?`;
 }
 
 function productImageLine(product: SearchProduct): string {
@@ -526,12 +302,6 @@ function formatSingleProductBlock(p: SearchProduct): string {
   return `${imageLine}${body}`;
 }
 
-function findProductTitleInHistory(
-  history: Array<{ role: "user" | "assistant"; content: string }>
-): string | null {
-  return findActiveProductContext(history)?.title ?? null;
-}
-
 /** Format catalog hits into a short WhatsApp product answer. */
 export function formatProductsReply(products: SearchProduct[]): string {
   if (!products.length) {
@@ -555,10 +325,6 @@ function formatCatalogBrowseReply(products: SearchProduct[]): string {
       : productCloseLine(products[0]!);
   const moreLine = "Say *more* or *other* to see different products.";
   const body = blocks.join("\n\n");
-
-  if (products.length > 1) {
-    return `${body}\n\n${pickLine}\n\n${moreLine}`;
-  }
 
   return `${body}\n\n${pickLine}\n\n${moreLine}`;
 }
@@ -684,412 +450,4 @@ export async function buildCatalogBrowseReplyForAgent(
     products,
     reply: `${intro}\n\n${formatCatalogBrowseReply(products)}`,
   };
-}
-
-/** Show catalog picks when the customer asks what they can buy; paginate on "more/other". */
-export async function tryDirectCatalogBrowseReply(
-  ctx: AgentContext,
-  latestUserMessage: string,
-  history: Array<{ role: "user" | "assistant"; content: string }> = []
-): Promise<string | null> {
-  const isMore = looksLikeCatalogBrowseMoreRequest(latestUserMessage, history);
-  const isBrowse =
-    looksLikeCatalogBrowseRequest(latestUserMessage) ||
-    looksLikeVagueShoppingIntent(latestUserMessage);
-  if (!isBrowse && !isMore) return null;
-
-  const built = await buildCatalogBrowseReplyForAgent(ctx, history, { isMore });
-  if (!built) {
-    return "Our catalog is being updated — send a product name or SKU and I'll look it up for you.";
-  }
-
-  const last = findActiveProductContext(history, latestUserMessage);
-  if (
-    !isMore &&
-    last?.title &&
-    isUsablePitchTitle(last.title) &&
-    !isProductPitchFresh(history)
-  ) {
-    return `Last time we looked at *${last.title}* — want that again, or something new?\n\n${built.reply}`;
-  }
-
-  return built.reply;
-}
-
-/** Returning after a gap: "I want to buy it" should confirm, not auto-lock last night's SKU. */
-export function tryStaleProductNudgeReply(
-  latestUserMessage: string,
-  history: Array<{ role: "user" | "assistant"; content: string }> = []
-): string | null {
-  if (!looksLikeBuyActiveProductIntent(latestUserMessage)) return null;
-  if (isProductPitchFresh(history)) return null;
-  const last = findActiveProductContext(history, latestUserMessage);
-  if (last?.title && isUsablePitchTitle(last.title)) {
-    return `Last time we were on *${last.title}*. Still that one, or something else? Reply with the name or say "show me products".`;
-  }
-  return `What would you like to buy? Send a product name or say "show me products".`;
-}
-
-/** Customer picked a product from a recent catalog browse reply. */
-export async function tryDirectCatalogProductPickReply(
-  ctx: AgentContext,
-  latestUserMessage: string,
-  history: Array<{ role: "user" | "assistant"; content: string }> = []
-): Promise<string | null> {
-  if (looksLikeCheckoutMessage(latestUserMessage, history)) return null;
-  if (looksLikeVariantSelection(latestUserMessage, history)) return null;
-  if (!looksLikeCatalogProductPick(latestUserMessage, history)) return null;
-
-  const { titles } = extractCatalogBrowseShownProducts(history);
-  const query =
-    pickBestShownCatalogTitle(latestUserMessage, titles) ||
-    extractProductSearchQuery(latestUserMessage);
-  if (!query) return null;
-
-  const { result } = await executeSalesTool(
-    "search_products",
-    { query },
-    ctx
-  );
-  const products = (
-    result && typeof result === "object" && "products" in result
-      ? (result as { products?: SearchProduct[] }).products
-      : []
-  ) as SearchProduct[];
-
-  const relevant = filterRelevantProducts(products, query);
-  if (!relevant.length) {
-    return formatProductNotFoundReply(query);
-  }
-
-  const product = pickBestProduct(relevant, {
-    title: query,
-    sku: null,
-    ref: null,
-  });
-
-  return `${formatSingleProductBlock(product)}\n\n${productCloseLine(product)}`;
-}
-
-function formatProductNotFoundReply(query: string): string {
-  const label = query.trim() || "that";
-  if (
-    /^(something|anything|else|other|it|this|that)$/i.test(label) ||
-    /\b(something|anything)\s+else\b/i.test(label)
-  ) {
-    return `No problem — what are you looking for instead? Send a product name or say "show me products".`;
-  }
-  return [
-    `I couldn't find *${label}* in our catalog.`,
-    `Try a different spelling, another product name, or send a SKU and I'll look again.`,
-  ].join("\n");
-}
-
-function productSkuMatches(product: SearchProduct, skuHint: string): boolean {
-  const key = skuMatchKey(skuHint);
-  if (!key) return false;
-  if (product.sku && skuMatchKey(product.sku) === key) return true;
-  return (product.variants ?? []).some(
-    (v) => v.sku && skuMatchKey(v.sku) === key
-  );
-}
-
-/** Drop fuzzy catalog noise when nothing actually matches the customer's words. */
-function productMatchesQuery(product: SearchProduct, query: string): boolean {
-  const skuHint = extractSkuFromText(query);
-  if (skuHint && productSkuMatches(product, skuHint)) return true;
-
-  const tokens = productSearchTokens(query);
-  if (!tokens.length) return true;
-
-  const hay = skuMatchKey(
-    `${product.title ?? ""} ${product.sku ?? ""} ${product.description ?? ""}`
-  );
-
-  const hits = tokens.filter((token) => {
-    const t = skuMatchKey(token);
-    return t.length >= 2 && hay.includes(t);
-  });
-
-  if (tokens.some((t) => t.length >= 4 && hay.includes(skuMatchKey(t)))) {
-    return true;
-  }
-
-  return hits.length >= Math.max(1, Math.ceil(tokens.length * 0.5));
-}
-
-function filterRelevantProducts(
-  products: SearchProduct[],
-  query: string
-): SearchProduct[] {
-  const skuHint = extractSkuFromText(query);
-  if (skuHint) {
-    const exact = products.filter((p) => productSkuMatches(p, skuHint));
-    if (exact.length) return exact;
-  }
-  return products.filter((p) => productMatchesQuery(p, query));
-}
-
-function shouldTryDirectProductLookup(
-  message: string,
-  history: Array<{ role: "user" | "assistant"; content: string }> = []
-): boolean {
-  if (looksLikeCheckoutMessage(message, history)) return false;
-  if (looksLikeBuyActiveProductIntent(message)) return false;
-  if (looksLikeVariantSelection(message, history)) return false;
-
-  const route = resolveExactDirectRoute(message, history);
-  return (
-    route === "sku_search" ||
-    route === "named_product_search" ||
-    route === "catalog_product_pick"
-  );
-}
-
-/** True when the message is asking about a product (used to skip generic opening messages). */
-export function looksLikeProductInquiry(
-  message: string,
-  history: Array<{ role: "user" | "assistant"; content: string }> = []
-): boolean {
-  return shouldTryDirectProductLookup(message, history);
-}
-
-/** User chose a color/size variant for a product already in the chat. */
-export async function tryDirectVariantSelectionReply(
-  ctx: AgentContext,
-  latestUserMessage: string,
-  history: Array<{ role: "user" | "assistant"; content: string }>
-): Promise<string | null> {
-  if (!looksLikeVariantSelection(latestUserMessage, history)) return null;
-
-  const active = findActiveProductContext(history, latestUserMessage);
-  const query = active?.sku || active?.title;
-  if (!query) return null;
-
-  const { result } = await executeSalesTool(
-    "search_products",
-    { query },
-    ctx
-  );
-  const products = (
-    result && typeof result === "object" && "products" in result
-      ? (result as { products?: SearchProduct[] }).products
-      : []
-  ) as SearchProduct[];
-
-  if (!products.length) return null;
-
-  const product = pickBestProduct(products, active);
-  const hasVariants =
-    productHasSelectableVariants(product) ||
-    messageMatchesListedProductOption(latestUserMessage, history) ||
-    assistantAskedWhichVariant(history);
-
-  if (!hasVariants) return null;
-
-  const variant = matchVariantFromMessage(product, latestUserMessage);
-
-  if (!variant?.id) {
-    const opts = (product.options ?? [])
-      .map((o) => `${o.name}: ${(o.values ?? []).slice(0, 8).join(", ")}`)
-      .join("\n");
-    const title = product.title ?? "this product";
-    return opts
-      ? `Which option for ${title}?\n${opts}\nReply with the color or size you want.`
-      : `Which version of ${title} do you want? Reply with the color or size.`;
-  }
-
-  return formatVariantSelectionReply(product, variant, ctx.storeCurrency);
-}
-
-/**
- * Look up catalog by SKU or product name (full/partial) and answer with details + variants.
- * Uses chat history for follow-ups like "does it have different colors?"
- */
-export async function tryDirectProductReply(
-  ctx: AgentContext,
-  latestUserMessage: string,
-  history: Array<{ role: "user" | "assistant"; content: string }> = []
-): Promise<{ reply: string; products: SearchProduct[] } | null> {
-  if (looksLikeCheckoutMessage(latestUserMessage, history)) return null;
-  if (looksLikeVariantSelection(latestUserMessage, history)) return null;
-
-  const followUp =
-    looksLikeProductFollowUp(latestUserMessage) &&
-    productDiscussedInHistory(history);
-
-  if (!shouldTryDirectProductLookup(latestUserMessage, history) && !followUp) {
-    return null;
-  }
-
-  const active = findActiveProductContext(history, latestUserMessage);
-  const sku = extractSkuFromText(latestUserMessage) || active?.sku || null;
-  const title = active?.title ?? null;
-
-  const reorderQty = looksLikeReorderSameProductRequest(latestUserMessage);
-  const isReorder = reorderQty != null && Boolean(sku || title);
-
-  let query = sku || extractProductSearchQuery(latestUserMessage);
-  if (isReorder) {
-    // "3 more of the same product" — resolve to the product already in
-    // chat instead of free-text search, which mangles this phrasing.
-    query = sku || title;
-  }
-  if (!query && followUp) {
-    query = title || sku;
-  }
-  if (!query) return null;
-
-  const { result } = await executeSalesTool(
-    "search_products",
-    { query },
-    ctx
-  );
-  const products = (
-    result && typeof result === "object" && "products" in result
-      ? (result as { products?: SearchProduct[] }).products
-      : []
-  ) as SearchProduct[];
-
-  if (!products?.length) {
-    if (sku) {
-      return {
-        reply: `I couldn't find a product with SKU ${sku}. Please double-check the code or tell me the product name.`,
-        products: [],
-      };
-    }
-    if (followUp && title) {
-      return {
-        reply:
-          "I'm not seeing that product in the catalog anymore — send the name or SKU again?",
-        products: [],
-      };
-    }
-    return {
-      reply: formatProductNotFoundReply(query),
-      products: [],
-    };
-  }
-
-  const relevant = filterRelevantProducts(products, query);
-  if (!relevant.length) {
-    if (looksLikeVariantSelection(latestUserMessage, history) && products.length) {
-      const product = pickBestProduct(products, active);
-      const variant = matchVariantFromMessage(product, latestUserMessage);
-      if (variant?.id) {
-        return {
-          reply: formatVariantSelectionReply(product, variant, ctx.storeCurrency),
-          products: [product],
-        };
-      }
-    }
-    return {
-      reply: formatProductNotFoundReply(query),
-      products: [],
-    };
-  }
-
-  const product = pickBestProduct(relevant, active);
-
-  if (isReorder) {
-    const intro =
-      reorderQty && reorderQty > 1
-        ? `Sure — ${reorderQty} more of this one:`
-        : "Sure — here it is again:";
-    return {
-      reply: `${intro}\n\n${formatProductsReply([product])}`,
-      products: [product],
-    };
-  }
-
-  if (followUp) {
-    return {
-      reply: formatProductFollowUpReply(
-        product,
-        latestUserMessage,
-        history,
-        active
-      ),
-      products: [product],
-    };
-  }
-
-  return { reply: formatProductsReply([product]), products: [product] };
-}
-
-/** Re-send product photo from catalog when customer asks for images. */
-export async function tryDirectProductImageReply(
-  ctx: AgentContext,
-  latestUserMessage: string,
-  history: Array<{ role: "user" | "assistant"; content: string }>
-): Promise<string | null> {
-  if (!looksLikeImageRequest(latestUserMessage)) return null;
-
-  const active = findActiveProductContext(history, latestUserMessage);
-  const query =
-    extractSkuFromText(latestUserMessage) || active?.title || active?.sku;
-  if (!query) return null;
-
-  const { result } = await executeSalesTool(
-    "search_products",
-    { query },
-    ctx
-  );
-  const products = (
-    result && typeof result === "object" && "products" in result
-      ? (result as { products?: SearchProduct[] }).products
-      : []
-  ) as SearchProduct[];
-
-  if (!products.length) return null;
-
-  const product = pickBestProduct(products, active);
-  const imageUrl = getPrimaryProductImageUrl(product);
-  const quoted = extractLatestQuotedPrice(history);
-  const label = product.title || active?.title || "this one";
-
-  if (!imageUrl) {
-    return quoted
-      ? `Don't have a photo handy for ${label} right now — but your price is still ${quoted} 👍`
-      : null;
-  }
-
-  const caption = quoted
-    ? `Here's ${label} — still at ${quoted} for you 👍`
-    : `Here's ${label} 👍`;
-
-  return `[Image: ${imageUrl}]\n${caption}`;
-}
-
-/** @deprecated use tryDirectProductReply */
-export async function tryDirectSkuProductReply(
-  ctx: AgentContext,
-  latestUserMessage: string
-): Promise<{ reply: string; products: SearchProduct[] } | null> {
-  return tryDirectProductReply(ctx, latestUserMessage);
-}
-
-/** Customer said yes after "Did you mean *Product*?" — show that product. */
-export async function tryDirectProductConfirmReply(
-  ctx: AgentContext,
-  latestUserMessage: string,
-  history: Array<{ role: "user" | "assistant"; content: string }> = []
-): Promise<string | null> {
-  if (!looksLikeProductConfirmAffirmation(latestUserMessage, history)) {
-    return null;
-  }
-  const pending = extractPendingProductConfirm(history);
-  if (!pending?.product) return null;
-
-  const query = pending.variant
-    ? `${pending.product} ${pending.variant}`
-    : pending.product;
-
-  // Force named lookup phrasing so shouldTryDirectProductLookup accepts it
-  const direct = await tryDirectProductReply(
-    ctx,
-    `tell me about ${query}`,
-    history
-  );
-  return direct?.reply ?? null;
 }

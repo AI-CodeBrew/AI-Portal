@@ -10,7 +10,6 @@ import {
   extractSkuFromText,
   extractProductSearchQuery,
 } from "@/lib/products/products-service";
-import { pickInitialCatalogTool } from "./shopping-intent";
 import {
   DEFAULT_GEMINI_MODEL,
   normalizeGeminiModel,
@@ -190,7 +189,6 @@ export async function runSalesAgentWithGemini(
   const skuHint = extractSkuFromText(latestUser);
   const nameHint = extractProductSearchQuery(latestUser);
   const searchHint = skuHint || nameHint;
-  const initialTool = pickInitialCatalogTool(latestUser, trimmedHistory);
 
   const systemPrompt = await buildSalesSystemPromptWithExamples({
     storeId: ctx.store.id,
@@ -226,7 +224,6 @@ export async function runSalesAgentWithGemini(
       model,
       systemPrompt,
       contents,
-      forceToolName: i === 0 ? (initialTool ?? undefined) : undefined,
     });
 
     const candidate = response.candidates?.[0];

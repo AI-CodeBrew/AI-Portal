@@ -8,13 +8,14 @@ import {
   loadCustomerSalesProfile,
   mergeCustomerSalesProfile,
 } from "./customer-profile";
-import { recallMemories } from "./mem0-client";
-import { buildSalesSessionKey, isMemoryEnabled } from "./session-key";
+import { buildSalesSessionKey } from "./session-key";
 import { MEMORY_DEFAULTS, type AgentMemoryContext } from "./types";
 
 /**
  * Load memory layers for one turn.
- * Returns profile + rolling summary + Mem0 recall.
+ * Returns profile + rolling summary + a session key for the on-demand
+ * recall_customer_memory tool (Mem0 vector search only runs when the LLM
+ * decides it's needed, not eagerly here).
  * Verbatim history is resolved separately via `resolveAgentChatHistory`
  * (full thread until ~70% budget, then summary + last 20).
  */
@@ -28,12 +29,7 @@ export async function buildAgentMemoryContext(params: {
   storeHistoryLimit?: number | null;
   rollingSummaryOverride?: string | null;
 }): Promise<AgentMemoryContext> {
-  const {
-    storeId,
-    customerPhone,
-    conversationId,
-    latestUserMessage,
-  } = params;
+  const { storeId, customerPhone, conversationId } = params;
 
   const sessionKey = buildSalesSessionKey(storeId, customerPhone);
   const historyLimit =
@@ -45,15 +41,6 @@ export async function buildAgentMemoryContext(params: {
     loadCustomerSalesProfile(storeId, customerPhone),
     loadConversationSummary(conversationId),
   ]);
-
-  let recalled: AgentMemoryContext["recalledMemories"] = [];
-  if (
-    isMemoryEnabled() &&
-    latestUserMessage &&
-    latestUserMessage.trim()
-  ) {
-    recalled = await recallMemories(sessionKey, latestUserMessage, 5);
-  }
 
   const rollingSummary =
     params.rollingSummaryOverride !== undefined
@@ -67,7 +54,6 @@ export async function buildAgentMemoryContext(params: {
     profile: profileData.profile,
     funnelStage: profileData.funnelStage,
     language: profileData.language,
-    recalledMemories: recalled,
     historyLimit,
   };
 }

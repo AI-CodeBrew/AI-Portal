@@ -332,7 +332,7 @@ async function main() {
   });
   pass(
     "memory-context",
-    `session=${memoryCtx.sessionKey} summary=${Boolean(memoryCtx.rollingSummary)} profile=${memoryCtx.profile?.name} recalled=${memoryCtx.recalledMemories.length}`
+    `session=${memoryCtx.sessionKey} summary=${Boolean(memoryCtx.rollingSummary)} profile=${memoryCtx.profile?.name}`
   );
 
   const blocks = formatMemoryPromptBlocks(memoryCtx);

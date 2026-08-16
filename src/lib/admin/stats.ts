@@ -35,6 +35,13 @@ export interface AdminPlatformStats {
     conversionRate: AdminPeriodMetric;
     revenue: AdminPeriodMetric & { currency: string };
   };
+  /** Full breakdown when orders span more than one currency — the single
+   * `period.revenue` figure above only covers the largest currency group. */
+  revenueByCurrency: Array<{
+    currency: string;
+    current: number;
+    previous: number;
+  }>;
   chart: AdminDayPoint[];
   aiPerformance: {
     successRate: number;
@@ -303,16 +310,48 @@ export async function getAdminPlatformStats(): Promise<AdminPlatformStats> {
   const confirmedCurrent = confirmedCurrentRes.count ?? 0;
   const confirmedPrevious = confirmedPreviousRes.count ?? 0;
 
-  const sumRevenue = (
-    rows: Array<{ total: number | null; currency: string | null }> | null
-  ) => (rows ?? []).reduce((sum, row) => sum + Number(row.total ?? 0), 0);
+  // Platform-wide orders legitimately span multiple stores, each potentially
+  // on a different currency — summing raw totals across currencies produces
+  // a meaningless number, so revenue is grouped by currency instead of
+  // collapsed into one figure with a guessed label.
+  type RevenueRow = { total: number | null; currency: string | null };
+  const groupRevenueByCurrency = (
+    rows: RevenueRow[] | null
+  ): Map<string, number> => {
+    const byCurrency = new Map<string, number>();
+    for (const row of rows ?? []) {
+      const code = (row.currency || "UNKNOWN").toUpperCase();
+      byCurrency.set(code, (byCurrency.get(code) ?? 0) + Number(row.total ?? 0));
+    }
+    return byCurrency;
+  };
 
-  const revenueCurrent = sumRevenue(revenueCurrentRes.data);
-  const revenuePrevious = sumRevenue(revenuePreviousRes.data);
-  const currencyGuess =
-    revenueCurrentRes.data?.find((r) => r.currency)?.currency ||
-    revenuePreviousRes.data?.find((r) => r.currency)?.currency ||
-    "AED";
+  const currentByCurrency = groupRevenueByCurrency(revenueCurrentRes.data);
+  const previousByCurrency = groupRevenueByCurrency(revenuePreviousRes.data);
+  const allCurrencies = new Set([
+    ...currentByCurrency.keys(),
+    ...previousByCurrency.keys(),
+  ]);
+
+  const revenueByCurrency = Array.from(allCurrencies)
+    .map((currency) => ({
+      currency,
+      current: currentByCurrency.get(currency) ?? 0,
+      previous: previousByCurrency.get(currency) ?? 0,
+    }))
+    .sort((a, b) => b.current - a.current);
+
+  // Primary card keeps showing one number for the largest currency group —
+  // it's exact for that currency (not a cross-currency sum), and
+  // revenueByCurrency below carries the rest.
+  const primaryRevenue = revenueByCurrency[0] ?? {
+    currency: "AED",
+    current: 0,
+    previous: 0,
+  };
+  const revenueCurrent = primaryRevenue.current;
+  const revenuePrevious = primaryRevenue.previous;
+  const currencyGuess = primaryRevenue.currency;
 
   const conversionCurrent =
     convCurrent > 0 ? (ordersCurrent / convCurrent) * 100 : 0;
@@ -376,6 +415,7 @@ export async function getAdminPlatformStats(): Promise<AdminPlatformStats> {
         currency: currencyGuess,
       },
     },
+    revenueByCurrency,
     chart,
     aiPerformance: {
       successRate,

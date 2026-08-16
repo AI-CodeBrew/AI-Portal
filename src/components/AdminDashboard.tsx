@@ -132,6 +132,15 @@ export function AdminDashboard() {
   const hasTraffic = stats.chart.some(
     (p) => p.conversations > 0 || p.orders > 0
   );
+  const otherCurrencies = stats.revenueByCurrency.filter(
+    (r) => r.currency !== currency && r.current > 0
+  );
+  const revenueSub =
+    otherCurrencies.length > 0
+      ? `+ ${otherCurrencies
+          .map((r) => formatMoney(r.current, r.currency))
+          .join(", ")} (shown separately — different currency)`
+      : undefined;
 
   return (
     <div className="space-y-6">
@@ -166,6 +175,7 @@ export function AdminDashboard() {
         <StatCard
           label={`Revenue (${currency})`}
           value={formatMoney(stats.period.revenue.current, currency)}
+          sub={revenueSub}
           metric={stats.period.revenue}
           href="/admin/orders"
           accent="amber"

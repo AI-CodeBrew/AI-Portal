@@ -4,6 +4,7 @@ import { DEFAULT_ORDER_TEMPLATE_ID } from "@/lib/ai/ai-settings-types";
 import { isLlmProviderConfigured } from "@/lib/platform/llm-settings";
 import { getStoreOrderTotals } from "@/lib/orders/store-order-totals";
 import { countStoreProducts } from "@/lib/products/products-service";
+import { getEffectiveStoreCurrency } from "@/lib/currency";
 
 /** Hide leftover Shopify-synced orders when the store is disconnected. */
 function scopeOrdersQuery<T>(query: T, shopifyConnected: boolean): T {
@@ -200,6 +201,11 @@ export async function getResellerDashboardStats(
   const currentStartIso = currentStart.toISOString();
   const previousStartIso = previousStart.toISOString();
   const previousEndIso = previousEnd.toISOString();
+
+  // Authoritative store currency — revenue is only summed for orders that
+  // actually match it, so stray mismatched-currency rows (e.g. from before
+  // the store-wide currency setting existed) don't silently corrupt the total.
+  const effectiveCurrency = await getEffectiveStoreCurrency(storeId);
 
   // Parallelize store + ad links (was sequential ~2 round-trips)
   const [storeRes, adLinksQuery] = await Promise.all([
@@ -559,19 +565,20 @@ export async function getResellerDashboardStats(
   const confirmedCurrent = confirmedCurrentRes.count ?? 0;
   const confirmedPrevious = confirmedPreviousRes.count ?? 0;
 
+  // Only sum orders in the store's actual currency — mixing currencies in one
+  // total produces a meaningless number, so a stray mismatched row (legacy
+  // data) is excluded rather than silently added in as if it were the same unit.
   const sumRevenue = (
     rows: Array<{ total: number | null; currency: string | null }> | null
   ) =>
-    (rows ?? []).reduce((sum, row) => sum + Number(row.total ?? 0), 0);
+    (rows ?? [])
+      .filter((row) => !row.currency || row.currency === effectiveCurrency)
+      .reduce((sum, row) => sum + Number(row.total ?? 0), 0);
 
   const revenueCurrent = sumRevenue(revenueCurrentRes.data);
   const revenuePrevious = sumRevenue(revenuePreviousRes.data);
 
-  const currencyGuess =
-    revenueCurrentRes.data?.find((r) => r.currency)?.currency ||
-    revenuePreviousRes.data?.find((r) => r.currency)?.currency ||
-    adRows.find((r) => r.currency)?.currency ||
-    "AED";
+  const currencyGuess = effectiveCurrency;
 
   const conversionCurrent =
     convCurrent > 0 ? (ordersCurrent / convCurrent) * 100 : 0;
@@ -598,6 +605,10 @@ export async function getResellerDashboardStats(
   >();
 
   for (const order of topOrdersRes.data ?? []) {
+    // Skip orders in a different currency than the store's — their totals
+    // aren't comparable to the rest and would corrupt the revenue sum.
+    if (order.currency && order.currency !== effectiveCurrency) continue;
+
     const items = (order.items as Array<{
       title?: string;
       quantity?: number;

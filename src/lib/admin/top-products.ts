@@ -65,7 +65,9 @@ export async function getAdminTopProducts(
       };
       const title = (item.title || item.name || "Untitled").trim();
       if (!title) continue;
-      const key = title.toLowerCase();
+      // Key by title + currency — the same product name sold in two
+      // currencies must not have its revenue summed into one number.
+      const key = `${title.toLowerCase()}::${currency ?? ""}`;
       const qty = Math.max(1, Number(item.quantity) || 1);
       const price = Number(item.price) || 0;
       const lineRevenue = price * qty;
@@ -84,7 +86,6 @@ export async function getAdminTopProducts(
       }
       agg.unitsSold += qty;
       agg.revenue += lineRevenue;
-      if (currency && !agg.currency) agg.currency = currency;
       if (storeId) agg.stores.set(storeId, resellerLabel);
       if (!seenTitlesInOrder.has(key)) {
         agg.orderCount += 1;

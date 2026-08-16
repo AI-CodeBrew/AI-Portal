@@ -47,7 +47,6 @@ export type AgentMemoryContext = {
   profile: CustomerSalesProfile | null;
   funnelStage: string | null;
   language: string | null;
-  recalledMemories: RecalledMemory[];
   /** Effective verbatim history limit for this turn */
   historyLimit: number;
 };

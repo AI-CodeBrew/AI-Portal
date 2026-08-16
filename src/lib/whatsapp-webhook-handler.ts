@@ -2,26 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { verifyHubSignature256 } from "@/lib/crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { runSalesAgent, isSalesAgentConfigured } from "@/lib/ai/run-sales-agent";
-import type { AgentContext } from "@/lib/ai/sales-tools";
-import {
-  tryDirectProductImageReply,
-  tryDirectProductReply,
-  tryDirectProductConfirmReply,
-  looksLikeProductInquiry,
-  tryDirectVariantSelectionReply,
-} from "@/lib/ai/product-reply";
-import { tryDirectPolicyReply } from "@/lib/ai/policy-reply";
-import { tryDirectCheckoutReply } from "@/lib/ai/checkout-reply";
-import { looksLikeCheckoutMessage } from "@/lib/ai/checkout-parse";
-import {
-  looksLikeVariantSelection,
-  formatVariantOptionReprompt,
-} from "@/lib/ai/variant-selection";
-import {
-  tryDirectSalesRecoveryReply,
-  looksLikeOrderDecline,
-} from "@/lib/ai/sales-recovery";
-import { getRecentChatHistory, getStoreChatContextLimits } from "@/lib/ai/chat-history";
+import { getRecentChatHistory } from "@/lib/ai/chat-history";
 import {
   getAiSessionResetAt,
   resolveAiContextSinceIso,
@@ -51,7 +32,7 @@ import {
 } from "@/lib/ads/ad-links-service";
 import { parseAdRefFromMessage } from "@/lib/ads/whatsapp-ad-links";
 import { extractOutboundMedia } from "@/lib/ai/message-markers";
-import { buildCasualGreetingReply, tryDirectOffTopicReply, tryDirectGreetingReply, looksLikeExactGreetingOnly } from "@/lib/ai/greeting-reply";
+import { looksLikeExactGreetingOnly } from "@/lib/ai/greeting-reply";
 import {
   getStoreWhatsAppCredentials,
   resolveMetaSecret,
@@ -137,72 +118,8 @@ async function sendReply(
   }
 }
 
-async function resolveContextualDirectReply(
-  agentCtx: AgentContext,
-  inboundText: string,
-  chatHistory: Array<{ role: "user" | "assistant"; content: string }>,
-  greetingCtx: AgentContext
-): Promise<string> {
-  const imageReply = await tryDirectProductImageReply(
-    agentCtx,
-    inboundText,
-    chatHistory
-  );
-  if (imageReply) return imageReply;
-
-  if (looksLikeOrderDecline(inboundText)) {
-    const recovery = await tryDirectSalesRecoveryReply(
-      agentCtx,
-      inboundText,
-      chatHistory
-    );
-    if (recovery) return recovery;
-  }
-
-  if (looksLikeCheckoutMessage(inboundText, chatHistory)) {
-    const checkout = await tryDirectCheckoutReply(
-      agentCtx,
-      inboundText,
-      chatHistory
-    );
-    if (checkout) return checkout;
-  }
-
-  if (looksLikeVariantSelection(inboundText, chatHistory)) {
-    const variant = await tryDirectVariantSelectionReply(
-      agentCtx,
-      inboundText,
-      chatHistory
-    );
-    if (variant) return variant;
-    const reprompt = formatVariantOptionReprompt(chatHistory);
-    if (reprompt) return reprompt;
-  }
-
-  const confirmed = await tryDirectProductConfirmReply(
-    agentCtx,
-    inboundText,
-    chatHistory
-  );
-  if (confirmed) return confirmed;
-
-  const policy = await tryDirectPolicyReply(agentCtx, inboundText);
-  if (policy) return policy;
-
-  const greeting = tryDirectGreetingReply(
-    greetingCtx,
-    inboundText,
-    chatHistory
-  );
-  if (greeting) return greeting;
-
-  const direct = await tryDirectProductReply(agentCtx, inboundText, chatHistory);
-  return (
-    direct?.reply ??
-    tryDirectOffTopicReply(greetingCtx, inboundText) ??
-    buildCasualGreetingReply(greetingCtx)
-  );
-}
+const AGENT_UNAVAILABLE_REPLY =
+  "Sorry, I'm having a bit of trouble — a team member will jump in shortly.";
 
 export async function handleWhatsAppWebhookVerify(
   request: NextRequest,
@@ -523,7 +440,7 @@ export async function handleWhatsAppWebhookMessage(
           );
 
           let openingSentThisTurn = false;
-          if (isNewConversation && !looksLikeProductInquiry(inboundText)) {
+          if (isNewConversation && looksLikeExactGreetingOnly(inboundText)) {
             try {
               // Don't re-send opening if this thread already has an outbound welcome
               const { count: priorOut } = await supabase
@@ -641,72 +558,13 @@ export async function handleWhatsAppWebhookMessage(
                 }
               } catch (agentErr) {
                 console.error("[whatsapp-webhook] AI agent error:", agentErr);
-                try {
-                  const chatLimits = await getStoreChatContextLimits(
-                    activeStore.id
-                  );
-                  const chatHistory = await getRecentChatHistory(
-                    conversation.id,
-                    chatLimits.historyLimit,
-                    chatLimits.windowMs,
-                    aiContextSince
-                  );
-                  const agentCtx = {
-                    store: activeStore,
-                    conversationId: conversation.id,
-                    customerPhone,
-                    customerId: conversation.customer_id,
-                    adProductContext,
-                  };
-                  const aiSettings = await resolveStoreAiConfig(activeStore.id);
-                  const greetingCtx = { ...agentCtx, aiConfig: aiSettings };
-                  replyText = await resolveContextualDirectReply(
-                    agentCtx,
-                    inboundText,
-                    chatHistory,
-                    greetingCtx
-                  );
-                } catch (fallbackErr) {
-                  console.error(
-                    "[whatsapp-webhook] direct product fallback failed:",
-                    fallbackErr
-                  );
-                  const aiSettings = await resolveStoreAiConfig(activeStore.id);
-                  replyText = buildCasualGreetingReply({
-                    store: activeStore,
-                    conversationId: conversation.id,
-                    customerPhone,
-                    customerId: conversation.customer_id,
-                    adProductContext,
-                    aiConfig: aiSettings,
-                  });
-                }
+                replyText = AGENT_UNAVAILABLE_REPLY;
               }
             } else {
               console.error(
                 "[whatsapp-webhook] No Gemini configured — set GEMINI_API_KEY in env."
               );
-              const chatLimits = await getStoreChatContextLimits(activeStore.id);
-              const chatHistory = await getRecentChatHistory(
-                conversation.id,
-                chatLimits.historyLimit,
-                chatLimits.windowMs,
-                aiContextSince
-              );
-              const agentCtx = {
-                store: activeStore,
-                conversationId: conversation.id,
-                customerPhone,
-                customerId: conversation.customer_id,
-                adProductContext,
-              };
-              const aiSettings = await resolveStoreAiConfig(activeStore.id);
-              replyText = await resolveContextualDirectReply(
-                { ...agentCtx, aiConfig: aiSettings },
-                inboundText,
-                chatHistory,
-                { ...agentCtx, aiConfig: aiSettings }
-              );
+              replyText = AGENT_UNAVAILABLE_REPLY;
             }
           } finally {
             stopTypingRefresh?.();

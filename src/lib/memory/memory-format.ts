@@ -35,10 +35,6 @@ export function formatMemoryPromptBlocks(
       memory.rollingSummary,
       MEMORY_DEFAULTS.summary_max_tokens
     ),
-    formatRecalledMemoriesBlock(
-      memory.recalledMemories,
-      MEMORY_DEFAULTS.recall_max_tokens
-    ),
   ].filter(Boolean);
 
   return parts.join("\n\n");

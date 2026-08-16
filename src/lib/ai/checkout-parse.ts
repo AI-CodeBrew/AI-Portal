@@ -1,118 +1,9 @@
 import { normalizePhone, validateOrderPhone } from "@/lib/phone";
 import {
   extractSkuFromText,
-  looksLikeObjectionPhrase,
-  looksLikeVagueShoppingIntent,
   CATALOG_BROWSE_INTRO,
   CATALOG_BROWSE_MORE_INTRO,
 } from "@/lib/products/products-service";
-import { looksLikeVariantSelection } from "./variant-selection";
-import { looksLikeExactNamedProductQuery } from "./exact-routes";
-import { looksLikeCasualGreeting, looksLikeHowAreYou } from "./greeting-reply";
-
-const CHECKOUT_INTENT =
-  /\b(place\s+(an\s+)?order|want(?:a|\s+to)\s+(order|buy)\s+(it|this|that)|want\s+(it|this|that)|order\s+(this|it|now)|buy\s+(this|it|now)|i('ll| will)\s+take\s+(it|this|that)|take\s+(it|this|that)|book\s+it|checkout|confirm\s+(my\s+)?order|i('m| am)?\s+(ready|ordering)|deal)\b/i;
-
-/**
- * Customer wants the product already pitched ("I want to buy it") —
- * not a new catalog search / browse.
- */
-export function looksLikeBuyActiveProductIntent(text: string): boolean {
-  const t = text.trim();
-  if (t.length < 4 || t.length > 120) return false;
-  if (looksLikeStillShoppingMessage(t)) return false;
-
-  return (
-    /\b(?:i\s+)?(?:want(?:a|\s+to)\s+(?:order|buy)|wanna\s+(?:buy|order)|want)\s+(?:it|this|that|this\s+one|that\s+one|the\s+product|same(?:\s+one)?)\b/i.test(
-      t
-    ) ||
-    /\b(?:buy|order|take|book)\s+(?:it|this|that|this\s+one|that\s+one)\b/i.test(
-      t
-    ) ||
-    /\bi('ll| will)\s+take\s+(?:it|this|that)\b/i.test(t) ||
-    /^(yes|yeah|yep|sure|ok|okay)[,!.\s]+(i\s+)?(want(?:a|\s+to)\s+)?(buy|order|take)(\s+(it|this|that))?\b/i.test(
-      t
-    )
-  );
-}
-
-/** Affirmations that are still shopping — not ready to place an order. */
-export function looksLikeStillShoppingMessage(text: string): boolean {
-  const t = text.trim();
-  if (t.length < 4) return false;
-  if (looksLikeVagueShoppingIntent(t)) return true;
-  return /\b(looking\s+for\s+(a\s+)?products?|want\s+(to\s+)?(see|browse|find)|show\s+(me\s+)?(products?|options|something)|share\s+(some\s+)?(different|other|more)\s+products?|(different|other|more)\s+products?|winning\s+products|just\s+browsing|see\s+(what\s+)?(you\s+)?have|(something|anything)\s+else)\b/i.test(
-    t
-  );
-}
-
-/** Last pitched product is still "this chat" — not last night after a new hi. */
-export const FRESH_PITCH_MS = 4 * 60 * 60 * 1000;
-
-type TimedChatMsg = {
-  role: "user" | "assistant";
-  content: string;
-  created_at?: string;
-};
-
-function looksLikeProductPitchContent(content: string): boolean {
-  if (CATALOG_BROWSE_INTRO.test(content) || CATALOG_BROWSE_MORE_INTRO.test(content)) {
-    return false;
-  }
-  return (
-    /\[Ref:\s*[^\]]+\]/i.test(content) ||
-    /(?:^|\n)[^\n]+(?:—|-)\s*(?:Rs\.?|PKR|AED|\$|€)/im.test(content) ||
-    /\b(in stock|out of stock)\b/i.test(content) ||
-    /locking in \*/i.test(content)
-  );
-}
-
-export function isProductPitchFresh(
-  history: TimedChatMsg[] = [],
-  maxAgeMs = FRESH_PITCH_MS
-): boolean {
-  for (let i = history.length - 1; i >= 0; i--) {
-    const msg = history[i];
-    if (msg.role !== "assistant" || !looksLikeProductPitchContent(msg.content)) {
-      continue;
-    }
-    for (let j = i + 1; j < history.length; j++) {
-      const later = history[j];
-      if (later.role !== "user") continue;
-      if (
-        looksLikeCasualGreeting(later.content) ||
-        looksLikeHowAreYou(later.content)
-      ) {
-        return false;
-      }
-    }
-    if (msg.created_at) {
-      const age = Date.now() - new Date(msg.created_at).getTime();
-      if (Number.isFinite(age) && age > maxAgeMs) return false;
-    }
-    return true;
-  }
-  return false;
-}
-
-const HAS_CONTACT_HINT =
-  /\b(name|naam|phone|ph|mobile|whatsapp|address|addr|city|deliver)\b/i;
-
-const ASKED_FOR_DETAILS =
-  /\b(share your phone|phone & delivery|phone and delivery|reply like this|phone \(for confirmation\)|i'll place the order|i'll confirm your order|discounted price|phone.*required|delivery address.*required|almost there\s*[—–-]|confirm this order|to confirm your order)\b/i;
-
-/** Product/catalog question — not checkout contact details. Exact patterns only. */
-export function looksLikeProductQuestion(
-  text: string,
-  history: Array<{ role: "user" | "assistant"; content: string }> = []
-): boolean {
-  const t = text.trim();
-  if (t.length < 3) return false;
-  if (looksLikeObjectionPhrase(t)) return false;
-  if (looksLikeVariantSelection(t, history)) return false;
-  if (extractSkuFromText(t)) return true;
-  return looksLikeExactNamedProductQuery(t);
-}
 
 export type CheckoutDetails = {
   customer_name: string;
@@ -131,103 +22,6 @@ export type CheckoutValidationIssue =
 export type CheckoutValidation =
   | { ok: true; details: CheckoutDetails }
   | { ok: false; issues: CheckoutValidationIssue[] };
-
-export function assistantAskedForCheckoutDetails(
-  history: Array<{ role: "user" | "assistant"; content: string }>
-): boolean {
-  const recent = history
-    .filter((m) => m.role === "assistant")
-    .slice(-6)
-    .map((m) => m.content)
-    .join("\n");
-  return ASKED_FOR_DETAILS.test(recent);
-}
-
-export function looksLikeCheckoutMessage(
-  text: string,
-  history?: Array<{ role: "user" | "assistant"; content: string }>
-): boolean {
-  const t = text.trim();
-  if (t.length < 4) return false;
-
-  // Still shopping / browsing — never treat as checkout
-  if (looksLikeStillShoppingMessage(t)) return false;
-  if (looksLikeVagueShoppingIntent(t)) return false;
-
-  // "I want to buy it" / "I'll take this" → checkout only if we just pitched that product
-  if (looksLikeBuyActiveProductIntent(t)) {
-    if (!isProductPitchFresh(history ?? [])) return false;
-    return true;
-  }
-
-  // New product question — never treat as checkout, even mid order flow
-  if (looksLikeProductQuestion(t, history ?? [])) return false;
-
-  if (t.length < 8) return false;
-
-  const digits = t.replace(/\D/g, "");
-  const hasPhone = digits.length >= 8;
-
-  // Profile / prefs only — not an order (needs a phone or street address to checkout)
-  if (
-    /\b(my name is|i live in|i prefer|prefer\s+cod|budget under)\b/i.test(t) &&
-    !hasPhone &&
-    !/\b(address|street|block|villa|apartment|building)\b/i.test(t)
-  ) {
-    return false;
-  }
-
-  if (HAS_CONTACT_HINT.test(t) && t.length >= 12 && (hasPhone || /\b(address|street|deliver)\b/i.test(t))) {
-    return true;
-  }
-
-  if (CHECKOUT_INTENT.test(t) && (HAS_CONTACT_HINT.test(t) || t.length >= 20)) {
-    return true;
-  }
-
-  if (
-    history &&
-    assistantAskedForCheckoutDetails(history) &&
-    t.length >= 10
-  ) {
-    if (HAS_CONTACT_HINT.test(t) || digits.length >= 10) return true;
-    if (
-      /^\d[\d\s-]{8,}\d/.test(t) &&
-      /[a-zA-Z]{2,}/.test(t) &&
-      t.includes(",")
-    ) {
-      return true;
-    }
-    if (CHECKOUT_INTENT.test(t) && !looksLikeProductQuestion(t, history ?? [])) {
-      return true;
-    }
-    return false;
-  }
-
-  if (
-    /^\d[\d\s-]{8,}\d/.test(t) &&
-    /[a-zA-Z]{2,}/.test(t) &&
-    t.length >= 15 &&
-    (t.includes(",") || t.split(/\s+/).length >= 3)
-  ) {
-    return true;
-  }
-
-  const lines = t.split(/\n+/).map((l) => l.trim()).filter(Boolean);
-  if (lines.length >= 2 && hasPhone && t.length >= 15) {
-    return true;
-  }
-
-  if (
-    CHECKOUT_INTENT.test(t) &&
-    t.length >= 10 &&
-    !looksLikeProductQuestion(t, history ?? [])
-  ) {
-    return true;
-  }
-
-  return false;
-}
 
 function extractPhoneRaw(text: string): string {
   const t = text.replace(/\r/g, "\n").trim();
@@ -251,7 +45,7 @@ function extractPhoneRaw(text: string): string {
 }
 
 function stripLeadingPhoneFromText(text: string, phoneRaw: string): string {
-  let rest = text.trim();
+  const rest = text.trim();
   if (!phoneRaw) return rest;
 
   const escaped = phoneRaw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -402,6 +196,14 @@ function extractCity(text: string, address1: string): { city: string; address1: 
   return { city, address1: addr };
 }
 
+/**
+ * Free-text checkout parsing — kept for the manual-order inbox UI and passive
+ * profile enrichment, which both hand this a raw pasted message with no LLM
+ * in the loop. The AI sales agent does NOT use this — it has the LLM read
+ * the customer's message and fill create_draft_order's structured fields
+ * itself; only the phone format is validated (validateOrderPhone), not
+ * detected/guessed.
+ */
 export function validateCheckoutMessage(
   text: string,
   hintPhone?: string | null
@@ -476,6 +278,8 @@ function extractRefFromContent(content: string): string | null {
 
 /**
  * Prefer the product the customer is actually ordering — not an older browse list item.
+ * Used as a pre-flight backstop in create_draft_order when the LLM's line
+ * items omit a sku/variant_id.
  */
 export function findProductRefFromHistory(
   history: Array<{ role: "user" | "assistant"; content: string }>

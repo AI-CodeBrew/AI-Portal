@@ -254,7 +254,40 @@ export const OPENAI_SALES_TOOLS = [
       },
     },
   },
+  {
+    type: "function" as const,
+    function: {
+      name: "recall_customer_memory",
+      description:
+        "Search this customer's long-term memory (past preferences, past products discussed, past objections, prior interactions) ONLY when the current question needs history you don't already see in the visible chat — e.g. 'what was I looking at before', 'do you remember my size', 'like last time'. Do NOT call this for normal product/order questions answerable from the current tool results or visible chat.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description:
+              "What to search memory for, phrased as the customer's need",
+          },
+        },
+        required: ["query"],
+      },
+    },
+  },
 ];
+
+/** Anthropic tool schema — reuses the same source of truth as Gemini's
+ * functionDeclarations so both providers stay in sync. */
+export function anthropicToolDefinitions(): Array<{
+  name: string;
+  description: string;
+  input_schema: Record<string, unknown>;
+}> {
+  return OPENAI_SALES_TOOLS.map((tool) => ({
+    name: tool.function.name,
+    description: tool.function.description,
+    input_schema: tool.function.parameters,
+  }));
+}
 
 /** Gemini functionDeclarations — sanitize JSON schema for the Google API. */
 export function geminiFunctionDeclarations() {
@@ -491,6 +524,7 @@ export async function executeSalesTool(
     name !== "lookup_customer_orders" &&
     name !== "get_order_status" &&
     name !== "create_draft_order" &&
+    name !== "recall_customer_memory" &&
     !shopifyConnected
   ) {
     return {
@@ -788,15 +822,24 @@ export async function executeSalesTool(
         const displayCurrency =
           currency ?? portalMapped[0]?.currency ?? "USD";
 
+        let formattedReply: string | null = null;
+        if (combined.length > 0) {
+          const { formatProductsReply } = await import("./product-reply");
+          formattedReply = formatProductsReply(
+            combined as Parameters<typeof formatProductsReply>[0]
+          );
+        }
+
         return {
           result: {
             products: combined,
             count: combined.length,
             currency: displayCurrency,
+            formatted_reply: formattedReply,
             message:
               combined.length === 0
                 ? "No matching products in portal or Shopify catalog."
-                : "Share name, price_formatted, and description. If the product has multiple colors/sizes/variants, include options and every variant with price_formatted. If it is a single product with no real options, skip variant lines and go straight to checkout (name, phone, full address). Do not refuse products based on inventory — if it is in the catalog, the customer can order. Prefer portal matches when SKU/name is known.",
+                : "formatted_reply already has the correct name, price_formatted, [Ref:]/[Image:] markers, and variant lines — relay it close to verbatim, only adding a short natural intro/closing line. Never regenerate prices or Ref tags yourself. If it is a single product with no real options, you may skip straight to checkout (name, phone, full address) instead. Do not refuse products based on inventory — if it is in the catalog, the customer can order. Prefer portal matches when SKU/name is known.",
           },
         };
       }
@@ -1064,6 +1107,29 @@ export async function executeSalesTool(
           ? (input.line_items as Array<Record<string, unknown>>)
           : [];
 
+        // Pre-flight backstop: if a line item is missing sku/variant_id/product_id
+        // (LLM forgot to carry it forward), resolve the product actually being
+        // discussed from recent chat history before failing the order.
+        if (
+          rawLines.some(
+            (li) => !li.variant_id && !li.product_id && !li.sku
+          )
+        ) {
+          const { findProductRefFromHistory } = await import(
+            "./checkout-parse"
+          );
+          const fallbackRef = findProductRefFromHistory(ctx.chatHistory ?? []);
+          if (fallbackRef) {
+            for (const li of rawLines) {
+              if (!li.variant_id && !li.product_id && !li.sku) {
+                if (fallbackRef.variant_id) li.variant_id = fallbackRef.variant_id;
+                if (fallbackRef.sku) li.sku = fallbackRef.sku;
+                if (fallbackRef.source) li.source = fallbackRef.source;
+              }
+            }
+          }
+        }
+
         const created = await createWhatsAppAiOrder({
           store,
           conversationCustomerId: customerId,
@@ -1130,6 +1196,31 @@ export async function executeSalesTool(
           result: { escalated: true, reason: input.reason },
           escalated: true,
         };
+
+      case "recall_customer_memory": {
+        const query = String(input.query ?? "").trim();
+        if (!query) {
+          return { result: { error: "query is required", memories: [] } };
+        }
+        const { recallMemories } = await import("@/lib/memory/mem0-client");
+        const { buildSalesSessionKey } = await import(
+          "@/lib/memory/session-key"
+        );
+        const sessionKey =
+          ctx.memoryContext?.sessionKey ??
+          buildSalesSessionKey(store.id, customerPhone);
+        const memories = await recallMemories(sessionKey, query, 5);
+        return {
+          result: {
+            memories: memories.map((m) => m.memory),
+            count: memories.length,
+            message:
+              memories.length === 0
+                ? "No relevant memory found for this customer."
+                : "Use only what's relevant to the current answer — don't recite all memories verbatim.",
+          },
+        };
+      }
 
       default:
         return { result: { error: `Unknown tool: ${name}` } };
