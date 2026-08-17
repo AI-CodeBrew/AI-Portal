@@ -28,7 +28,7 @@ export const SALES_TOOL_RULES = `Operational rules for tools:
 - search_products — when they name a product, keyword, or SKU (e.g. AA-…). Searches portal + Shopify for THIS store only.
 - Prefer portal matches when SKU/ref is known.
 - Never treat price objections ("too expensive", "no thanks") as a product search query.
-- create_draft_order requires phone + full delivery address before calling (name is optional).
+- create_draft_order requires: full name, phone, area/locality (in address1), city, and province before calling. House/flat number, street/road, landmark, and postal code are optional extras — never block an order on those. If any required field is missing, ask for it (or send the ADDRESS TEMPLATE) — do not call create_draft_order with a guessed or default name/city/province.
 - Portal products: pass sku and/or UUID variant_id from search_products.
 - Shopify products: pass numeric variant_id.
 - lookup_customer_orders / get_order_status for order status — never invent tracking.
@@ -119,7 +119,7 @@ export const OPENAI_SALES_TOOLS = [
     function: {
       name: "create_draft_order",
       description:
-        "Create and confirm an order when the customer is ready to buy (portal catalog OR Shopify). Requires phone + full delivery address (name optional). For portal products use the product/variant id or sku from search_products (source=portal). For Shopify use numeric variant_id. Optional discount_percent for retention offers.",
+        "Create and confirm an order when the customer is ready to buy (portal catalog OR Shopify). Requires: customer_name, phone, address1 (area/locality — include house/street if given), city, and province. House/flat number, street, landmark, and zip are optional. For portal products use the product/variant id or sku from search_products (source=portal). For Shopify use numeric variant_id. Optional discount_percent for retention offers.",
       parameters: {
         type: "object",
         properties: {
@@ -152,25 +152,35 @@ export const OPENAI_SALES_TOOLS = [
           },
           customer_name: {
             type: "string",
-            description: "Optional customer name",
+            description: "Required — customer's full name",
           },
           phone: {
             type: "string",
             description:
               "Customer phone to receive order confirmation (use the number they shared)",
           },
-          address1: { type: "string", description: "Street / house address" },
-          address2: { type: "string" },
-          city: { type: "string" },
-          province: { type: "string" },
+          address1: {
+            type: "string",
+            description:
+              "Required — Area/Locality (neighborhood, block, sector, etc.). Include house/flat/shop number and street/road here too if the customer gave them, e.g. 'House 12, Street 4, Gulshan Block A'.",
+          },
+          address2: {
+            type: "string",
+            description: "Optional — nearby landmark (mosque, school, market, main road, etc.)",
+          },
+          city: { type: "string", description: "Required — e.g. Lahore, Karachi" },
+          province: {
+            type: "string",
+            description: "Required — e.g. Punjab, Sindh (skip only if the store's courier only needs city, per store policy)",
+          },
           country: { type: "string" },
-          zip: { type: "string" },
+          zip: { type: "string", description: "Optional — postal code" },
           discount_percent: {
             type: "number",
             description: "Optional percentage discount (e.g. 15 or 25)",
           },
         },
-        required: ["line_items", "address1", "city", "phone"],
+        required: ["line_items", "customer_name", "phone", "address1", "city", "province"],
       },
     },
   },
@@ -1062,24 +1072,22 @@ export async function executeSalesTool(
       }
 
       case "create_draft_order": {
-        const customerName =
-          String(input.customer_name ?? "").trim() || "Customer";
+        const customerName = String(input.customer_name ?? "").trim();
         const address1 = String(input.address1 ?? "").trim();
-        const city = String(input.city ?? "").trim() || "N/A";
+        const city = String(input.city ?? "").trim();
+        const province = String(input.province ?? "").trim();
         const phoneForOrder = String(input.phone ?? customerPhone).trim();
-        if (!address1) {
+
+        const missing: string[] = [];
+        if (!customerName) missing.push("customer_name");
+        if (!address1) missing.push("address1 (area/locality)");
+        if (!city) missing.push("city");
+        if (!province) missing.push("province");
+        if (!phoneForOrder) missing.push("phone");
+        if (missing.length > 0) {
           return {
             result: {
-              error:
-                "address1 is required before creating an order.",
-            },
-          };
-        }
-        if (!phoneForOrder) {
-          return {
-            result: {
-              error:
-                "phone is required — use the number the customer shared so we can send confirmation.",
+              error: `Missing required detail(s) before creating the order: ${missing.join(", ")}. Ask the customer for these (send the ADDRESS TEMPLATE if several are missing) — do not guess or default them.`,
             },
           };
         }
@@ -1149,7 +1157,7 @@ export async function executeSalesTool(
             address1,
             address2: String(input.address2 ?? "").trim() || undefined,
             city,
-            province: String(input.province ?? "").trim() || undefined,
+            province,
             country: String(input.country ?? "").trim() || undefined,
             zip: String(input.zip ?? "").trim() || undefined,
           },
