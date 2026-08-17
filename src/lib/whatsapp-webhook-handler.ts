@@ -66,7 +66,10 @@ async function sendReply(
   customerPhone: string,
   text: string,
   imageUrls: string[] = []
-): Promise<{ ok: true } | { ok: false; error: string }> {
+): Promise<
+  | { ok: true; metaMessageId: string | null }
+  | { ok: false; error: string }
+> {
   const waCreds = getStoreWhatsAppCredentials(activeStore);
   if (!waCreds) {
     const error =
@@ -78,16 +81,18 @@ async function sendReply(
   const to = normalizePhone(customerPhone);
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+  let metaMessageId: string | null = null;
   try {
     let imagesSent = 0;
     for (const imageUrl of imageUrls.slice(0, 3)) {
       try {
-        await sendWhatsAppImage({
+        const imgResult = await sendWhatsAppImage({
           phoneNumberId: waCreds.phoneNumberId,
           accessToken: waCreds.accessToken,
           to,
           imageUrl,
         });
+        metaMessageId = imgResult.id;
         imagesSent += 1;
         // Meta accepts image async — wait so it usually lands before the text
         await sleep(1500);
@@ -103,19 +108,66 @@ async function sendReply(
       if (imagesSent > 0) {
         await sleep(500);
       }
-      await sendWhatsAppText({
+      const textResult = await sendWhatsAppText({
         phoneNumberId: waCreds.phoneNumberId,
         accessToken: waCreds.accessToken,
         to,
         text,
       });
+      metaMessageId = textResult.id;
     }
-    return { ok: true };
+    return { ok: true, metaMessageId };
   } catch (err) {
     const error = err instanceof Error ? err.message : "WhatsApp send failed";
     console.error("[whatsapp-webhook] sendWhatsAppText failed:", error);
     return { ok: false, error };
   }
+}
+
+const STATUS_RANK: Record<string, number> = {
+  sent: 1,
+  delivered: 2,
+  read: 3,
+  failed: 4,
+};
+
+async function applyStatusUpdate(
+  supabase: ReturnType<typeof createAdminClient>,
+  status: {
+    id: string;
+    status: "sent" | "delivered" | "read" | "failed";
+    errors?: Array<{
+      code?: number;
+      title?: string;
+      message?: string;
+      error_data?: { details?: string };
+    }>;
+  }
+): Promise<void> {
+  const { data: existing } = await supabase
+    .from("whatsapp_messages")
+    .select("id, status")
+    .eq("meta_message_id", status.id)
+    .maybeSingle();
+
+  if (!existing) return; // no matching outbound message (e.g. sent before this feature existed)
+
+  const currentRank = STATUS_RANK[(existing.status as string) ?? ""] ?? 0;
+  const nextRank = STATUS_RANK[status.status] ?? 0;
+  if (nextRank < currentRank) return; // ignore out-of-order/duplicate retries
+
+  const firstError = status.errors?.[0];
+  await supabase
+    .from("whatsapp_messages")
+    .update({
+      status: status.status,
+      status_error_code: firstError?.code ?? null,
+      status_error_message: firstError
+        ? firstError.error_data?.details || firstError.message || firstError.title || null
+        : null,
+      status_updated_at: new Date().toISOString(),
+    })
+    .eq("id", existing.id);
 }
 
 const AGENT_UNAVAILABLE_REPLY =
@@ -181,6 +233,17 @@ export async function handleWhatsAppWebhookMessage(
               source_type?: string;
             };
           }>;
+          statuses?: Array<{
+            id: string;
+            status: "sent" | "delivered" | "read" | "failed";
+            timestamp?: string;
+            errors?: Array<{
+              code?: number;
+              title?: string;
+              message?: string;
+              error_data?: { details?: string };
+            }>;
+          }>;
         };
       }>;
     }>;
@@ -207,8 +270,11 @@ export async function handleWhatsAppWebhookMessage(
     for (const change of entry.changes ?? []) {
       const phoneNumberId = change.value?.metadata?.phone_number_id;
       const messages = change.value?.messages ?? [];
+      const statuses = change.value?.statuses ?? [];
 
-      if (!phoneNumberId || messages.length === 0) continue;
+      if (!phoneNumberId || (messages.length === 0 && statuses.length === 0)) {
+        continue;
+      }
 
       const { data: store } = await supabase
         .from("stores")
@@ -250,6 +316,19 @@ export async function handleWhatsAppWebhookMessage(
         );
         return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
       }
+
+      for (const status of statuses) {
+        try {
+          await applyStatusUpdate(supabase, status);
+        } catch (err) {
+          console.error(
+            `[whatsapp-webhook] status update failed wamid=${status.id}:`,
+            err
+          );
+        }
+      }
+
+      if (messages.length === 0) continue;
 
       for (const msg of messages) {
         const customerPhone = normalizePhone(msg.from);
@@ -411,6 +490,8 @@ export async function handleWhatsAppWebhookMessage(
                   conversation_id: conversation.id,
                   direction: "out",
                   content: handoffText,
+                  meta_message_id: handoffSent.metaMessageId,
+                  status: handoffSent.metaMessageId ? "sent" : null,
                 });
               }
               continue;
@@ -479,6 +560,8 @@ export async function handleWhatsAppWebhookMessage(
                     conversation_id: conversation.id,
                     direction: "out",
                     content: openingText,
+                    meta_message_id: openingResult.metaMessageId,
+                    status: openingResult.metaMessageId ? "sent" : null,
                   });
                 } else {
                   console.error(
@@ -585,6 +668,8 @@ export async function handleWhatsAppWebhookMessage(
               direction: "out",
               // Keep internal markers in stored history so recovery stage still works
               content: replyText,
+              meta_message_id: sent.metaMessageId,
+              status: sent.metaMessageId ? "sent" : null,
             });
 
             // Post-reply memory writeback (non-blocking): rules profile + Mem0 extract
@@ -639,6 +724,8 @@ export async function handleWhatsAppWebhookMessage(
               conversation_id: conversation.id,
               direction: "out",
               content: `[Not delivered to WhatsApp] ${customerFacingText}\n\nError: ${sent.error}`,
+              status: "failed",
+              status_error_message: sent.error,
             });
           }
         } catch (err) {

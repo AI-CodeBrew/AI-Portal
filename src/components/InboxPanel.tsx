@@ -27,6 +27,42 @@ function displayName(conv: WhatsappConversation): string {
   return `+${conv.customer_phone}`;
 }
 
+function MessageStatusBadge({
+  status,
+  errorMessage,
+}: {
+  status?: "sent" | "delivered" | "read" | "failed" | null;
+  errorMessage?: string | null;
+}) {
+  if (!status) return null;
+
+  if (status === "failed") {
+    return (
+      <div
+        className="mt-1 flex items-center gap-1 text-[11px] font-medium text-red-200"
+        title={errorMessage || "WhatsApp could not deliver this message"}
+      >
+        <span>⚠ Not delivered</span>
+      </div>
+    );
+  }
+
+  const label =
+    status === "read" ? "Read" : status === "delivered" ? "Delivered" : "Sent";
+  const marks = status === "sent" ? "✓" : "✓✓";
+
+  return (
+    <div
+      className={`mt-1 text-right text-[11px] ${
+        status === "read" ? "text-sky-200" : "text-blue-200"
+      }`}
+      title={label}
+    >
+      {marks}
+    </div>
+  );
+}
+
 function ChatWindowHeader({
   selected,
   isManual,
@@ -244,7 +280,7 @@ export function InboxPanel() {
       .on(
         "postgres_changes",
         {
-          event: "INSERT",
+          event: "*",
           schema: "public",
           table: "whatsapp_messages",
           filter: `conversation_id=eq.${selectedId}`,
@@ -650,6 +686,12 @@ export function InboxPanel() {
                       }`}
                     >
                       <ChatMessageBody content={msg.content} />
+                      {msg.direction === "out" && (
+                        <MessageStatusBadge
+                          status={msg.status}
+                          errorMessage={msg.status_error_message}
+                        />
+                      )}
                     </div>
                   </div>
                 ))

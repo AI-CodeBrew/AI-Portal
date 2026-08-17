@@ -116,6 +116,8 @@ export interface WhatsappMessage {
   direction: MessageDirection;
   content: string;
   created_at: string;
+  status?: "sent" | "delivered" | "read" | "failed" | null;
+  status_error_message?: string | null;
 }
 
 export interface MerchantSession {

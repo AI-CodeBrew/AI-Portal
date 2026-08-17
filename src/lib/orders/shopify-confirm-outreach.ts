@@ -137,13 +137,15 @@ We're here on WhatsApp if you have any questions.`;
 
   if (!conversation) return;
 
+  let metaMessageId: string | null = null;
   try {
-    await sendWhatsAppText({
+    const result = await sendWhatsAppText({
       phoneNumberId: waCreds.phoneNumberId,
       accessToken: waCreds.accessToken,
       to: customerPhone,
       text: outreachText,
     });
+    metaMessageId = result.id;
   } catch (err) {
     console.error(
       `[shopify-confirm-outreach] send failed order=${orderId}:`,
@@ -156,6 +158,8 @@ We're here on WhatsApp if you have any questions.`;
     conversation_id: conversation.id,
     direction: "out",
     content: outreachText,
+    meta_message_id: metaMessageId,
+    status: metaMessageId ? "sent" : null,
   });
 
   await supabase

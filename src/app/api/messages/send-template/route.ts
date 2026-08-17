@@ -211,8 +211,9 @@ export async function POST(request: NextRequest) {
       context
     );
 
+    let metaMessageId: string | null = null;
     try {
-      await sendWhatsAppTemplate({
+      const result = await sendWhatsAppTemplate({
         phoneNumberId: waCreds.phoneNumberId,
         accessToken: waCreds.accessToken,
         to,
@@ -220,6 +221,7 @@ export async function POST(request: NextRequest) {
         languageCode: (template.language as string) || "en",
         bodyParams,
       });
+      metaMessageId = result.id;
     } catch (sendErr) {
       const detail =
         sendErr instanceof Error ? sendErr.message : "WhatsApp template send failed";
@@ -237,6 +239,8 @@ export async function POST(request: NextRequest) {
         conversation_id: conversationId,
         direction: "out",
         content: preview,
+        meta_message_id: metaMessageId,
+        status: metaMessageId ? "sent" : null,
       });
 
     if (insertError) {

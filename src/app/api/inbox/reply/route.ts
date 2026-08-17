@@ -116,13 +116,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    let metaMessageId: string | null = null;
     try {
-      await sendWhatsAppText({
+      const result = await sendWhatsAppText({
         phoneNumberId: waCreds.phoneNumberId,
         accessToken: waCreds.accessToken,
         to,
         text: message,
       });
+      metaMessageId = result.id;
     } catch (sendErr) {
       const detail =
         sendErr instanceof Error ? sendErr.message : "WhatsApp send failed";
@@ -144,6 +146,8 @@ export async function POST(request: NextRequest) {
         conversation_id: conversationId,
         direction: "out",
         content: message,
+        meta_message_id: metaMessageId,
+        status: metaMessageId ? "sent" : null,
       });
 
     if (insertError) {

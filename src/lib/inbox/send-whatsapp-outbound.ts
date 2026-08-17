@@ -54,16 +54,18 @@ export async function sendWhatsAppOutboundMessage(params: {
   const { text, imageUrls } = extractOutboundMedia(params.content);
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+  let metaMessageId: string | null = null;
   try {
     let imagesSent = 0;
     for (const imageUrl of imageUrls.slice(0, 3)) {
       try {
-        await sendWhatsAppImage({
+        const imgResult = await sendWhatsAppImage({
           phoneNumberId: waCreds.phoneNumberId,
           accessToken: waCreds.accessToken,
           to,
           imageUrl,
         });
+        metaMessageId = imgResult.id;
         imagesSent += 1;
         await sleep(1500);
       } catch (imgErr) {
@@ -73,12 +75,13 @@ export async function sendWhatsAppOutboundMessage(params: {
 
     if (text.trim()) {
       if (imagesSent > 0) await sleep(500);
-      await sendWhatsAppText({
+      const textResult = await sendWhatsAppText({
         phoneNumberId: waCreds.phoneNumberId,
         accessToken: waCreds.accessToken,
         to,
         text,
       });
+      metaMessageId = textResult.id;
     }
   } catch (sendErr) {
     const detail =
@@ -94,6 +97,8 @@ export async function sendWhatsAppOutboundMessage(params: {
     conversation_id: params.conversationId,
     direction: "out",
     content: params.content,
+    meta_message_id: metaMessageId,
+    status: metaMessageId ? "sent" : null,
   });
 
   if (insertError) {

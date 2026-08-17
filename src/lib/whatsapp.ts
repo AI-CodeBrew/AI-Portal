@@ -35,6 +35,20 @@ export interface SendTemplateParams {
   bodyParams?: string[];
 }
 
+export interface SendResult {
+  /** Meta's wamid for this message, used to match delivery-status webhooks back to it. */
+  id: string | null;
+}
+
+async function parseSendResult(res: Response): Promise<SendResult> {
+  try {
+    const data = (await res.json()) as { messages?: Array<{ id: string }> };
+    return { id: data.messages?.[0]?.id ?? null };
+  } catch {
+    return { id: null };
+  }
+}
+
 export async function sendWhatsAppTemplate({
   phoneNumberId,
   accessToken,
@@ -42,7 +56,7 @@ export async function sendWhatsAppTemplate({
   templateName,
   languageCode = "en",
   bodyParams = [],
-}: SendTemplateParams): Promise<void> {
+}: SendTemplateParams): Promise<SendResult> {
   const components =
     bodyParams.length > 0
       ? [
@@ -77,6 +91,8 @@ export async function sendWhatsAppTemplate({
   if (!res.ok) {
     throw new Error(`WhatsApp template send failed: ${await res.text()}`);
   }
+
+  return parseSendResult(res);
 }
 
 export async function sendWhatsAppText({
@@ -89,7 +105,7 @@ export async function sendWhatsAppText({
   accessToken: string;
   to: string;
   text: string;
-}): Promise<void> {
+}): Promise<SendResult> {
   const res = await fetch(`${GRAPH_API}/${phoneNumberId}/messages`, {
     method: "POST",
     headers: {
@@ -120,6 +136,8 @@ export async function sendWhatsAppText({
     }
     throw new Error(detail);
   }
+
+  return parseSendResult(res);
 }
 
 /** Send an image by public HTTPS URL (Cloud API link message). */
@@ -135,7 +153,7 @@ export async function sendWhatsAppImage({
   to: string;
   imageUrl: string;
   caption?: string;
-}): Promise<void> {
+}): Promise<SendResult> {
   const link = imageUrl.trim();
   if (!/^https:\/\//i.test(link)) {
     throw new Error("WhatsApp image URL must be a public https link");
@@ -180,6 +198,8 @@ export async function sendWhatsAppImage({
     }
     throw new Error(detail);
   }
+
+  return parseSendResult(res);
 }
 
 export async function getWhatsAppDisplayPhone(

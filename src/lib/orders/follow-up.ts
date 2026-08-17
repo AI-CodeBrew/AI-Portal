@@ -100,10 +100,11 @@ export async function sendOrderFollowUp(
 
   let to = targets[0]!;
   let lastError = "WhatsApp template send failed";
+  let metaMessageId: string | null = null;
 
   for (const candidate of targets) {
     try {
-      await sendWhatsAppTemplate({
+      const result = await sendWhatsAppTemplate({
         phoneNumberId: waCreds.phoneNumberId,
         accessToken: waCreds.accessToken,
         to: candidate,
@@ -111,6 +112,7 @@ export async function sendOrderFollowUp(
         languageCode: (template.language as string) || "en",
         bodyParams,
       });
+      metaMessageId = result.id;
       to = candidate;
       lastError = "";
       break;
@@ -146,6 +148,8 @@ export async function sendOrderFollowUp(
       conversation_id: conversationId,
       direction: "out",
       content: preview,
+      meta_message_id: metaMessageId,
+      status: metaMessageId ? "sent" : null,
     });
     await supabase
       .from("whatsapp_conversations")
