@@ -190,7 +190,7 @@ function buildFollowUpParams(input: {
   );
   const pool = [
     input.customerName || "there",
-    defaults[1] ?? defaults[0],
+    defaults[1]?.trim() || defaults[0],
     defaults[2] ?? String(input.total),
     defaults[0],
     input.currency ?? DEFAULT_STORE_CURRENCY,
@@ -198,7 +198,8 @@ function buildFollowUpParams(input: {
 
   const params: string[] = [];
   for (let i = 0; i < varCount; i++) {
-    params.push(pool[i] ?? pool[pool.length - 1] ?? "");
+    const value = (pool[i] ?? pool[pool.length - 1] ?? "").trim();
+    params.push(value || "N/A");
   }
   return params;
 }

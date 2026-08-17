@@ -50,7 +50,7 @@ export async function sendWhatsAppTemplate({
             type: "body",
             parameters: bodyParams.map((text) => ({
               type: "text",
-              text,
+              text: text.trim() || "N/A",
             })),
           },
         ]

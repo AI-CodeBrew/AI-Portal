@@ -54,7 +54,7 @@ export function buildTemplateBodyParams(
 
   const pool = [
     context.customerName?.trim() || "there",
-    context.sku?.trim() || (defaults[1] ?? defaults[0]),
+    context.sku?.trim() || defaults[1]?.trim() || defaults[0],
     defaults[2] ?? String(total),
     defaults[0],
     context.currency ?? DEFAULT_STORE_CURRENCY,
@@ -62,7 +62,8 @@ export function buildTemplateBodyParams(
 
   const params: string[] = [];
   for (let i = 0; i < varCount; i++) {
-    params.push(pool[i] ?? pool[pool.length - 1] ?? "");
+    const value = (pool[i] ?? pool[pool.length - 1] ?? "").trim();
+    params.push(value || "N/A");
   }
   return params;
 }
