@@ -71,15 +71,18 @@ export async function getEffectiveStoreCurrency(
 
 export function formatMoney(
   amount: number | null | undefined,
-  currency?: string | null
+  currency?: string | null,
+  opts?: { whole?: boolean }
 ): string {
-  const value = Number(amount ?? 0);
+  const raw = Number(amount ?? 0);
+  const value = opts?.whole ? Math.round(raw) : raw;
+  const fractionDigits = opts?.whole ? 0 : 2;
   const code = currency?.trim().toUpperCase();
 
   if (!code) {
     return value.toLocaleString(undefined, {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
+      minimumFractionDigits: fractionDigits,
+      maximumFractionDigits: fractionDigits,
     });
   }
 
@@ -89,8 +92,12 @@ export function formatMoney(
     return new Intl.NumberFormat(locale, {
       style: "currency",
       currency: code,
+      minimumFractionDigits: fractionDigits,
+      maximumFractionDigits: fractionDigits,
     }).format(value);
   } catch {
-    return `${code} ${value.toFixed(2)}`;
+    return opts?.whole
+      ? `${code} ${Math.round(value).toLocaleString()}`
+      : `${code} ${value.toFixed(2)}`;
   }
 }

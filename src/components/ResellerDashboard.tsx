@@ -298,7 +298,9 @@ export function ResellerDashboard() {
         />
         <StatCard
           label={`Revenue (${currency})`}
-          value={formatMoney(stats.period.revenue.current, currency)}
+          value={formatMoney(stats.period.revenue.current, currency, {
+            whole: true,
+          })}
           metric={stats.period.revenue}
           href="/dashboard/orders"
           accent="amber"
