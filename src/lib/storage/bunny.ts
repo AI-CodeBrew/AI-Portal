@@ -8,6 +8,27 @@ const ALLOWED_TYPES = new Set([
 
 const MAX_BYTES = 5 * 1024 * 1024; // 5 MB
 
+function storageHost(region?: string): string {
+  const raw = (region ?? "").trim();
+  if (!raw) return "storage.bunnycdn.com";
+
+  // Allow full hostname or URL pasted by mistake (e.g. storage.bunnycdn.com)
+  const withoutProtocol = raw.replace(/^https?:\/\//, "").split("/")[0] ?? "";
+  if (
+    withoutProtocol === "storage.bunnycdn.com" ||
+    withoutProtocol.endsWith(".storage.bunnycdn.com")
+  ) {
+    return withoutProtocol;
+  }
+
+  // Short region code: ny, la, sg, etc.
+  if (/^[a-z]{2,3}$/i.test(withoutProtocol)) {
+    return `${withoutProtocol.toLowerCase()}.storage.bunnycdn.com`;
+  }
+
+  return "storage.bunnycdn.com";
+}
+
 function bunnyConfig() {
   const storageZone = process.env.BUNNY_STORAGE_ZONE?.trim();
   const accessKey = process.env.BUNNY_STORAGE_PASSWORD?.trim();
@@ -18,9 +39,7 @@ function bunnyConfig() {
     return null;
   }
 
-  const host = region
-    ? `${region}.storage.bunnycdn.com`
-    : "storage.bunnycdn.com";
+  const host = storageHost(region);
 
   return { storageZone, accessKey, cdnHostname, host };
 }
