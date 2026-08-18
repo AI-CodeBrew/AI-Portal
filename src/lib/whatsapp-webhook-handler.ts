@@ -43,8 +43,9 @@ import {
 import { startTypingIndicatorRefresh } from "@/lib/whatsapp/sendTypingIndicator";
 import { getPlatformMetaCredentials } from "@/lib/platform/meta-settings";
 import { recordInboundWhatsappMessage, claimWhatsappWebhookDelivery } from "@/lib/whatsapp-inbound-message";
+import { resolveInboundText } from "@/lib/whatsapp/resolve-inbound-text";
+import { VOICE_NOTE_UNCLEAR_REPLY } from "@/lib/ai/transcribe-audio";
 import {
-  inboundMessagePreview,
   isCtwaReferral,
   resolveWindowTypeOnInbound,
 } from "@/lib/whatsapp-window/conversation-window";
@@ -228,6 +229,7 @@ export async function handleWhatsAppWebhookMessage(
             id: string;
             type: string;
             text?: { body: string };
+            audio?: { id: string; mime_type?: string; voice?: boolean };
             referral?: {
               ctwa_clid?: string;
               source_type?: string;
@@ -343,6 +345,9 @@ export async function handleWhatsAppWebhookMessage(
             continue;
           }
 
+          const { text: inboundText, preview: inboundPreview } =
+            await resolveInboundText(msg, activeStore);
+
           const aiSessionResetAt = await getAiSessionResetAt(
             activeStore.id,
             customerPhone
@@ -399,11 +404,6 @@ export async function handleWhatsAppWebhookMessage(
             aiSessionResetAt
           );
 
-          const inboundPreview = inboundMessagePreview(
-            msg.type,
-            msg.text?.body
-          );
-
           const inboundStatus = await recordInboundWhatsappMessage(supabase, {
             conversationId: conversation.id,
             content: inboundPreview,
@@ -448,11 +448,28 @@ export async function handleWhatsAppWebhookMessage(
             window_type: windowType,
           };
 
-          if (msg.type !== "text" || !msg.text?.body) {
+          if (!inboundText) {
+            if (
+              msg.type === "audio" &&
+              conversation.status !== "human_handoff"
+            ) {
+              const unclearSent = await sendReply(
+                activeStore,
+                customerPhone,
+                VOICE_NOTE_UNCLEAR_REPLY
+              );
+              if (unclearSent.ok) {
+                await supabase.from("whatsapp_messages").insert({
+                  conversation_id: conversation.id,
+                  direction: "out",
+                  content: VOICE_NOTE_UNCLEAR_REPLY,
+                  meta_message_id: unclearSent.metaMessageId,
+                  status: unclearSent.metaMessageId ? "sent" : null,
+                });
+              }
+            }
             continue;
           }
-
-          const inboundText = msg.text.body;
 
           if (conversation.status === "human_handoff") {
             continue;

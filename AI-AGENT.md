@@ -2,7 +2,7 @@
 
 Living documentation for how the portal’s WhatsApp sales AI works. **Update this file whenever you change AI behavior, prompts, tools, or message flow.**
 
-Last updated: 2026-08-09
+Last updated: 2026-08-18
 
 ---
 
@@ -22,9 +22,11 @@ Each reseller has **one store**. Product search, orders, and conversations are *
 ## End-to-end flow
 
 ```
-Customer WhatsApp message
+Customer WhatsApp message (text or voice note)
         ↓
 Meta webhook → whatsapp-webhook-handler.ts
+        ↓
+Voice note? → download media → Gemini transcribe → treat as text
         ↓
 Resolve store by whatsapp_phone_number_id
         ↓
@@ -244,7 +246,8 @@ When you change AI behavior, update **this doc** and the relevant file:
 | LLM env + status | `src/lib/platform/llm-settings.ts`, Admin → AI Defaults (read-only) |
 | Model routing | `src/lib/ai/model-routing.ts` |
 | Memory layers | `src/lib/memory/*` (profile, compaction, mem0, agent-memory-context) |
-| Webhook / send | `src/lib/whatsapp-webhook-handler.ts` |
+| Webhook / send | `src/lib/whatsapp-webhook-handler.ts`, `src/lib/whatsapp/resolve-inbound-text.ts`, `src/lib/whatsapp/download-media.ts` |
+| Voice transcription | `src/lib/ai/transcribe-audio.ts` |
 | Image markers / strip | `src/lib/ai/message-markers.ts` |
 | WebP → JPEG for WhatsApp | `src/lib/whatsapp-image.server.ts` |
 | Store AI settings | `src/lib/ai/store-ai-settings.ts`, `ai-settings-types.ts` |
@@ -256,6 +259,7 @@ When you change AI behavior, update **this doc** and the relevant file:
 
 | Date | Change |
 |------|--------|
+| 2026-08-18 | Voice notes: download WhatsApp audio → Gemini utility model transcribes → same text AI pipeline; unclear audio gets a short “please type” reply. |
 | 2026-08-15 | Pitch follow-ups (original/COD/quality/link/just looking) never catalog-search. Gemini Flash thinkingBudget disabled (400). Closer playbook in prompt. |
 | 2026-08-15 | Returning visit: “I want to buy something” browses (does not lock last-night product). “Something else” browses, never catalog-search. Buy-it checkout only if pitch is fresh (<4h and no new hi). Stale “buy it” asks to confirm last product. |
 | 2026-08-14 | Full rebuttal stress test 30/32 → fixed human handoff + memory-interest fallback; Mem0 playbook seeded (price ladder, buy-it, Roman Urdu objections, COD). |
