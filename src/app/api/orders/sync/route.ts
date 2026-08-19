@@ -70,9 +70,9 @@ export async function POST(request: NextRequest) {
         { limit, pageInfo: body.pageInfo }
       );
 
-      for (const order of page.orders) {
-        await upsertShopifyOrder(supabase, storeId, order);
-      }
+      await Promise.all(
+        page.orders.map((order) => upsertShopifyOrder(supabase, storeId, order))
+      );
 
       return NextResponse.json({
         ok: true,
@@ -101,9 +101,9 @@ export async function POST(request: NextRequest) {
         { limit, pageInfo }
       );
 
-      for (const order of page.orders) {
-        await upsertShopifyOrder(supabase, storeId, order);
-      }
+      await Promise.all(
+        page.orders.map((order) => upsertShopifyOrder(supabase, storeId, order))
+      );
 
       synced += page.orders.length;
       pages += 1;

@@ -361,6 +361,8 @@ export function OrdersList() {
   const loadingRef = useRef(false);
   const mountedRef = useRef(true);
 
+  const initialLoadDoneRef = useRef(false);
+
   const { store, refresh: refreshStore } = useStoreStatus();
   const searchParams = useSearchParams();
 
@@ -506,40 +508,8 @@ export function OrdersList() {
 
   /** Background: refresh Shopify total count (does not block UI). */
   const refreshShopifyTotal = useCallback(async () => {
-    if (!store?.shopify_connected) return;
-    try {
-      const countRes = await fetch("/api/orders/sync");
-      if (!countRes.ok) return;
-      const countData = await countRes.json();
-      if (typeof countData.shopifyTotal === "number" && mountedRef.current) {
-        shopifyTotalRef.current = countData.shopifyTotal;
-        setShopifyTotal(countData.shopifyTotal);
-        if (
-          statusFilter === "all" &&
-          sourceFilter === "all" &&
-          datePreset === "all" &&
-          !customFrom &&
-          !customTo &&
-          countData.shopifyTotal > 0
-        ) {
-          // Only raise page count — never shrink below filtered match pages
-          setTotalPages((prev) =>
-            Math.max(prev, Math.ceil(countData.shopifyTotal / pageSize))
-          );
-        }
-      }
-    } catch {
-      // ignore
-    }
-  }, [
-    store?.shopify_connected,
-    statusFilter,
-    sourceFilter,
-    datePreset,
-    customFrom,
-    customTo,
-    pageSize,
-  ]);
+    // Disabled on automatic page loads — only called explicitly via Refresh
+  }, []);
 
   const syncOneShopifyPage = useCallback(async () => {
     if (!store?.shopify_connected) return;
@@ -626,9 +596,6 @@ export function OrdersList() {
     ) => {
       const force = options?.force ?? false;
       const showLoading = options?.showLoading ?? true;
-      const backgroundSync =
-        options?.backgroundSync ??
-        (status === "all" && source !== "whatsapp_ai");
       const effectivePageSize = Math.min(
         100,
         Math.max(1, Math.floor(options?.limitOverride ?? pageSize))
@@ -736,26 +703,14 @@ export function OrdersList() {
         if (mountedRef.current && showLoading) setLoading(false);
       }
 
-      void refreshShopifyTotal();
-      if (backgroundSync && p === 1 && store?.shopify_connected) {
-        void syncOneShopifyPage().then(() => {
-          void loadPage(p, source, status, {
-            force: true,
-            showLoading: false,
-            backgroundSync: false,
-            rangeOverride: options?.rangeOverride,
-          });
-        });
-      }
+      // Shopify sync is no longer triggered automatically on page load.
+      // Use the Refresh button for an explicit background sync.
     },
     [
       applyPage,
       buildQuery,
       debouncedSearch,
       pageSize,
-      refreshShopifyTotal,
-      store?.shopify_connected,
-      syncOneShopifyPage,
     ]
   );
 
@@ -772,6 +727,9 @@ export function OrdersList() {
 
   useEffect(() => {
     if (!store) return;
+    // Prevent React StrictMode (or any re-mount) from firing this twice
+    if (initialLoadDoneRef.current) return;
+    initialLoadDoneRef.current = true;
 
     const { range } = buildQuery(page, sourceFilter, statusFilter);
     const hit = getCachedPage(
@@ -802,7 +760,7 @@ export function OrdersList() {
 
     loadPage(page, sourceFilter, statusFilter, {
       showLoading: true,
-      backgroundSync: true,
+      backgroundSync: false,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [store?.id]);
@@ -1001,12 +959,30 @@ export function OrdersList() {
   }
 
   async function handleRefresh() {
+    // 1. Immediately show local DB orders
     await loadPage(page, sourceFilter, statusFilter, {
       force: true,
       showLoading: true,
-      backgroundSync: true,
+      backgroundSync: false,
     });
     setSuccessMsg("Orders updated.");
+
+    // 2. Kick off Shopify sync in background (non-blocking)
+    if (store?.shopify_connected) {
+      setSyncing(true);
+      syncOneShopifyPage()
+        .then(() =>
+          loadPage(page, sourceFilter, statusFilter, {
+            force: true,
+            showLoading: false,
+            backgroundSync: false,
+          })
+        )
+        .catch(() => {})
+        .finally(() => {
+          if (mountedRef.current) setSyncing(false);
+        });
+    }
   }
 
   function changeFilter(next: StatusFilter) {
@@ -1016,7 +992,7 @@ export function OrdersList() {
     setSuccessMsg(null);
     loadPage(1, sourceFilter, next, {
       showLoading: true,
-      backgroundSync: next === "all",
+      backgroundSync: false,
     });
   }
 
@@ -1027,7 +1003,7 @@ export function OrdersList() {
     setSuccessMsg(null);
     loadPage(1, next, statusFilter, {
       showLoading: true,
-      backgroundSync: next !== "whatsapp_ai",
+      backgroundSync: false,
     });
   }
 

@@ -79,15 +79,12 @@ export function ShopifyProductsPanel() {
   const [currency, setCurrency] = useState("USD");
   const [hasNextPage, setHasNextPage] = useState(false);
   const [hasPreviousPage, setHasPreviousPage] = useState(false);
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [previousCursor, setPreviousCursor] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<(typeof PAGE_SIZE_OPTIONS)[number]>(
     10
   );
   const [totalCount, setTotalCount] = useState<number | null>(null);
-  /** Cursors to reach each page number (page 1 has no cursor). */
-  const pageCursorsRef = useRef<Map<number, string | null>>(new Map([[1, null]]));
+  const initialLoadDoneRef = useRef(false);
 
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [detail, setDetail] = useState<ProductDetail | null>(null);
@@ -106,24 +103,23 @@ export function ShopifyProductsPanel() {
     return Math.max(1, Math.ceil(totalCount / pageSize));
   }, [totalCount, pageSize]);
 
+  const [syncing, setSyncing] = useState(false);
+
   const loadProducts = useCallback(
     async (opts: {
       q?: string;
-      cursor?: string | null;
-      direction?: "next" | "prev";
       pageNum?: number;
       limit?: number;
-      resetCursors?: boolean;
     }) => {
       setLoading(true);
       setError(null);
       try {
-        const limit = opts.limit ?? pageSize;
+        const lim = opts.limit ?? pageSize;
+        const pg = opts.pageNum ?? 1;
         const params = new URLSearchParams();
         if (opts.q) params.set("q", opts.q);
-        if (opts.cursor) params.set("cursor", opts.cursor);
-        if (opts.direction) params.set("direction", opts.direction);
-        params.set("limit", String(limit));
+        params.set("limit", String(lim));
+        params.set("page", String(pg));
 
         const res = await fetch(`/api/store/shopify-products?${params}`);
         const data = await res.json();
@@ -133,21 +129,10 @@ export function ShopifyProductsPanel() {
         setCurrency(data.currency ?? "USD");
         setHasNextPage(Boolean(data.hasNextPage));
         setHasPreviousPage(Boolean(data.hasPreviousPage));
-        setNextCursor(data.nextCursor ?? null);
-        setPreviousCursor(data.previousCursor ?? null);
         setTotalCount(
           typeof data.totalCount === "number" ? data.totalCount : null
         );
-
-        const pageNum = opts.pageNum ?? 1;
-        if (opts.resetCursors) {
-          pageCursorsRef.current = new Map([[1, null]]);
-        }
-        if (opts.pageNum != null) setPage(opts.pageNum);
-
-        if (data.nextCursor) {
-          pageCursorsRef.current.set(pageNum + 1, data.nextCursor);
-        }
+        setPage(pg);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load products");
         setProducts([]);
@@ -158,11 +143,30 @@ export function ShopifyProductsPanel() {
     [pageSize]
   );
 
+  const handleSync = useCallback(async () => {
+    setSyncing(true);
+    try {
+      const res = await fetch("/api/store/shopify-products/sync", {
+        method: "POST",
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error ?? "Sync failed");
+      }
+      await loadProducts({ q: appliedQuery || undefined, pageNum: 1 });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Sync failed");
+    } finally {
+      setSyncing(false);
+    }
+  }, [loadProducts, appliedQuery]);
+
   useEffect(() => {
-    pageCursorsRef.current = new Map([[1, null]]);
-    loadProducts({ pageNum: 1, limit: pageSize, resetCursors: true });
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- reload when page size changes
-  }, [pageSize]);
+    if (initialLoadDoneRef.current) return;
+    initialLoadDoneRef.current = true;
+    loadProducts({ pageNum: 1, limit: pageSize });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- initial load only
+  }, []);
 
   function onSearchChange(value: string) {
     setQuery(value);
@@ -170,12 +174,7 @@ export function ShopifyProductsPanel() {
     searchTimer.current = setTimeout(() => {
       const q = value.trim();
       setAppliedQuery(q);
-      pageCursorsRef.current = new Map([[1, null]]);
-      loadProducts({
-        q: q || undefined,
-        pageNum: 1,
-        resetCursors: true,
-      });
+      loadProducts({ q: q || undefined, pageNum: 1 });
     }, 400);
   }
 
@@ -184,102 +183,13 @@ export function ShopifyProductsPanel() {
     if (searchTimer.current) clearTimeout(searchTimer.current);
     const q = query.trim();
     setAppliedQuery(q);
-    pageCursorsRef.current = new Map([[1, null]]);
-    loadProducts({
-      q: q || undefined,
-      pageNum: 1,
-      resetCursors: true,
-    });
+    loadProducts({ q: q || undefined, pageNum: 1 });
   }
 
   async function goToPage(target: number) {
     if (target < 1 || target === page || loading) return;
     if (totalPages != null && target > totalPages) return;
-
-    if (target === page + 1 && nextCursor) {
-      await loadProducts({
-        q: appliedQuery || undefined,
-        cursor: nextCursor,
-        direction: "next",
-        pageNum: target,
-      });
-      return;
-    }
-
-    if (target === page - 1 && previousCursor) {
-      await loadProducts({
-        q: appliedQuery || undefined,
-        cursor: previousCursor,
-        direction: "prev",
-        pageNum: target,
-      });
-      return;
-    }
-
-    const known = pageCursorsRef.current.get(target);
-    if (target === 1 || known !== undefined) {
-      await loadProducts({
-        q: appliedQuery || undefined,
-        cursor: known ?? null,
-        direction: "next",
-        pageNum: target,
-      });
-      return;
-    }
-
-    // Walk forward from the highest known page cursor at or below target
-    let fromPage = 1;
-    let startCursor: string | null = null;
-    for (const [p, c] of pageCursorsRef.current) {
-      if (p <= target && p >= fromPage) {
-        fromPage = p;
-        startCursor = c;
-      }
-    }
-
-    setLoading(true);
-    try {
-      let cursor = startCursor;
-      for (let p = fromPage; p <= target; p++) {
-        const params = new URLSearchParams();
-        if (appliedQuery) params.set("q", appliedQuery);
-        if (cursor) params.set("cursor", cursor);
-        params.set("direction", "next");
-        params.set("limit", String(pageSize));
-        const res = await fetch(`/api/store/shopify-products?${params}`);
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error ?? "Failed to load products");
-
-        pageCursorsRef.current.set(p, cursor);
-        if (data.nextCursor) {
-          pageCursorsRef.current.set(p + 1, data.nextCursor);
-        }
-
-        if (p === target) {
-          setProducts(data.products ?? []);
-          setCurrency(data.currency ?? "USD");
-          setHasNextPage(Boolean(data.hasNextPage));
-          setHasPreviousPage(Boolean(data.hasPreviousPage) || p > 1);
-          setNextCursor(data.nextCursor ?? null);
-          setPreviousCursor(data.previousCursor ?? null);
-          setTotalCount(
-            typeof data.totalCount === "number" ? data.totalCount : null
-          );
-          setPage(target);
-          return;
-        }
-
-        if (!data.hasNextPage || !data.nextCursor) {
-          setError("That page is not available.");
-          return;
-        }
-        cursor = data.nextCursor;
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load products");
-    } finally {
-      setLoading(false);
-    }
+    await loadProducts({ q: appliedQuery || undefined, pageNum: target });
   }
 
   async function openProduct(id: number) {
@@ -369,15 +279,23 @@ export function ShopifyProductsPanel() {
           >
             Search
           </button>
+          <button
+            type="button"
+            onClick={handleSync}
+            disabled={syncing}
+            className="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          >
+            {syncing ? "Syncing…" : "⟳ Sync"}
+          </button>
           <label className="flex items-center gap-2 text-sm text-slate-600">
             <span className="whitespace-nowrap">Rows</span>
             <select
               value={pageSize}
-              onChange={(e) =>
-                setPageSize(
-                  Number(e.target.value) as (typeof PAGE_SIZE_OPTIONS)[number]
-                )
-              }
+              onChange={(e) => {
+                const newSize = Number(e.target.value) as (typeof PAGE_SIZE_OPTIONS)[number];
+                setPageSize(newSize);
+                loadProducts({ pageNum: 1, limit: newSize });
+              }}
               className="rounded-lg border border-slate-200 bg-white px-2.5 py-2 text-sm font-medium text-slate-800"
             >
               {PAGE_SIZE_OPTIONS.map((n) => (

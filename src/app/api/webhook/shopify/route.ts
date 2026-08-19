@@ -5,6 +5,10 @@ import {
   type ShopifyOrder,
 } from "@/lib/shopify";
 import { upsertShopifyOrder } from "@/lib/orders/upsert";
+import {
+  upsertShopifyProductFromWebhook,
+  deleteShopifyProductFromWebhook,
+} from "@/lib/shopify-sync-products";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export async function POST(request: NextRequest) {
@@ -33,14 +37,19 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
   }
 
-  const topic = request.headers.get("X-Shopify-Topic");
-  if (!topic?.startsWith("orders/")) {
-    return NextResponse.json({ ok: true });
-  }
+  const topic = request.headers.get("X-Shopify-Topic") ?? "";
 
   try {
-    const order = JSON.parse(rawBody) as ShopifyOrder;
-    await upsertShopifyOrder(supabase, store.id, order);
+    const payload = JSON.parse(rawBody);
+
+    if (topic.startsWith("orders/")) {
+      await upsertShopifyOrder(supabase, store.id, payload as ShopifyOrder);
+    } else if (topic === "products/create" || topic === "products/update") {
+      await upsertShopifyProductFromWebhook(supabase, store.id, payload);
+    } else if (topic === "products/delete") {
+      await deleteShopifyProductFromWebhook(supabase, store.id, payload.id);
+    }
+
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error("Shopify webhook error:", err);

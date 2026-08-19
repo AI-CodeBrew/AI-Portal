@@ -167,7 +167,13 @@ export async function registerShopifyWebhooks(
   appUrl?: string
 ): Promise<void> {
   const baseUrl = `${appUrl ?? getAppUrl()}/api/webhook/shopify`;
-  const topics = ["orders/create", "orders/updated"];
+  const topics = [
+    "orders/create",
+    "orders/updated",
+    "products/create",
+    "products/update",
+    "products/delete",
+  ];
 
   for (const topic of topics) {
     const res = await shopifyAdminFetch(shopDomain, encryptedToken, "/webhooks.json", {

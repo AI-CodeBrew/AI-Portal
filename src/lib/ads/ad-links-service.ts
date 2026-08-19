@@ -25,7 +25,7 @@ import type {
   AdWhatsAppLink,
 } from "./types";
 
-async function getStoreWithIntegrations(storeId: string) {
+export async function getStoreWithIntegrations(storeId: string) {
   const supabase = createAdminClient();
   const { data } = await supabase
     .from("stores")

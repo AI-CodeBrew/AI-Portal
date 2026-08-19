@@ -88,31 +88,82 @@ export function TemplatePicker({
   );
 }
 
+const TEMPLATES_CACHE_TTL_MS = 30_000;
+let approvedTemplatesCache: WhatsAppMessageTemplate[] | null = null;
+let approvedTemplatesFetchedAt: number | null = null;
+let approvedTemplatesPromise: Promise<WhatsAppMessageTemplate[]> | null = null;
+let approvedTemplatesError: string | null = null;
+
+async function fetchApprovedInboxTemplatesOnce(): Promise<
+  WhatsAppMessageTemplate[]
+> {
+  const now = Date.now();
+  if (
+    approvedTemplatesCache &&
+    approvedTemplatesFetchedAt != null &&
+    now - approvedTemplatesFetchedAt < TEMPLATES_CACHE_TTL_MS
+  ) {
+    return approvedTemplatesCache;
+  }
+
+  if (approvedTemplatesPromise) return approvedTemplatesPromise;
+
+  approvedTemplatesPromise = fetch("/api/inbox/templates")
+    .then(async (res) => {
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        templates?: WhatsAppMessageTemplate[];
+      };
+      if (!res.ok || data.error) {
+        throw new Error(data.error ?? "Failed to load templates");
+      }
+      return (data.templates ?? []) as WhatsAppMessageTemplate[];
+    })
+    .then((list) => {
+      approvedTemplatesCache = list;
+      approvedTemplatesFetchedAt = Date.now();
+      approvedTemplatesError = null;
+      return list;
+    })
+    .catch((err) => {
+      approvedTemplatesError =
+        err instanceof Error ? err.message : "Failed to load templates";
+      approvedTemplatesPromise = null; // allow retry on next hook mount
+      throw err;
+    });
+
+  return approvedTemplatesPromise;
+}
+
 export function useApprovedTemplates() {
-  const [templates, setTemplates] = useState<WhatsAppMessageTemplate[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [templates, setTemplates] = useState<WhatsAppMessageTemplate[]>(
+    approvedTemplatesCache ?? []
+  );
+  const [loading, setLoading] = useState<boolean>(
+    approvedTemplatesCache == null
+  );
+  const [error, setError] = useState<string | null>(approvedTemplatesError);
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    fetch("/api/inbox/templates")
-      .then((res) => res.json())
-      .then((data) => {
-        if (cancelled) return;
-        if (data.error) throw new Error(data.error);
-        const list = (data.templates ?? []) as WhatsAppMessageTemplate[];
-        setTemplates(list);
+
+    async function run() {
+      try {
+        setLoading(true);
         setError(null);
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Failed to load templates");
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+        const list = await fetchApprovedInboxTemplatesOnce();
+        if (cancelled) return;
+        setTemplates(list);
+      } catch (err) {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : "Failed to load templates");
+      } finally {
+        if (cancelled) return;
+        setLoading(false);
+      }
+    }
+
+    void run();
     return () => {
       cancelled = true;
     };

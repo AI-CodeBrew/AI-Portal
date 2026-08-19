@@ -206,6 +206,30 @@ export async function listWhatsAppTemplates(
     );
 }
 
+export async function listApprovedWhatsAppTemplates(
+  storeId: string
+): Promise<WhatsAppMessageTemplate[]> {
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("whatsapp_message_templates")
+    .select("*")
+    .eq("store_id", storeId)
+    .eq("status", "approved")
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    console.error("[wa-templates] list approved:", error.message);
+    return [];
+  }
+
+  // Hide auto-imported Meta stubs (legacy rows)
+  return (data ?? [])
+    .map(mapRow)
+    .filter(
+      (t) => !t.body_text.startsWith("(Imported from Meta")
+    );
+}
+
 export async function createWhatsAppTemplate(
   storeId: string,
   input: CreateWaTemplateInput
