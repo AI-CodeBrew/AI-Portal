@@ -531,15 +531,21 @@ export async function getResellerDashboardStats(
   const lastMessages = new Map<string, string>();
 
   if (chatIds.length > 0) {
-    for (const convId of chatIds) {
-      const { data: msg } = await supabase
-        .from("whatsapp_messages")
-        .select("content")
-        .eq("conversation_id", convId)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (msg?.content) lastMessages.set(convId, msg.content);
+    const msgResults = await Promise.all(
+      chatIds.map((convId) =>
+        supabase
+          .from("whatsapp_messages")
+          .select("conversation_id, content")
+          .eq("conversation_id", convId)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle()
+      )
+    );
+    for (const { data: msg } of msgResults) {
+      if (msg?.conversation_id && msg?.content) {
+        lastMessages.set(msg.conversation_id, msg.content);
+      }
     }
   }
 

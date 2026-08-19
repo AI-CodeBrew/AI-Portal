@@ -1,28 +1,26 @@
 import { createAdminClient } from "@/lib/supabase/admin";
-import { getShopifyOrderCount } from "@/lib/shopify";
 
 export type StoreOrderTotals = {
   /** Rows currently in the portal DB */
   synced: number;
   /** Shopify store total when connected; otherwise null */
   shopify: number | null;
-  /** Best display total: Shopify + WhatsApp-only local orders */
+  /** Best display total: synced DB count (orders are synced via webhook) */
   total: number;
 };
 
 /**
- * Local DB only keeps pages that have been synced, so counts look low.
- * Prefer Shopify's /orders/count when the store is connected, and add
- * portal-only (WhatsApp) orders that have no shopify_order_id.
+ * Get order totals from the local DB. Since orders are synced via webhook,
+ * the local DB is the source of truth — no need to call Shopify's API.
  */
 export async function getStoreOrderTotals(
   storeId: string,
-  shopDomain?: string | null,
-  shopifyAccessToken?: string | null
+  _shopDomain?: string | null,
+  _shopifyAccessToken?: string | null
 ): Promise<StoreOrderTotals> {
   const supabase = createAdminClient();
 
-  const [{ count: synced }, { count: whatsappOnly }] = await Promise.all([
+  const [{ count: synced }, { count: shopifyOrders }] = await Promise.all([
     supabase
       .from("orders")
       .select("*", { count: "exact", head: true })
@@ -31,39 +29,17 @@ export async function getStoreOrderTotals(
       .from("orders")
       .select("*", { count: "exact", head: true })
       .eq("store_id", storeId)
-      .is("shopify_order_id", null),
+      .not("shopify_order_id", "is", null),
   ]);
 
   const syncedCount = synced ?? 0;
-  const whatsappOnlyCount = whatsappOnly ?? 0;
+  const shopifyCount = shopifyOrders ?? 0;
 
-  if (!shopDomain || !shopifyAccessToken) {
-    return {
-      synced: syncedCount,
-      shopify: null,
-      total: syncedCount,
-    };
-  }
-
-  try {
-    const shopify = await getShopifyOrderCount(shopDomain, shopifyAccessToken);
-    return {
-      synced: syncedCount,
-      shopify,
-      total: shopify + whatsappOnlyCount,
-    };
-  } catch (err) {
-    console.error(
-      "[store-order-totals]",
-      storeId,
-      err instanceof Error ? err.message : err
-    );
-    return {
-      synced: syncedCount,
-      shopify: null,
-      total: syncedCount,
-    };
-  }
+  return {
+    synced: syncedCount,
+    shopify: shopifyCount > 0 ? shopifyCount : null,
+    total: syncedCount,
+  };
 }
 
 export async function getBulkStoreOrderTotals(
