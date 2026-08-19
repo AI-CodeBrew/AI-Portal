@@ -83,7 +83,6 @@ export const AI_PLANS: Record<PlanId, AiPlan> = {
       { label: "WhatsApp AI sales agent", included: true, highlight: "5,000 replies / mo" },
       { label: "Shopify integration", included: true },
       { label: "All portal features", included: true },
-      { label: "Closed-deal learning & outcomes", included: true },
       { label: "Broadcasts & advanced AI settings", included: true },
       { label: "Priority support", included: true },
       { label: "Chat with admin", included: false },

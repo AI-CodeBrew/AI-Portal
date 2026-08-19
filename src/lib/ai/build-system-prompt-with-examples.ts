@@ -1,5 +1,4 @@
 import { buildSalesSystemPrompt } from "./build-system-prompt";
-import { getSuccessExamplesSection } from "@/lib/outcomes/prompt-examples-cache";
 import type { ResolvedStoreAiConfig } from "./ai-settings-types";
 import type { AdProductContext } from "@/lib/ads/types";
 import type { AgentMemoryContext } from "@/lib/memory/types";
@@ -16,10 +15,6 @@ export async function buildSalesSystemPromptWithExamples(params: {
   history?: HistoryMessage[];
   memoryContext?: AgentMemoryContext | null;
 }): Promise<string> {
-  const successExamplesSection = await getSuccessExamplesSection(
-    params.storeId
-  );
-
   return buildSalesSystemPrompt({
     storeLabel: params.storeLabel,
     storeCurrency: params.storeCurrency,
@@ -27,7 +22,7 @@ export async function buildSalesSystemPromptWithExamples(params: {
     adProductContext: params.adProductContext,
     pendingOrdersHint: params.pendingOrdersHint,
     history: params.history,
-    successExamplesSection,
+    successExamplesSection: null,
     memoryContext: params.memoryContext,
   });
 }
