@@ -72,7 +72,6 @@ export async function findOutcomeExtractionCandidates(
     .from("orders")
     .select("id, store_id, customer_id, status, source, confirmed_at, shipping_address")
     .eq("status", "confirmed")
-    .eq("source", "whatsapp_ai")
     .order("confirmed_at", { ascending: false })
     .limit(limit * 5);
 
