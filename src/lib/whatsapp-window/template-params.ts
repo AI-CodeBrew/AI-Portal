@@ -51,6 +51,9 @@ type SlotKind =
 function classifySlot(before: string): SlotKind {
   const tail = before
     .replace(/\{\{\d+\}\}/g, " ")
+    // WhatsApp formatting markers sit between the label and the variable
+    // ("Your order *#{{1}}*"), so strip them before reading the label.
+    .replace(/[*_~`]/g, "")
     .toLowerCase()
     .replace(/\s+/g, " ")
     .trimEnd();
@@ -99,7 +102,7 @@ function inferSlots(bodyText: string, varCount: number): Slot[] {
     const before = contextByVar.get(i) ?? "";
     slots.push({
       kind: classifySlot(before),
-      hashPrefixed: before.trimEnd().endsWith("#"),
+      hashPrefixed: before.replace(/[*_~`]/g, "").trimEnd().endsWith("#"),
     });
   }
   return slots;

@@ -2,14 +2,13 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import {
   getStoreWhatsAppCredentials,
   sendWhatsAppTemplate,
-  formatOrderConfirmationParams,
 } from "@/lib/whatsapp";
 import type { AuthUser } from "@/lib/auth";
 import {
   findOrderConversationId,
   resolveOrderWhatsAppTargets,
 } from "@/lib/orders/order-whatsapp-phone";
-import { DEFAULT_STORE_CURRENCY } from "@/lib/currency";
+import { buildTemplateBodyParams } from "@/lib/whatsapp-window/template-params";
 
 export async function sendOrderFollowUp(
   orderId: string,
@@ -89,8 +88,7 @@ export async function sendOrderFollowUp(
   const { targets, customerName } = resolved;
 
   const items = (order.items as Array<{ title: string; quantity: number }>) ?? [];
-  const bodyParams = buildFollowUpParams({
-    bodyText: template.body_text as string,
+  const bodyParams = buildTemplateBodyParams(template.body_text as string, {
     customerName,
     orderNumber: (order.order_number as string | null) ?? orderId.slice(0, 8),
     items,
@@ -165,45 +163,3 @@ export async function sendOrderFollowUp(
   };
 }
 
-function countBodyVariables(bodyText: string): number {
-  const matches = bodyText.match(/\{\{(\d+)\}\}/g) ?? [];
-  let max = 0;
-  for (const m of matches) {
-    const n = Number(m.replace(/\D/g, ""));
-    if (n > max) max = n;
-  }
-  return max;
-}
-
-function buildFollowUpParams(input: {
-  bodyText: string;
-  customerName: string | null;
-  orderNumber: string;
-  items: Array<{ title: string; quantity: number }>;
-  total: number;
-  currency: string | null;
-}): string[] {
-  const varCount = countBodyVariables(input.bodyText);
-  if (varCount === 0) return [];
-
-  const defaults = formatOrderConfirmationParams(
-    input.orderNumber,
-    input.items,
-    input.total,
-    input.currency
-  );
-  const pool = [
-    input.customerName || "there",
-    defaults[1]?.trim() || defaults[0],
-    defaults[2] ?? String(input.total),
-    defaults[0],
-    input.currency ?? DEFAULT_STORE_CURRENCY,
-  ];
-
-  const params: string[] = [];
-  for (let i = 0; i < varCount; i++) {
-    const value = (pool[i] ?? pool[pool.length - 1] ?? "").trim();
-    params.push(value || "N/A");
-  }
-  return params;
-}
