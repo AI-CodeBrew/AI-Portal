@@ -393,6 +393,7 @@ export function AdminChatsPanel({
               pageSize={pageSize}
               totalItems={conversations.length}
               itemLabel="chats"
+              compact
               loading={loadingConversations}
               onPageChange={setPage}
               onPageSizeChange={(size) => {

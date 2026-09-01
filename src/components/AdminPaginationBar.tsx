@@ -21,6 +21,7 @@ export function AdminPaginationBar({
   loading,
   onPageChange,
   onPageSizeChange,
+  compact = false,
 }: {
   page: number;
   totalPages: number;
@@ -30,6 +31,8 @@ export function AdminPaginationBar({
   loading?: boolean;
   onPageChange: (page: number) => void;
   onPageSizeChange?: (size: AdminPageSize) => void;
+  /** Back/Next only — for narrow columns where numbered pages wrap. */
+  compact?: boolean;
 }) {
   if (totalItems === 0 && totalPages <= 1) return null;
 
@@ -37,15 +40,42 @@ export function AdminPaginationBar({
   const rangeEnd = Math.min(page * pageSize, totalItems);
 
   return (
-    <div className="flex flex-col gap-3 border-t border-slate-200 bg-slate-50 px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <p className="text-sm text-slate-600">
-          Showing {rangeStart}–{rangeEnd} of {totalItems.toLocaleString()}{" "}
-          {itemLabel}
-          {totalPages > 0 ? ` · Page ${page} of ${totalPages}` : ""}
+    <div
+      className={
+        compact
+          ? "flex flex-col gap-2 border-t border-slate-200 bg-slate-50 px-3 py-2"
+          : "flex flex-col gap-3 border-t border-slate-200 bg-slate-50 px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-4"
+      }
+    >
+      <div
+        className={
+          compact
+            ? "flex items-center justify-between gap-2"
+            : "flex flex-wrap items-center gap-3"
+        }
+      >
+        <p className={compact ? "text-xs text-slate-600" : "text-sm text-slate-600"}>
+          {compact ? (
+            <>
+              {rangeStart}–{rangeEnd} of {totalItems.toLocaleString()}
+              {totalPages > 0 ? ` · p${page}/${totalPages}` : ""}
+            </>
+          ) : (
+            <>
+              Showing {rangeStart}–{rangeEnd} of {totalItems.toLocaleString()}{" "}
+              {itemLabel}
+              {totalPages > 0 ? ` · Page ${page} of ${totalPages}` : ""}
+            </>
+          )}
         </p>
         {onPageSizeChange && (
-          <label className="flex items-center gap-2 text-sm text-slate-600">
+          <label
+            className={
+              compact
+                ? "flex items-center gap-1.5 text-xs text-slate-600"
+                : "flex items-center gap-2 text-sm text-slate-600"
+            }
+          >
             <span className="font-medium">Rows</span>
             <select
               value={pageSize}
@@ -54,7 +84,11 @@ export function AdminPaginationBar({
                   Number(e.target.value) as AdminPageSize
                 )
               }
-              className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm font-semibold text-slate-800"
+              className={
+                compact
+                  ? "rounded-md border border-slate-300 bg-white px-1.5 py-0.5 text-xs font-semibold text-slate-800"
+                  : "rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm font-semibold text-slate-800"
+              }
             >
               {ADMIN_PAGE_SIZE_OPTIONS.map((n) => (
                 <option key={n} value={n}>
@@ -65,35 +99,50 @@ export function AdminPaginationBar({
           </label>
         )}
       </div>
-      <div className="flex flex-wrap items-center gap-1.5">
+      <div
+        className={
+          compact
+            ? "flex items-center gap-2"
+            : "flex flex-wrap items-center gap-1.5"
+        }
+      >
         <button
           type="button"
           onClick={() => onPageChange(page - 1)}
           disabled={page <= 1 || loading}
-          className="min-h-10 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 disabled:cursor-not-allowed disabled:opacity-50 hover:bg-slate-100"
+          className={
+            compact
+              ? "flex-1 rounded-lg border border-slate-300 bg-white px-3 py-1 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50 hover:bg-slate-100"
+              : "min-h-10 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 disabled:cursor-not-allowed disabled:opacity-50 hover:bg-slate-100"
+          }
         >
           Back
         </button>
-        {adminPageWindow(page, Math.max(1, totalPages)).map((p) => (
-          <button
-            key={p}
-            type="button"
-            disabled={loading}
-            onClick={() => onPageChange(p)}
-            className={`min-w-9 rounded-lg px-2.5 py-1.5 text-sm font-semibold ${
-              p === page
-                ? "bg-violet-600 text-white"
-                : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
-            }`}
-          >
-            {p}
-          </button>
-        ))}
+        {!compact &&
+          adminPageWindow(page, Math.max(1, totalPages)).map((p) => (
+            <button
+              key={p}
+              type="button"
+              disabled={loading}
+              onClick={() => onPageChange(p)}
+              className={`min-w-9 rounded-lg px-2.5 py-1.5 text-sm font-semibold ${
+                p === page
+                  ? "bg-violet-600 text-white"
+                  : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+              }`}
+            >
+              {p}
+            </button>
+          ))}
         <button
           type="button"
           onClick={() => onPageChange(page + 1)}
           disabled={page >= totalPages || loading || totalPages <= 1}
-          className="min-h-10 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 disabled:cursor-not-allowed disabled:opacity-50 hover:bg-slate-100"
+          className={
+            compact
+              ? "flex-1 rounded-lg border border-slate-300 bg-white px-3 py-1 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50 hover:bg-slate-100"
+              : "min-h-10 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 disabled:cursor-not-allowed disabled:opacity-50 hover:bg-slate-100"
+          }
         >
           Next
         </button>
