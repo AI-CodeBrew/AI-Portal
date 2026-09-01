@@ -33,26 +33,34 @@ async function loadTemplateContext(
     customer_phone: string;
   }
 ): Promise<TemplateContext> {
-  let customerName: string | null = null;
+  // Resolve the customer once — by id when the conversation carries one, else
+  // by phone. Stored formats differ ("03…" locally vs "92…" on the chat), so
+  // match on the last 9 digits rather than an exact equality that never hits.
+  let customerRow: { id: string; name: string | null } | null = null;
+
   if (conversation.customer_id) {
-    const { data: customer } = await supabase
+    const { data } = await supabase
       .from("customers")
-      .select("name")
+      .select("id, name")
       .eq("id", conversation.customer_id)
       .maybeSingle();
-    customerName = (customer?.name as string | null)?.trim() || null;
+    customerRow = data ?? null;
   }
 
-  if (!customerName) {
-    const phone = normalizePhone(conversation.customer_phone);
-    const { data: customer } = await supabase
-      .from("customers")
-      .select("name")
-      .eq("store_id", storeId)
-      .eq("phone", phone)
-      .maybeSingle();
-    customerName = (customer?.name as string | null)?.trim() || null;
+  if (!customerRow) {
+    const suffix = normalizePhone(conversation.customer_phone).slice(-9);
+    if (suffix.length >= 9) {
+      const { data } = await supabase
+        .from("customers")
+        .select("id, name")
+        .eq("store_id", storeId)
+        .ilike("phone", `%${suffix}%`)
+        .limit(1);
+      customerRow = data?.[0] ?? null;
+    }
   }
+
+  const customerName = customerRow?.name?.trim() || null;
 
   let orderNumber: string | null = null;
   let items: Array<{ title: string; quantity: number }> = [];
@@ -60,12 +68,17 @@ async function loadTemplateContext(
   let currency: string | null = null;
   let sku: string | null = null;
 
-  if (conversation.customer_id) {
+  // customer_id is unset on most conversations, so fall back to resolving the
+  // customer by phone — otherwise the order fields stay empty and the template
+  // renders its placeholder defaults ("your order", 0.00).
+  const orderCustomerId = customerRow?.id ?? conversation.customer_id;
+
+  if (orderCustomerId) {
     const { data: order } = await supabase
       .from("orders")
       .select("order_number, items, total, currency")
       .eq("store_id", storeId)
-      .eq("customer_id", conversation.customer_id)
+      .eq("customer_id", orderCustomerId)
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
