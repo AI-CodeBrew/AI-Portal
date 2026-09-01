@@ -5,8 +5,9 @@ export default function ResellerInboxPage() {
   return (
     <div>
       <DashboardPageHeader
+        compact
         title="Inbox"
-        description="WhatsApp chats and broadcasts. Search by name or phone, take over chats when you need to reply yourself."
+        description="Search by name or phone. Take over a chat to reply yourself."
       />
       <InboxWorkspace />
     </div>

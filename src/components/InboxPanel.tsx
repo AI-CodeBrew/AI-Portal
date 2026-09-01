@@ -84,8 +84,8 @@ function ChatWindowHeader({
   );
 
   return (
-    <div className="border-b border-slate-200 bg-white px-4 py-3">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+    <div className="border-b border-slate-200 bg-white px-3 py-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <p className="truncate font-semibold text-slate-900">
@@ -462,263 +462,256 @@ export function InboxPanel() {
   );
 
   return (
-    <div className="space-y-3">
-      <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:p-4">
-        <div className="flex flex-wrap gap-1.5">
-          {FILTERS.map(({ key, label }) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => {
-                setFilter(key);
-                setPage(1);
-              }}
-              className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors sm:text-sm ${
-                filter === key
-                  ? "bg-slate-900 text-white"
-                  : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        <div className="relative w-full sm:max-w-sm">
-          <input
-            type="search"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search name or phone…"
-            className="w-full rounded-lg border border-slate-300 bg-slate-50 py-2 pl-3 pr-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100"
-            aria-label="Search conversations"
-          />
-        </div>
-      </div>
-
+    <div className="space-y-2">
       {sendError && !selected ? (
         <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-800">
           {sendError}
         </div>
       ) : null}
 
-      {loading && conversations.length === 0 ? (
-        <div className="rounded-xl border border-slate-200 bg-white p-10 text-center text-sm text-slate-600">
-          Loading inbox…
-        </div>
-      ) : conversations.length === 0 && total === 0 ? (
-        <div className="rounded-xl border border-dashed border-slate-300 bg-white p-12 text-center shadow-sm">
-          <p className="text-base font-medium text-slate-800">
-            {debouncedSearch || filter !== "all"
-              ? "No matches"
-              : "No WhatsApp conversations yet"}
-          </p>
-          <p className="mt-2 text-sm text-slate-600">{emptyHint}</p>
-        </div>
-      ) : (
-        <div className="flex h-[calc(100vh-14rem)] min-h-[420px] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-          <div className="flex w-full max-w-md shrink-0 flex-col border-r border-slate-200 bg-slate-50 sm:w-96">
-            <div className="flex items-center justify-between gap-2 border-b border-slate-200 bg-white px-3 py-2">
-              <p className="text-xs font-medium text-slate-600">
-                {total > 0 ? (
-                  <>
-                    <span className="font-semibold text-slate-900">
-                      {rangeStart}–{rangeEnd}
-                    </span>{" "}
-                    of {total.toLocaleString()}
-                  </>
-                ) : (
-                  "No chats"
-                )}
-              </p>
-              {selectionMode ? (
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (allConversationsSelected) setSelectedIds([]);
-                      else selectAllConversations();
-                    }}
-                    className="rounded-md px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
-                  >
-                    {allConversationsSelected ? "Clear" : "Select page"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void deleteSelectedConversations()}
-                    disabled={deleting || selectedIds.length === 0}
-                    className="rounded-md bg-red-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-red-700 disabled:opacity-50"
-                  >
-                    Delete ({selectedIds.length})
-                  </button>
-                  <button
-                    type="button"
-                    onClick={exitSelectionMode}
-                    className="rounded-md px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-100"
-                  >
-                    Done
-                  </button>
-                </div>
-              ) : (
+      <div className="flex h-[calc(100vh-10.5rem)] min-h-[520px] overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div className="flex w-full max-w-md shrink-0 flex-col border-r border-slate-200 bg-slate-50 sm:w-96">
+          <div className="space-y-1.5 border-b border-slate-200 bg-white px-2.5 py-2">
+            <input
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search name or phone…"
+              className="w-full rounded-lg border border-slate-300 bg-slate-50 px-2.5 py-1.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-100"
+              aria-label="Search conversations"
+            />
+            <div className="flex flex-wrap gap-1">
+              {FILTERS.map(({ key, label }) => (
                 <button
+                  key={key}
                   type="button"
-                  onClick={() => setSelectionMode(true)}
-                  disabled={deleting || conversations.length === 0}
-                  className="rounded-md px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-100 disabled:opacity-50"
+                  onClick={() => {
+                    setFilter(key);
+                    setPage(1);
+                  }}
+                  className={`rounded-md px-2 py-0.5 text-[11px] font-semibold transition-colors ${
+                    filter === key
+                      ? "bg-slate-900 text-white"
+                      : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                  }`}
                 >
-                  Select
+                  {label}
                 </button>
-              )}
-            </div>
-
-            <div className="min-h-0 flex-1 overflow-y-auto">
-              {loading ? (
-                <p className="px-4 py-6 text-center text-xs text-slate-500">
-                  Updating…
-                </p>
-              ) : null}
-              {conversations.map((conv) => (
-                <ConversationListRow
-                  key={conv.id}
-                  conv={conv}
-                  selected={selectedId === conv.id}
-                  onSelect={() => setSelectedId(conv.id)}
-                  onFollowUpSent={() => void refreshAfterSend()}
-                  selectionMode={selectionMode}
-                  checked={selectedIds.includes(conv.id)}
-                  onToggleSelect={() => toggleConversationSelection(conv.id)}
-                />
               ))}
             </div>
-
-            <div className="space-y-2 border-t border-slate-200 bg-white px-3 py-2.5">
-              <div className="flex flex-wrap items-center gap-2">
-                <label className="flex items-center gap-1.5 text-xs text-slate-600">
-                  <span className="font-medium">Rows</span>
-                  <input
-                    type="number"
-                    min={1}
-                    max={100}
-                    step={1}
-                    inputMode="numeric"
-                    value={pageSizeInput}
-                    onChange={(e) => setPageSizeInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        applyRowsPerPage(pageSizeInput);
-                      }
-                    }}
-                    className="w-14 rounded-md border border-slate-300 px-1.5 py-1 text-xs font-semibold text-slate-900 focus:border-blue-500 focus:outline-none"
-                    aria-label="Rows per page"
-                  />
-                </label>
-                <button
-                  type="button"
-                  onClick={() => applyRowsPerPage(pageSizeInput)}
-                  disabled={loading}
-                  className="rounded-md bg-slate-900 px-2.5 py-1 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
-                >
-                  Apply
-                </button>
-                <span className="ml-auto text-[11px] text-slate-500">
-                  Page {page} / {effectiveTotalPages}
-                </span>
-              </div>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => goToPage(page - 1)}
-                  disabled={page <= 1 || loading}
-                  className="flex-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  Back
-                </button>
-                <button
-                  type="button"
-                  onClick={() => goToPage(page + 1)}
-                  disabled={page >= effectiveTotalPages || loading}
-                  className="flex-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  Next
-                </button>
-              </div>
-            </div>
           </div>
 
-          <div className="flex min-w-0 flex-1 flex-col bg-slate-50">
-            {selected ? (
-              <ChatWindowHeader
-                selected={selected}
-                isManual={isManual}
-                switchingMode={switchingMode}
-                deleting={deleting}
-                onSwitchMode={switchMode}
-                onDelete={deleteConversation}
-              />
-            ) : (
-              <div className="border-b border-slate-200 bg-white px-4 py-6 text-center">
-                <p className="text-sm font-medium text-slate-700">
-                  Select a chat to read and reply
-                </p>
-              </div>
-            )}
-
-            <div className="flex-1 space-y-3 overflow-y-auto p-4">
-              {!selected ? (
-                <div className="flex h-full items-center justify-center text-sm text-slate-400">
-                  Pick a conversation from the list
-                </div>
-              ) : messages.length === 0 ? (
-                <div className="flex h-full items-center justify-center text-sm text-slate-400">
-                  No messages yet
-                </div>
+          <div className="flex items-center justify-between gap-2 border-b border-slate-200 bg-white px-3 py-2">
+            <p className="text-xs font-medium text-slate-600">
+              {total > 0 ? (
+                <>
+                  <span className="font-semibold text-slate-900">
+                    {rangeStart}–{rangeEnd}
+                  </span>{" "}
+                  of {total.toLocaleString()}
+                </>
               ) : (
-                messages.map((msg) => (
-                  <div
-                    key={msg.id}
-                    className={`flex ${msg.direction === "out" ? "justify-end" : "justify-start"}`}
-                  >
-                    <div
-                      className={`max-w-[75%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
-                        msg.direction === "out"
-                          ? "bg-blue-600 text-white shadow-sm"
-                          : "border border-slate-200 bg-white text-slate-900 shadow-sm"
-                      }`}
-                    >
-                      <ChatMessageBody content={msg.content} />
-                      {msg.direction === "out" && (
-                        <MessageStatusBadge
-                          status={msg.status}
-                          errorMessage={msg.status_error_message}
-                        />
-                      )}
-                    </div>
-                  </div>
-                ))
+                "No chats"
               )}
-            </div>
-
-            {selected && (
-              <>
-                {sendError && (
-                  <div className="border-t border-red-100 bg-red-50 px-4 py-2 text-xs text-red-800">
-                    {sendError}
-                  </div>
-                )}
-                <ConversationComposer
-                  conversation={selected}
-                  windowStatus={selectedWindowStatus}
-                  isManual={isManual}
-                  sending={sending}
-                  onSendingChange={setSending}
-                  onSent={refreshAfterSend}
-                  onError={setSendError}
-                />
-              </>
+            </p>
+            {selectionMode ? (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (allConversationsSelected) setSelectedIds([]);
+                    else selectAllConversations();
+                  }}
+                  className="rounded-md px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-100"
+                >
+                  {allConversationsSelected ? "Clear" : "Select page"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void deleteSelectedConversations()}
+                  disabled={deleting || selectedIds.length === 0}
+                  className="rounded-md bg-red-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-red-700 disabled:opacity-50"
+                >
+                  Delete ({selectedIds.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={exitSelectionMode}
+                  className="rounded-md px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-100"
+                >
+                  Done
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setSelectionMode(true)}
+                disabled={deleting || conversations.length === 0}
+                className="rounded-md px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-100 disabled:opacity-50"
+              >
+                Select
+              </button>
             )}
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {loading ? (
+              <p className="px-4 py-6 text-center text-xs text-slate-500">
+                {conversations.length === 0 ? "Loading inbox…" : "Updating…"}
+              </p>
+            ) : null}
+            {!loading && conversations.length === 0 ? (
+              <div className="px-4 py-10 text-center">
+                <p className="text-sm font-medium text-slate-700">
+                  {debouncedSearch || filter !== "all"
+                    ? "No matches"
+                    : "No WhatsApp conversations yet"}
+                </p>
+                <p className="mt-1.5 text-xs text-slate-500">{emptyHint}</p>
+              </div>
+            ) : null}
+            {conversations.map((conv) => (
+              <ConversationListRow
+                key={conv.id}
+                conv={conv}
+                selected={selectedId === conv.id}
+                onSelect={() => setSelectedId(conv.id)}
+                onFollowUpSent={() => void refreshAfterSend()}
+                selectionMode={selectionMode}
+                checked={selectedIds.includes(conv.id)}
+                onToggleSelect={() => toggleConversationSelection(conv.id)}
+              />
+            ))}
+          </div>
+
+          <div className="space-y-1.5 border-t border-slate-200 bg-white px-2.5 py-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="flex items-center gap-1.5 text-xs text-slate-600">
+                <span className="font-medium">Rows</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={100}
+                  step={1}
+                  inputMode="numeric"
+                  value={pageSizeInput}
+                  onChange={(e) => setPageSizeInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      applyRowsPerPage(pageSizeInput);
+                    }
+                  }}
+                  className="w-14 rounded-md border border-slate-300 px-1.5 py-1 text-xs font-semibold text-slate-900 focus:border-blue-500 focus:outline-none"
+                  aria-label="Rows per page"
+                />
+              </label>
+              <button
+                type="button"
+                onClick={() => applyRowsPerPage(pageSizeInput)}
+                disabled={loading}
+                className="rounded-md bg-slate-900 px-2.5 py-1 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
+              >
+                Apply
+              </button>
+              <span className="ml-auto text-[11px] text-slate-500">
+                Page {page} / {effectiveTotalPages}
+              </span>
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => goToPage(page - 1)}
+                disabled={page <= 1 || loading}
+                className="flex-1 rounded-lg border border-slate-300 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Back
+              </button>
+              <button
+                type="button"
+                onClick={() => goToPage(page + 1)}
+                disabled={page >= effectiveTotalPages || loading}
+                className="flex-1 rounded-lg border border-slate-300 bg-white px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Next
+              </button>
+            </div>
           </div>
         </div>
-      )}
+
+        <div className="flex min-w-0 flex-1 flex-col bg-slate-50">
+          {selected ? (
+            <ChatWindowHeader
+              selected={selected}
+              isManual={isManual}
+              switchingMode={switchingMode}
+              deleting={deleting}
+              onSwitchMode={switchMode}
+              onDelete={deleteConversation}
+            />
+          ) : (
+            <div className="border-b border-slate-200 bg-white px-4 py-3 text-center">
+              <p className="text-sm font-medium text-slate-700">
+                Select a chat to read and reply
+              </p>
+            </div>
+          )}
+
+          <div className="flex-1 space-y-2 overflow-y-auto px-4 py-3">
+            {!selected ? (
+              <div className="flex h-full items-center justify-center text-sm text-slate-400">
+                Pick a conversation from the list
+              </div>
+            ) : messages.length === 0 ? (
+              <div className="flex h-full items-center justify-center text-sm text-slate-400">
+                No messages yet
+              </div>
+            ) : (
+              messages.map((msg) => (
+                <div
+                  key={msg.id}
+                  className={`flex ${msg.direction === "out" ? "justify-end" : "justify-start"}`}
+                >
+                  <div
+                    className={`max-w-[75%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
+                      msg.direction === "out"
+                        ? "bg-blue-600 text-white shadow-sm"
+                        : "border border-slate-200 bg-white text-slate-900 shadow-sm"
+                    }`}
+                  >
+                    <ChatMessageBody content={msg.content} />
+                    {msg.direction === "out" && (
+                      <MessageStatusBadge
+                        status={msg.status}
+                        errorMessage={msg.status_error_message}
+                      />
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+
+          {selected && (
+            <>
+              {sendError && (
+                <div className="border-t border-red-100 bg-red-50 px-4 py-2 text-xs text-red-800">
+                  {sendError}
+                </div>
+              )}
+              <ConversationComposer
+                conversation={selected}
+                windowStatus={selectedWindowStatus}
+                isManual={isManual}
+                sending={sending}
+                onSendingChange={setSending}
+                onSent={refreshAfterSend}
+                onError={setSendError}
+              />
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
