@@ -131,12 +131,24 @@ export function looksLikeOrderDecline(text: string): boolean {
 const OBJECTION_PATTERN =
   /\b(original|genuine|authentic|asli|nakli|fake|copy|duplicate|warranty|guarantee|garanti|quality|kitna\s+chalega|durab\w*|tootne|kharab|how\s+long\s+(?:will|does)|delivery\s+time|kab\s+(?:tak|aayega|milega|ayega)|return|returns|refund|exchange|let\s+me\s+(?:ask|think)|soch\s+kar|puch\s+kar|wife|husband|just\s+looking|no\s+rush)\b/i;
 
+/** Customer supplying checkout details, not objecting. Needed because
+ * DECLINE_PATTERN/HARD_STOP_PATTERN fire on ordinary address words — "Block A"
+ * hits `block`, "budget under 3500" hits `budget`. Those false positives are
+ * harmless for model routing, but would seed an address into the rebuttals
+ * library, so this gate screens them out. */
+const CHECKOUT_SIGNAL_PATTERN =
+  /\b(my name is|i live in|address|street|road|colony|sector|mohalla|house\s*(?:no|#|number)|flat|shop\s*no|postal|zip\s*code|block\s+[a-z0-9]{1,3}\b)\b/i;
+
 /** Price objection OR product/trust objection — the rebuttals library's intake
  * funnel. Gates both retrieval and capture, so widening this widens both. */
 export function looksLikeObjection(text: string): boolean {
   const t = text.trim();
   if (t.length < 2) return false;
-  if (looksLikeOrderDecline(t)) return true;
+  // Checkout details first: these must never reach the library, even when the
+  // decline patterns match a word inside them.
   if (parseCheckoutDetails(t)) return false;
+  if (CHECKOUT_SIGNAL_PATTERN.test(t)) return false;
+  if (/\d{7,}/.test(t.replace(/\s/g, ""))) return false; // phone number
+  if (looksLikeOrderDecline(t)) return true;
   return OBJECTION_PATTERN.test(t);
 }

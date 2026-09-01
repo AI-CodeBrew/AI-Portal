@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "test:window": "node --experimental-strip-types --test src/lib/whatsapp-window/window-status.test.ts",
-    "test:gemini-ab": "node --env-file=.env.local --experimental-strip-types scripts/gemini-model-ab.ts"
+    "test:gemini-ab": "node --env-file=.env.local --experimental-strip-types scripts/gemini-model-ab.ts",
+    "backfill:rebuttals": "tsx --env-file=.env.local scripts/backfill-rebuttals.ts"
   },
   "dependencies": {
     "@google/genai": "^2.16.0",
@@ -31,6 +32,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.10",
     "tailwindcss": "^4",
+    "tsx": "^4.23.13",
     "typescript": "^5"
   }
 }

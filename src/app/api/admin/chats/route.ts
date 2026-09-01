@@ -11,6 +11,7 @@ export async function GET(request: NextRequest) {
   try {
     await requireAuth("admin");
     const storeId = request.nextUrl.searchParams.get("storeId");
+    const search = request.nextUrl.searchParams.get("search");
     const filterParam = request.nextUrl.searchParams.get("filter") ?? "all";
     const filter = FILTERS.includes(filterParam as AdminChatFilter)
       ? (filterParam as AdminChatFilter)
@@ -19,6 +20,7 @@ export async function GET(request: NextRequest) {
     const { conversations, counts } = await getAdminConversations({
       storeId: storeId || null,
       filter,
+      search,
     });
 
     return NextResponse.json({ conversations, counts });

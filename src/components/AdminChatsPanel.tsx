@@ -40,6 +40,40 @@ function conversationStatusLabel(status: AdminConversation["status"]) {
   return status;
 }
 
+/** Case-insensitive split of `text` around every occurrence of `term`. */
+function highlightParts(text: string, term: string): Array<{ t: string; hit: boolean }> {
+  const needle = term.trim();
+  if (!needle) return [{ t: text, hit: false }];
+  const parts: Array<{ t: string; hit: boolean }> = [];
+  const lower = text.toLowerCase();
+  const target = needle.toLowerCase();
+  let i = 0;
+  while (i < text.length) {
+    const found = lower.indexOf(target, i);
+    if (found === -1) {
+      parts.push({ t: text.slice(i), hit: false });
+      break;
+    }
+    if (found > i) parts.push({ t: text.slice(i, found), hit: false });
+    parts.push({ t: text.slice(found, found + target.length), hit: true });
+    i = found + target.length;
+  }
+  return parts.length ? parts : [{ t: text, hit: false }];
+}
+
+function matchBadge(match: AdminConversation["match"]): string | null {
+  if (!match) return null;
+  if (match.reason === "order") {
+    // order_number is often stored with its own leading "#"
+    return match.orderNumber
+      ? `Order #${match.orderNumber.replace(/^#/, "")}`
+      : "Order match";
+  }
+  if (match.reason === "message") return "In messages";
+  if (match.reason === "name") return match.customerName ?? "Name match";
+  return "Phone match";
+}
+
 function storeLabel(conv: AdminConversation, resellers: AdminResellerRow[]) {
   const reseller = resellers.find((r) => r.store_id === conv.store_id);
   if (reseller) return resellerLabel(reseller);
@@ -64,6 +98,9 @@ export function AdminChatsPanel({
     validInitial ?? ""
   );
   const [filter, setFilter] = useState<AdminChatFilter>("all");
+  const [searchInput, setSearchInput] = useState("");
+  /** Debounced value actually sent to the API. */
+  const [search, setSearch] = useState("");
   const [conversations, setConversations] = useState<AdminConversation[]>([]);
   const [counts, setCounts] = useState<AdminChatCounts>({
     all: 0,
@@ -93,6 +130,7 @@ export function AdminChatsPanel({
       try {
         const params = new URLSearchParams({ filter });
         if (selectedStoreId) params.set("storeId", selectedStoreId);
+        if (search.trim()) params.set("search", search.trim());
 
         const res = await fetch(`/api/admin/chats?${params}`);
         const data = await res.json();
@@ -114,8 +152,13 @@ export function AdminChatsPanel({
         setLoadingConversations(false);
       }
     },
-    [filter, selectedStoreId]
+    [filter, selectedStoreId, search]
   );
+
+  useEffect(() => {
+    const id = setTimeout(() => setSearch(searchInput), 300);
+    return () => clearTimeout(id);
+  }, [searchInput, setSearch]);
 
   useEffect(() => {
     loadConversations();
@@ -205,6 +248,31 @@ export function AdminChatsPanel({
           </select>
         </label>
 
+        <label className="flex min-w-[240px] flex-1 flex-col gap-1 text-sm sm:max-w-sm">
+          <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Search
+          </span>
+          <div className="relative">
+            <input
+              type="search"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              placeholder="Phone, name, or order # (e.g. 1042)"
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 pr-8 text-sm text-slate-800 focus:border-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-100"
+            />
+            {searchInput && (
+              <button
+                type="button"
+                onClick={() => setSearchInput("")}
+                aria-label="Clear search"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"
+              >
+                ×
+              </button>
+            )}
+          </div>
+        </label>
+
         <div className="flex flex-wrap gap-2">
           {FILTERS.map((f) => {
             const active = filter === f.value;
@@ -244,16 +312,23 @@ export function AdminChatsPanel({
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
               Conversations
               {selectedStoreId ? " · filtered by reseller" : ""}
+              {search.trim() ? ` · ${conversations.length} match` : ""}
             </p>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto">
             {loadingConversations ? (
               <p className="px-3 py-6 text-sm text-slate-600">Loading...</p>
             ) : conversations.length === 0 ? (
-              <p className="px-3 py-6 text-sm text-slate-600">No chats match</p>
+              <p className="px-3 py-6 text-sm text-slate-600">
+                {search.trim()
+                  ? `No chats matched "${search.trim()}"`
+                  : "No chats match"}
+              </p>
             ) : (
               pagedConversations.map((conv) => {
                 const active = selectedConversationId === conv.id;
+                const isOrderHit = conv.match?.reason === "order";
+                const badge = matchBadge(conv.match);
                 return (
                   <button
                     key={conv.id}
@@ -262,7 +337,9 @@ export function AdminChatsPanel({
                     className={`block w-full border-b border-slate-200 px-3 py-3 text-left text-sm transition-colors hover:bg-white ${
                       active
                         ? "border-l-4 border-l-violet-600 bg-white font-semibold text-violet-700"
-                        : "border-l-4 border-l-transparent text-slate-700"
+                        : isOrderHit
+                          ? "border-l-4 border-l-amber-500 bg-amber-50 text-slate-800"
+                          : "border-l-4 border-l-transparent text-slate-700"
                     }`}
                   >
                     <span className="flex items-center gap-2">
@@ -271,6 +348,22 @@ export function AdminChatsPanel({
                         <span className="h-2 w-2 shrink-0 rounded-full bg-violet-500" />
                       )}
                     </span>
+                    {conv.customer_name && (
+                      <span className="mt-0.5 block truncate text-xs font-normal text-slate-600">
+                        {conv.customer_name}
+                      </span>
+                    )}
+                    {badge && (
+                      <span
+                        className={`mt-1 inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                          isOrderHit
+                            ? "bg-amber-200 text-amber-900"
+                            : "bg-slate-200 text-slate-700"
+                        }`}
+                      >
+                        {badge}
+                      </span>
+                    )}
                     {!selectedStoreId && (
                       <span className="mt-0.5 block truncate text-xs font-normal text-slate-500">
                         {storeLabel(conv, resellersWithStore)}
@@ -341,25 +434,48 @@ export function AdminChatsPanel({
                   : "No conversation selected"}
               </p>
             ) : (
-              messages.map((msg) => (
-                <div
-                  key={msg.id}
-                  className={`flex ${msg.direction === "out" ? "justify-end" : "justify-start"}`}
-                >
+              messages.map((msg) => {
+                const term = search.trim();
+                const hit =
+                  term.length > 0 &&
+                  (msg.content ?? "").toLowerCase().includes(term.toLowerCase());
+                return (
                   <div
-                    className={`max-w-[75%] rounded-xl px-4 py-2.5 text-sm leading-relaxed ${
-                      msg.direction === "out"
-                        ? "bg-violet-600 text-white shadow-sm"
-                        : "border border-slate-200 bg-white text-slate-900 shadow-sm"
-                    }`}
+                    key={msg.id}
+                    className={`flex ${msg.direction === "out" ? "justify-end" : "justify-start"}`}
                   >
-                    <p className="mb-1 text-[10px] font-semibold uppercase opacity-70">
-                      {msg.direction === "out" ? "Store / AI" : "Customer"}
-                    </p>
-                    <ChatMessageBody content={msg.content} />
+                    <div
+                      className={`max-w-[75%] rounded-xl px-4 py-2.5 text-sm leading-relaxed ${
+                        msg.direction === "out"
+                          ? "bg-violet-600 text-white shadow-sm"
+                          : "border border-slate-200 bg-white text-slate-900 shadow-sm"
+                      } ${hit ? "ring-2 ring-amber-400 ring-offset-2 ring-offset-slate-50" : ""}`}
+                    >
+                      <p className="mb-1 text-[10px] font-semibold uppercase opacity-70">
+                        {msg.direction === "out" ? "Store / AI" : "Customer"}
+                      </p>
+                      {hit ? (
+                        <p className="whitespace-pre-wrap">
+                          {highlightParts(msg.content ?? "", term).map((part, i) =>
+                            part.hit ? (
+                              <mark
+                                key={i}
+                                className="rounded bg-amber-300 px-0.5 text-slate-900"
+                              >
+                                {part.t}
+                              </mark>
+                            ) : (
+                              <span key={i}>{part.t}</span>
+                            )
+                          )}
+                        </p>
+                      ) : (
+                        <ChatMessageBody content={msg.content} />
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>
