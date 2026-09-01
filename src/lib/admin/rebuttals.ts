@@ -23,6 +23,7 @@ export type AdminRebuttalRow = {
   source: "auto" | "manual";
   language: string | null;
   times_served: number;
+  last_served_at: string | null;
   created_at: string;
   approved_at: string | null;
   source_conversation_id: string | null;
@@ -53,6 +54,7 @@ const rebuttalSelect = `
   source,
   language,
   times_served,
+  last_served_at,
   created_at,
   approved_at,
   source_conversation_id,

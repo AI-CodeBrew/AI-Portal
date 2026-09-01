@@ -41,6 +41,17 @@ function scopeLabel(row: AdminRebuttalRow): string {
   return row.stores?.store_name ?? row.stores?.shop_domain ?? "Store";
 }
 
+/** Short relative time for the usage column — "today", "3d ago", else a date. */
+function formatLastUsed(iso: string): string {
+  const then = new Date(iso).getTime();
+  if (!Number.isFinite(then)) return "";
+  const days = Math.floor((Date.now() - then) / 86_400_000);
+  if (days <= 0) return "today";
+  if (days === 1) return "yesterday";
+  if (days < 30) return `${days}d ago`;
+  return new Date(iso).toLocaleDateString();
+}
+
 function truncate(text: string, max = 120): string {
   const t = text.trim();
   return t.length > max ? `${t.slice(0, max)}…` : t;
@@ -189,7 +200,7 @@ export function AdminRebuttalsPanel({ resellers }: Props) {
                   Scope
                 </th>
                 <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-slate-700">
-                  Served
+                  Used
                 </th>
                 <th className="px-4 py-3 text-left text-xs font-semibold uppercase text-slate-700">
                   Created
@@ -240,7 +251,12 @@ export function AdminRebuttalsPanel({ resellers }: Props) {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-sm text-slate-700">
-                      {row.times_served}
+                      <p className="font-semibold">{row.times_served}×</p>
+                      {row.last_served_at && (
+                        <p className="text-xs text-slate-500">
+                          {formatLastUsed(row.last_served_at)}
+                        </p>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-xs text-slate-600">
                       {new Date(row.created_at).toLocaleDateString()}
@@ -286,7 +302,12 @@ export function AdminRebuttalsPanel({ resellers }: Props) {
                   >
                     {scopeLabel(row)}
                   </span>
-                  <span>Served {row.times_served}×</span>
+                  <span>
+                    Used {row.times_served}×
+                    {row.last_served_at
+                      ? ` · ${formatLastUsed(row.last_served_at)}`
+                      : ""}
+                  </span>
                 </div>
               </button>
             ))
@@ -410,6 +431,19 @@ function RebuttalReviewModal({
         </div>
 
         <div className="space-y-4">
+          {(row.status === "approved" || row.times_served > 0) && (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+              Used by the agent{" "}
+              <strong className="text-slate-900">{row.times_served}</strong>{" "}
+              {row.times_served === 1 ? "time" : "times"}
+              {row.last_served_at
+                ? ` · last ${formatLastUsed(row.last_served_at)}`
+                : row.status === "approved"
+                  ? " · not used yet"
+                  : ""}
+            </div>
+          )}
+
           <div>
             <div className="mb-1 flex items-center justify-between">
               <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
