@@ -34,6 +34,7 @@ const navGroups: NavGroup[] = [
       { href: "/admin/orders", label: "All Orders" },
       { href: "/admin/top-products", label: "Top Products" },
       { href: "/admin/chats", label: "All Chats" },
+      { href: "/admin/rebuttals", label: "Rebuttals" },
       { href: "/admin/support", label: "Support" },
     ],
   },
@@ -58,6 +59,17 @@ function NavIcon({ name }: { name: string }) {
             strokeLinejoin="round"
             d="M3 13h8V3H3v10zm10 8h8V3h-8v18zM3 21h8v-6H3v6z"
           />
+        </svg>
+      );
+    case "Rebuttals":
+      return (
+        <svg {...props}>
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M21 12a8 8 0 01-8 8H7l-4 3v-4.5A8 8 0 1121 12z"
+          />
+          <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4" />
         </svg>
       );
     case "Resellers":

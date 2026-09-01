@@ -5,7 +5,10 @@ import {
 } from "./sales-tools";
 import { CHAT_HISTORY_LIMIT, trimHistoryForAgent } from "./chat-history";
 import { buildSalesSystemPromptWithExamples } from "./build-system-prompt-with-examples";
-import { formatProductsReply } from "./product-reply";
+import {
+  ensureProductImageMarkers,
+  formatProductsReply,
+} from "./product-reply";
 import {
   extractSkuFromText,
   extractProductSearchQuery,
@@ -199,6 +202,7 @@ export async function runSalesAgentWithGemini(
     pendingOrdersHint: ctx.pendingOrdersHint,
     history: trimmedHistory,
     memoryContext: ctx.memoryContext,
+    rebuttal: ctx.rebuttal,
   });
 
   const contents = mergeGeminiContents(toGeminiContents(trimmedHistory));
@@ -255,7 +259,9 @@ export async function runSalesAgentWithGemini(
         return formatProductsReply(lastSearchProducts);
       }
 
-      return text;
+      // The LLM is told not to write image URLs, so re-attach the photo here —
+      // the [Image: …] marker is what actually triggers the WhatsApp image send.
+      return ensureProductImageMarkers(text, lastSearchProducts);
     }
 
     contents.push({

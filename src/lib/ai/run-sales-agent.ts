@@ -1,5 +1,4 @@
 import { runSalesAgentWithGemini } from "./gemini-agent";
-import { runSalesAgentWithAnthropic } from "./anthropic-agent";
 import { getEffectiveStoreCurrency } from "@/lib/currency";
 import { resolveStoreAiConfig } from "./store-ai-settings";
 import {
@@ -7,6 +6,8 @@ import {
   isLlmProviderConfigured,
 } from "@/lib/platform/llm-settings";
 import { getPendingOrdersHintForPhone, type AgentContext } from "./sales-tools";
+import { looksLikeObjection } from "./sales-recovery";
+import { findMatchingRebuttal } from "@/lib/rebuttals/rebuttals-service";
 
 export type { AgentContext } from "./sales-tools";
 
@@ -47,6 +48,26 @@ async function enrichAgentContext(ctx: AgentContext): Promise<AgentContext> {
     }
   }
 
+  // Gate on the objection regex: without it every greeting/address/"yes" pays
+  // an embedding round trip for near-zero hit rate.
+  if (next.rebuttal === undefined) {
+    const latestUser =
+      [...(next.chatHistory ?? [])]
+        .reverse()
+        .find((m) => m.role === "user")?.content ?? "";
+
+    if (latestUser && looksLikeObjection(latestUser)) {
+      try {
+        next = {
+          ...next,
+          rebuttal: await findMatchingRebuttal(next.store.id, latestUser),
+        };
+      } catch (err) {
+        console.warn("[run-sales-agent] rebuttal lookup failed:", err);
+      }
+    }
+  }
+
   return next;
 }
 
@@ -79,14 +100,6 @@ export async function runSalesAgent(
     console.error(
       "[run-sales-agent] Gemini API key unavailable (set GEMINI_API_KEY in env)"
     );
-  }
-
-  if (process.env.ANTHROPIC_API_KEY) {
-    try {
-      return await runSalesAgentWithAnthropic(enrichedCtx, history);
-    } catch (err) {
-      console.error("[run-sales-agent] Anthropic agent error:", err);
-    }
   }
 
   return "Sorry, I'm having a bit of trouble — a team member will jump in shortly.";

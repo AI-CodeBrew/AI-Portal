@@ -6,7 +6,7 @@ Investigated directly from source on 2026-08-16. File paths and line numbers ref
 
 ## 1. How the AI agent works (overview)
 
-This is a **WhatsApp sales agent**, not a fine-tuned model. It's Google Gemini (with an Anthropic fallback) driven by a system prompt + tools + a hybrid pipeline of deterministic handlers.
+This is a **WhatsApp sales agent**, not a fine-tuned model. It's Google Gemini driven by a system prompt + tools + a hybrid pipeline of deterministic handlers.
 
 **Entry point:** `src/lib/whatsapp-webhook-handler.ts`
 Flow per inbound WhatsApp message:

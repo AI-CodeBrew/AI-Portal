@@ -124,3 +124,19 @@ export function looksLikeOrderDecline(text: string): boolean {
   }
   return DECLINE_PATTERN.test(t);
 }
+
+/** Product / trust objections DECLINE_PATTERN does not cover — authenticity,
+ * warranty, quality, delivery time, returns, and stalls. Mirrors the OBJECTION
+ * PLAYBOOK in build-system-prompt.ts. */
+const OBJECTION_PATTERN =
+  /\b(original|genuine|authentic|asli|nakli|fake|copy|duplicate|warranty|guarantee|garanti|quality|kitna\s+chalega|durab\w*|tootne|kharab|how\s+long\s+(?:will|does)|delivery\s+time|kab\s+(?:tak|aayega|milega|ayega)|return|returns|refund|exchange|let\s+me\s+(?:ask|think)|soch\s+kar|puch\s+kar|wife|husband|just\s+looking|no\s+rush)\b/i;
+
+/** Price objection OR product/trust objection — the rebuttals library's intake
+ * funnel. Gates both retrieval and capture, so widening this widens both. */
+export function looksLikeObjection(text: string): boolean {
+  const t = text.trim();
+  if (t.length < 2) return false;
+  if (looksLikeOrderDecline(t)) return true;
+  if (parseCheckoutDetails(t)) return false;
+  return OBJECTION_PATTERN.test(t);
+}

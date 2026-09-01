@@ -11,7 +11,6 @@
     "test:gemini-ab": "node --env-file=.env.local --experimental-strip-types scripts/gemini-model-ab.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.110.0",
     "@google/genai": "^2.16.0",
     "@supabase/ssr": "^0.12.0",
     "@supabase/supabase-js": "^2.110.0",

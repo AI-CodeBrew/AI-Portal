@@ -53,6 +53,8 @@ export interface AgentContext {
   chatHistory?: Array<{ role: "user" | "assistant"; content: string }>;
   /** Profile + rolling summary + Mem0 recall for this turn */
   memoryContext?: import("@/lib/memory/types").AgentMemoryContext | null;
+  /** Admin-approved rebuttal matched to this turn's objection, if any */
+  rebuttal?: import("@/lib/rebuttals/rebuttals-service").MatchedRebuttal | null;
 }
 
 function formatVariantPrice(price: string, currency: string) {
@@ -284,20 +286,6 @@ export const OPENAI_SALES_TOOLS = [
     },
   },
 ];
-
-/** Anthropic tool schema — reuses the same source of truth as Gemini's
- * functionDeclarations so both providers stay in sync. */
-export function anthropicToolDefinitions(): Array<{
-  name: string;
-  description: string;
-  input_schema: Record<string, unknown>;
-}> {
-  return OPENAI_SALES_TOOLS.map((tool) => ({
-    name: tool.function.name,
-    description: tool.function.description,
-    input_schema: tool.function.parameters,
-  }));
-}
 
 /** Gemini functionDeclarations — sanitize JSON schema for the Google API. */
 export function geminiFunctionDeclarations() {

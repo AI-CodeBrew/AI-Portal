@@ -1,6 +1,6 @@
 # AI Commerce Portal
 
-Multi-merchant e-commerce operations portal: Shopify order sync, WhatsApp confirmations, and Claude-powered AI sales agent.
+Multi-merchant e-commerce operations portal: Shopify order sync, WhatsApp confirmations, and Gemini-powered AI sales agent.
 
 ## Authentication
 
@@ -57,7 +57,6 @@ Copy `.env.local.example` to `.env.local` and fill in all values:
 | `META_APP_ID` / `META_APP_SECRET` | Meta Developer app credentials |
 | `META_CONFIG_ID` | WhatsApp Embedded Signup config ID |
 | `WHATSAPP_VERIFY_TOKEN` | Any string for webhook verification |
-| `ANTHROPIC_API_KEY` | Claude API key |
 
 For initial WhatsApp testing (before Embedded Signup), set `WHATSAPP_ACCESS_TOKEN` and `WHATSAPP_PHONE_NUMBER_ID`.
 
@@ -92,7 +91,7 @@ Portal Dashboard ◄──Realtime── orders table
         │
         └── Confirm ──► WhatsApp template (order_confirmed)
 
-Customer WhatsApp ──► /api/whatsapp-webhook ──► Claude AI Agent
+Customer WhatsApp ──► /api/whatsapp-webhook ──► Gemini AI Agent
                                 │                      │
                                 │                      ├── search_products
                                 │                      ├── check_stock

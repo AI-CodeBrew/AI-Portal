@@ -33,6 +33,8 @@ import {
 import { parseAdRefFromMessage } from "@/lib/ads/whatsapp-ad-links";
 import { extractOutboundMedia } from "@/lib/ai/message-markers";
 import { looksLikeExactGreetingOnly } from "@/lib/ai/greeting-reply";
+import { looksLikeObjection } from "@/lib/ai/sales-recovery";
+import { captureRebuttalCandidate } from "@/lib/rebuttals/rebuttals-service";
 import {
   getStoreWhatsAppCredentials,
   resolveMetaSecret,
@@ -708,6 +710,22 @@ export async function handleWhatsAppWebhookMessage(
               userMessage: inboundText,
               assistantReply: customerFacingText,
             });
+
+            // Novel-objection capture for the admin rebuttals library. Awaited
+            // (not void) — the reply already went out, so this costs the
+            // customer nothing, and fire-and-forget can be dropped on teardown.
+            // If a rebuttal was already served it scores above the novelty
+            // threshold too, so the service's dedupe suppresses the capture.
+            if (looksLikeObjection(inboundText)) {
+              await captureRebuttalCandidate({
+                storeId: activeStore.id,
+                objectionText: inboundText,
+                // Marker-free text — never the raw replyText
+                draftAnswer: customerFacingText,
+                conversationId: conversation.id,
+                metaMessageId: msg.id ?? null,
+              }).catch(() => {});
+            }
 
             // Count AI replies toward per-conversation limit (+ optional window)
             const limitsAfter = await getStoreSpamLimits(activeStore.id);

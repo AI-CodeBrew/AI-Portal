@@ -8,7 +8,7 @@ Last updated: 2026-08-18
 
 ## Overview
 
-The agent is **not fine-tuned**. It uses **Google Gemini** (plus optional Anthropic env fallback) guided by:
+The agent is **not fine-tuned**. It uses **Google Gemini** guided by:
 
 1. **System prompt** — human sales rep persona, hard rules, stage guidance (`build-system-prompt.ts`)
 2. **Per-store settings** — name, tone, templates, recovery discounts (Dashboard → AI Settings)
@@ -224,7 +224,6 @@ Admin platform defaults apply when store leaves a field null.
 | `GEMINI_CHAT_MODEL` | Chat / sales replies (default `gemini-3.6-flash`) |
 | `GEMINI_REASONING_MODEL` | Heavier reasoning tasks (default `gemini-3.1-pro-preview`) |
 | `GEMINI_UTILITY_MODEL` | Light utility / intent routing (default `gemini-3.1-flash-lite`) |
-| `ANTHROPIC_API_KEY` | Fallback LLM if Gemini unavailable |
 | `BUNNY_CDN_HOSTNAME` | Portal product image URLs |
 
 ---
@@ -242,7 +241,7 @@ When you change AI behavior, update **this doc** and the relevant file:
 | Product + image direct replies | `src/lib/ai/product-reply.ts` |
 | Checkout parsing | `src/lib/ai/checkout-reply.ts`, `checkout-parse.ts` |
 | Recovery offers | `src/lib/ai/sales-recovery.ts` |
-| Gemini / Anthropic loops | `src/lib/ai/gemini-agent.ts`, `anthropic-agent.ts`, `intent-router.ts` |
+| Gemini loop | `src/lib/ai/gemini-agent.ts`, `intent-router.ts` |
 | LLM env + status | `src/lib/platform/llm-settings.ts`, Admin → AI Defaults (read-only) |
 | Model routing | `src/lib/ai/model-routing.ts` |
 | Memory layers | `src/lib/memory/*` (profile, compaction, mem0, agent-memory-context) |

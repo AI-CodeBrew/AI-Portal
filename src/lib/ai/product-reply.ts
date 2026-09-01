@@ -451,3 +451,61 @@ export async function buildCatalogBrowseReplyForAgent(
     reply: `${intro}\n\n${formatCatalogBrowseReply(products)}`,
   };
 }
+
+type ImageCandidate = {
+  title?: string;
+  sku?: string;
+  imageUrl?: string | null;
+  image_url?: string | null;
+  image_urls?: string[] | null;
+};
+
+function mentionsProduct(text: string, product: ImageCandidate): boolean {
+  const haystack = skuMatchKey(text);
+  if (!haystack) return false;
+
+  const sku = product.sku ? skuMatchKey(product.sku) : "";
+  if (sku.length >= 4 && haystack.includes(sku)) return true;
+
+  const title = product.title ? skuMatchKey(product.title) : "";
+  if (title.length >= 4 && haystack.includes(title)) return true;
+
+  // Partial title match — the LLM often shortens "AquaBrush Spray Comb" to "AquaBrush"
+  const words = (product.title ?? "")
+    .split(/\s+/)
+    .map((w) => skuMatchKey(w))
+    .filter((w) => w.length >= 5);
+  return words.length > 0 && words.every((w) => haystack.includes(w));
+}
+
+/**
+ * Guarantee the product photo goes out with the reply.
+ *
+ * Images are only sent because extractOutboundMedia finds [Image: …] in the
+ * outgoing text, so we cannot rely on the LLM to copy the marker through from
+ * formatted_reply. Prepend it here for the products the reply is actually
+ * about (markers already present are left alone).
+ */
+export function ensureProductImageMarkers(
+  text: string,
+  products: ImageCandidate[]
+): string {
+  if (!text.trim() || !products.length) return text;
+  if (/\[Image:\s*https?:\/\//i.test(text)) return text;
+
+  const matched = products.filter((p) => mentionsProduct(text, p));
+  const targets = matched.length
+    ? matched
+    : products.length === 1
+      ? products
+      : [];
+
+  const urls: string[] = [];
+  for (const product of targets.slice(0, 2)) {
+    const url = getPrimaryProductImageUrl(product);
+    if (url && !urls.includes(url)) urls.push(url);
+  }
+  if (!urls.length) return text;
+
+  return `${urls.map((u) => `[Image: ${u}]`).join("\n")}\n${text}`;
+}
