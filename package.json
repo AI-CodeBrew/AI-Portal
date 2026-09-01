@@ -9,7 +9,8 @@
     "lint": "eslint",
     "test:window": "node --experimental-strip-types --test src/lib/whatsapp-window/window-status.test.ts",
     "test:gemini-ab": "node --env-file=.env.local --experimental-strip-types scripts/gemini-model-ab.ts",
-    "backfill:rebuttals": "tsx --env-file=.env.local scripts/backfill-rebuttals.ts"
+    "backfill:rebuttals": "tsx --env-file=.env.local scripts/backfill-rebuttals.ts",
+    "backfill:order-chats": "tsx --env-file=.env.local scripts/backfill-order-conversations.ts"
   },
   "dependencies": {
     "@google/genai": "^2.16.0",

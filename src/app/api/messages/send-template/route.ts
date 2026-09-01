@@ -29,6 +29,7 @@ async function loadTemplateContext(
   supabase: ReturnType<typeof createAdminClient>,
   storeId: string,
   conversation: {
+    id: string;
     customer_id: string | null;
     customer_phone: string;
   }
@@ -68,30 +69,47 @@ async function loadTemplateContext(
   let currency: string | null = null;
   let sku: string | null = null;
 
-  // customer_id is unset on most conversations, so fall back to resolving the
-  // customer by phone — otherwise the order fields stay empty and the template
-  // renders its placeholder defaults ("your order", 0.00).
+  const orderSelect = "order_number, items, total, currency";
+
+  // Prefer the direct chat link. The customer_id path is unreliable: orders are
+  // keyed to a customer upserted on the phone typed at checkout, which is often
+  // a different number from the one the customer chats from.
+  let order: Record<string, unknown> | null = null;
+
+  {
+    const { data } = await supabase
+      .from("orders")
+      .select(orderSelect)
+      .eq("store_id", storeId)
+      .eq("conversation_id", conversation.id)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    order = data ?? null;
+  }
+
   const orderCustomerId = customerRow?.id ?? conversation.customer_id;
 
-  if (orderCustomerId) {
-    const { data: order } = await supabase
+  if (!order && orderCustomerId) {
+    const { data } = await supabase
       .from("orders")
-      .select("order_number, items, total, currency")
+      .select(orderSelect)
       .eq("store_id", storeId)
       .eq("customer_id", orderCustomerId)
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle();
+    order = data ?? null;
+  }
 
-    if (order) {
-      orderNumber = (order.order_number as string | null) ?? null;
-      items = (order.items as Array<{ title: string; quantity: number }>) ?? [];
-      total = Number(order.total ?? 0);
-      currency = (order.currency as string | null) ?? null;
-      const firstItem = items[0];
-      if (firstItem && "sku" in firstItem) {
-        sku = String((firstItem as { sku?: string }).sku ?? "") || null;
-      }
+  if (order) {
+    orderNumber = (order.order_number as string | null) ?? null;
+    items = (order.items as Array<{ title: string; quantity: number }>) ?? [];
+    total = Number(order.total ?? 0);
+    currency = (order.currency as string | null) ?? null;
+    const firstItem = items[0];
+    if (firstItem && "sku" in firstItem) {
+      sku = String((firstItem as { sku?: string }).sku ?? "") || null;
     }
   }
 
@@ -215,6 +233,7 @@ export async function POST(request: NextRequest) {
     }
 
     const context = await loadTemplateContext(supabase, storeId, {
+      id: conversation.id as string,
       customer_id: conversation.customer_id as string | null,
       customer_phone: conversation.customer_phone as string,
     });

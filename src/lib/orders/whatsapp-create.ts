@@ -253,6 +253,9 @@ function nextPortalOrderNumber(): string {
 export async function createWhatsAppAiOrder(params: {
   store: Store;
   conversationCustomerId?: string | null;
+  /** Chat this order came from — the only reliable order↔conversation link,
+   *  since the checkout phone often differs from the chat number. */
+  conversationId?: string | null;
   /** WhatsApp chat number the customer is messaging from */
   conversationPhone?: string | null;
   lineItems: WhatsAppOrderLineInput[];
@@ -465,6 +468,7 @@ export async function createWhatsAppAiOrder(params: {
       .insert({
         store_id: store.id,
         customer_id: custId,
+        conversation_id: params.conversationId ?? null,
         shopify_draft_order_id: draft.draft_order_id,
         order_number: orderNumber,
         items,
@@ -519,6 +523,7 @@ export async function createWhatsAppAiOrder(params: {
       .insert({
         store_id: store.id,
         customer_id: custId,
+        conversation_id: params.conversationId ?? null,
         order_number: orderNumber,
         items,
         total,

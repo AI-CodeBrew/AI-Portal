@@ -315,6 +315,7 @@ export async function placeManualInboxOrder(params: {
   const created = await createWhatsAppAiOrder({
     store: params.store,
     conversationCustomerId: params.customerId,
+    conversationId: params.conversationId,
     conversationPhone: params.customerPhone,
     lineItems: [
       {
