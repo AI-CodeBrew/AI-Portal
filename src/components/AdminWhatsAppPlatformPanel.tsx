@@ -200,19 +200,12 @@ export function AdminWhatsAppPlatformPanel() {
         <div className="border-b border-slate-200 bg-slate-50 px-5 py-4">
           <h2 className="font-semibold text-slate-900">Meta app credentials</h2>
           <p className="mt-1 text-sm text-slate-600">
-            Create a <strong>Business</strong>-type app at{" "}
-            <a
-              href="https://developers.facebook.com/apps/"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="font-medium text-violet-700 underline"
-            >
-              developers.facebook.com
-            </a>
-            , add the <strong>WhatsApp</strong> product, then go to{" "}
-            <strong>Facebook Login for Business → Settings</strong> for App ID /
-            App Secret, and <strong>WhatsApp → Embedded Signup Configuration</strong>{" "}
-            for the Configuration ID.
+            Keep the existing Meta app. App ID / App Secret come from{" "}
+            <strong>Facebook Login for Business → Settings</strong>. For
+            Configuration ID, create a{" "}
+            <strong>WhatsApp Embedded Signup v4</strong> configuration under{" "}
+            <strong>Facebook Login for Business → Configurations</strong>{" "}
+            (v2/v3 configs stop working 15 Oct 2026).
           </p>
         </div>
 
@@ -270,7 +263,7 @@ export function AdminWhatsAppPlatformPanel() {
               <input
                 value={metaConfigId}
                 onChange={(e) => setMetaConfigId(e.target.value)}
-                placeholder="From WhatsApp → Embedded Signup Configuration"
+                placeholder="From Facebook Login for Business → Configurations (v4)"
                 className="w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm"
                 required
               />

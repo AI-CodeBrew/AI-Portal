@@ -9,6 +9,11 @@ import {
 } from "@/components/ConnectionStatus";
 import { BrandIconBox } from "@/components/BrandIcons";
 import { useStoreStatus } from "@/hooks/useStoreStatus";
+import { WHATSAPP_GRAPH_API_VERSION } from "@/lib/whatsapp/graph";
+import {
+  readEmbeddedSignupFromMessageEvent,
+  waitForEmbeddedSignupAssets,
+} from "@/lib/whatsapp/embedded-signup-session";
 
 declare global {
   interface Window {
@@ -23,7 +28,6 @@ declare global {
       ) => void;
     };
     fbAsyncInit: () => void;
-    __waSignup?: { phone_number_id: string; waba_id: string };
   }
 }
 
@@ -81,7 +85,7 @@ export function WhatsAppIntegrationPanel() {
       appId: platformAppId,
       cookie: true,
       xfbml: true,
-      version: "v21.0",
+      version: WHATSAPP_GRAPH_API_VERSION,
     });
     setFbReady(true);
   }, [platformAppId]);
@@ -93,24 +97,8 @@ export function WhatsAppIntegrationPanel() {
 
   useEffect(() => {
     function handleMessage(event: MessageEvent) {
-      if (
-        event.origin !== "https://www.facebook.com" &&
-        event.origin !== "https://web.facebook.com"
-      ) {
-        return;
-      }
-      try {
-        const data =
-          typeof event.data === "string" ? JSON.parse(event.data) : event.data;
-        if (data.type === "WA_EMBEDDED_SIGNUP") {
-          const { phone_number_id, waba_id } = data.data ?? {};
-          if (phone_number_id && waba_id) {
-            window.__waSignup = { phone_number_id, waba_id };
-          }
-        }
-      } catch {
-        // ignore
-      }
+      const assets = readEmbeddedSignupFromMessageEvent(event);
+      if (assets) window.__waSignup = assets;
     }
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
@@ -163,6 +151,7 @@ export function WhatsAppIntegrationPanel() {
     }
 
     setConnectStatus("connecting");
+    window.__waSignup = undefined;
 
     window.FB.login(
       (response) => {
@@ -179,27 +168,34 @@ export function WhatsAppIntegrationPanel() {
           return;
         }
 
-        const signup = window.__waSignup;
-        finishConnect({
-          code: response.authResponse.code,
-          phone_number_id: signup?.phone_number_id,
-          waba_id: signup?.waba_id,
-        }).catch((err) => {
-          setConnectStatus(store?.whatsapp_connected ? "connected" : "error");
-          setMessage({
-            type: "error",
-            text:
-              err instanceof Error
-                ? err.message
-                : "WhatsApp connection failed. Please try again.",
+        const code = response.authResponse.code;
+        void waitForEmbeddedSignupAssets(2500)
+          .then((signup) =>
+            finishConnect({
+              code,
+              phone_number_id: signup?.phone_number_id,
+              waba_id: signup?.waba_id,
+            })
+          )
+          .catch((err) => {
+            setConnectStatus(store?.whatsapp_connected ? "connected" : "error");
+            setMessage({
+              type: "error",
+              text:
+                err instanceof Error
+                  ? err.message
+                  : "WhatsApp connection failed. Please try again.",
+            });
           });
-        });
       },
       {
         config_id: platformConfigId,
         response_type: "code",
         override_default_response_type: true,
-        extras: { setup: {}, featureType: "", sessionInfoVersion: "3" },
+        extras: {
+          version: "v4",
+          sessionInfoVersion: "3",
+        },
       }
     );
   }

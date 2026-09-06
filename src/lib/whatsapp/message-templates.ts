@@ -2,9 +2,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import {
   getStoreWhatsAppCredentials,
 } from "@/lib/whatsapp";
+import { GRAPH_API } from "@/lib/whatsapp/graph";
 import { countBodyVariables } from "./template-utils";
-
-const GRAPH_API = "https://graph.facebook.com/v21.0";
 
 export type WaTemplateCategory = "UTILITY" | "MARKETING" | "AUTHENTICATION";
 /** Categories available when creating/editing templates in the portal */
@@ -118,10 +117,7 @@ async function getStoreWaContext(storeId: string): Promise<
     return { error: "WhatsApp is not connected. Connect it under Integrations first." };
   }
 
-  const wabaId =
-    (store.whatsapp_waba_id as string | null) ||
-    process.env.WHATSAPP_WABA_ID ||
-    null;
+  const wabaId = (store.whatsapp_waba_id as string | null) || null;
   if (!wabaId) {
     return {
       error:

@@ -1,4 +1,4 @@
-const GRAPH_API = "https://graph.facebook.com/v21.0";
+import { GRAPH_API } from "@/lib/whatsapp/graph";
 
 /**
  * Mark inbound message read + show "typing…" on the customer's device.

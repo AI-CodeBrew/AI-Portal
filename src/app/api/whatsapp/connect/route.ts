@@ -8,6 +8,7 @@ import {
   friendlyMetaError,
   getWhatsAppDisplayPhone,
   registerWhatsAppPhoneNumber,
+  resolveWhatsAppAssetsFromToken,
   subscribeWabaWebhooks,
 } from "@/lib/whatsapp";
 
@@ -52,7 +53,27 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    if (!token || !phone_number_id || !waba_id) {
+    let resolvedPhoneId = phone_number_id?.trim() || undefined;
+    let resolvedWabaId = waba_id?.trim() || undefined;
+
+    if (token && (!resolvedPhoneId || !resolvedWabaId)) {
+      try {
+        const resolved = await resolveWhatsAppAssetsFromToken(
+          token,
+          {
+            appId: platformMeta.appId,
+            appSecret: platformMeta.appSecret,
+          },
+          { waba_id: resolvedWabaId, phone_number_id: resolvedPhoneId }
+        );
+        resolvedPhoneId = resolvedPhoneId || resolved.phone_number_id || undefined;
+        resolvedWabaId = resolvedWabaId || resolved.waba_id || undefined;
+      } catch (err) {
+        console.warn("[whatsapp/connect] resolve assets:", err);
+      }
+    }
+
+    if (!token || !resolvedPhoneId || !resolvedWabaId) {
       return NextResponse.json(
         {
           error:
@@ -63,13 +84,13 @@ export async function POST(request: NextRequest) {
     }
 
     try {
-      await registerWhatsAppPhoneNumber(phone_number_id, token);
+      await registerWhatsAppPhoneNumber(resolvedPhoneId, token);
     } catch (err) {
       console.warn("[whatsapp/connect] register phone:", err);
     }
 
     try {
-      await subscribeWabaWebhooks(waba_id, token);
+      await subscribeWabaWebhooks(resolvedWabaId, token);
     } catch (err) {
       const message =
         err instanceof Error
@@ -80,7 +101,7 @@ export async function POST(request: NextRequest) {
 
     let displayPhone: string | null = null;
     try {
-      displayPhone = await getWhatsAppDisplayPhone(phone_number_id, token);
+      displayPhone = await getWhatsAppDisplayPhone(resolvedPhoneId, token);
     } catch {
       // optional
     }
@@ -89,8 +110,8 @@ export async function POST(request: NextRequest) {
     const { error: updateError } = await supabase
       .from("stores")
       .update({
-        whatsapp_phone_number_id: phone_number_id,
-        whatsapp_waba_id: waba_id,
+        whatsapp_phone_number_id: resolvedPhoneId,
+        whatsapp_waba_id: resolvedWabaId,
         whatsapp_access_token: encrypt(token),
         whatsapp_display_phone: displayPhone,
       })
@@ -108,8 +129,8 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       ok: true,
-      phone_number_id,
-      waba_id,
+      phone_number_id: resolvedPhoneId,
+      waba_id: resolvedWabaId,
       display_phone: displayPhone,
     });
   } catch (err) {

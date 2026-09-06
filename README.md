@@ -55,10 +55,10 @@ Copy `.env.local.example` to `.env.local` and fill in all values:
 | `SHOPIFY_API_KEY` / `SHOPIFY_API_SECRET` | From Shopify Partner Dashboard |
 | `SHOPIFY_APP_URL` | Your app URL (e.g. `http://localhost:3000`) |
 | `META_APP_ID` / `META_APP_SECRET` | Meta Developer app credentials |
-| `META_CONFIG_ID` | WhatsApp Embedded Signup config ID |
+| `META_CONFIG_ID` | WhatsApp Embedded Signup config ID (v4 Login for Business config) |
 | `WHATSAPP_VERIFY_TOKEN` | Any string for webhook verification |
 
-For initial WhatsApp testing (before Embedded Signup), set `WHATSAPP_ACCESS_TOKEN` and `WHATSAPP_PHONE_NUMBER_ID`.
+Each store must connect its own WhatsApp via Embedded Signup. Do not set a shared platform phone number or access token.
 
 ### 3. Run database migration
 

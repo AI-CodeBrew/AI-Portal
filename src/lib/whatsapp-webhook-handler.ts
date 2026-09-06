@@ -286,15 +286,7 @@ export async function handleWhatsAppWebhookMessage(
         .eq("whatsapp_phone_number_id", String(phoneNumberId))
         .maybeSingle();
 
-      let activeStore = store as Store | null;
-      if (!activeStore && process.env.WHATSAPP_PHONE_NUMBER_ID === phoneNumberId) {
-        const { data: firstStore } = await supabase
-          .from("stores")
-          .select("*")
-          .limit(1)
-          .maybeSingle();
-        activeStore = firstStore as Store | null;
-      }
+      const activeStore = store as Store | null;
 
       if (!activeStore) {
         console.error(

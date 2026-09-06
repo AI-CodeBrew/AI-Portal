@@ -1,4 +1,4 @@
-const GRAPH_API = "https://graph.facebook.com/v21.0";
+import { GRAPH_API } from "@/lib/whatsapp/graph";
 
 function imagePathFromUrl(url: string): string {
   try {

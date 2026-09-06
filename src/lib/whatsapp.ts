@@ -1,11 +1,11 @@
 import { decrypt } from "./crypto";
 import { formatMoney } from "./currency";
 import { normalizePhone } from "./phone";
+import { GRAPH_API } from "./whatsapp/graph";
 import { resolveWhatsAppImagePayload } from "./whatsapp-image.server";
 
 export { normalizePhone, toWhatsAppRecipient } from "./phone";
-
-const GRAPH_API = "https://graph.facebook.com/v21.0";
+export { GRAPH_API, WHATSAPP_GRAPH_API_VERSION } from "./whatsapp/graph";
 
 export interface MetaAppCredentials {
   appId: string;
@@ -244,30 +244,143 @@ export async function exchangeEmbeddedSignupToken(
     throw new Error(friendlyMetaError(raw, "Could not finish WhatsApp signup"));
   }
 
-  return tokenRes.json() as Promise<{ access_token: string }>;
+  const shortLived = (await tokenRes.json()) as { access_token?: string };
+  if (!shortLived.access_token) {
+    throw new Error("Could not finish WhatsApp signup");
+  }
+
+  const longLived = await exchangeForLongLivedToken(
+    shortLived.access_token,
+    creds
+  );
+  return { access_token: longLived ?? shortLived.access_token };
+}
+
+/** Best-effort: short-lived ES tokens become 60-day tokens. Already-long-lived tokens stay as-is. */
+export async function exchangeForLongLivedToken(
+  shortLivedToken: string,
+  creds: MetaAppCredentials
+): Promise<string | null> {
+  try {
+    const res = await fetch(
+      `${GRAPH_API}/oauth/access_token?` +
+        new URLSearchParams({
+          grant_type: "fb_exchange_token",
+          client_id: creds.appId,
+          client_secret: creds.appSecret,
+          fb_exchange_token: shortLivedToken,
+        })
+    );
+    if (!res.ok) return null;
+    const data = (await res.json()) as { access_token?: string };
+    return data.access_token || null;
+  } catch {
+    return null;
+  }
+}
+
+export async function resolveWhatsAppAssetsFromToken(
+  accessToken: string,
+  creds: MetaAppCredentials,
+  hints?: { waba_id?: string; phone_number_id?: string }
+): Promise<{ waba_id: string | null; phone_number_id: string | null }> {
+  let wabaId = hints?.waba_id?.trim() || null;
+  let phoneNumberId = hints?.phone_number_id?.trim() || null;
+
+  if (!wabaId) {
+    wabaId = await resolveWabaIdFromDebugToken(accessToken, creds);
+  }
+
+  if (wabaId && !phoneNumberId) {
+    phoneNumberId = await resolvePhoneIdForWaba(wabaId, accessToken);
+  }
+
+  return { waba_id: wabaId, phone_number_id: phoneNumberId };
+}
+
+async function resolveWabaIdFromDebugToken(
+  accessToken: string,
+  creds: MetaAppCredentials
+): Promise<string | null> {
+  try {
+    const res = await fetch(
+      `${GRAPH_API}/debug_token?` +
+        new URLSearchParams({
+          input_token: accessToken,
+          access_token: `${creds.appId}|${creds.appSecret}`,
+        })
+    );
+    if (!res.ok) return null;
+
+    const payload = (await res.json()) as {
+      data?: {
+        granular_scopes?: Array<{ scope?: string; target_ids?: string[] }>;
+      };
+    };
+    const scopes = payload.data?.granular_scopes ?? [];
+    const preferred =
+      scopes.find((s) => s.scope === "whatsapp_business_management")
+        ?.target_ids ??
+      scopes.find((s) => s.scope === "whatsapp_business_messaging")
+        ?.target_ids ??
+      [];
+    return preferred[preferred.length - 1] ?? preferred[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function resolvePhoneIdForWaba(
+  wabaId: string,
+  accessToken: string
+): Promise<string | null> {
+  try {
+    const res = await fetch(
+      `${GRAPH_API}/${wabaId}/phone_numbers?fields=id,display_phone_number`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+    if (!res.ok) return null;
+    const payload = (await res.json()) as { data?: Array<{ id?: string }> };
+    const phones = payload.data ?? [];
+    return phones[phones.length - 1]?.id ?? phones[0]?.id ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export async function subscribeWabaWebhooks(
   wabaId: string,
   accessToken: string
 ): Promise<void> {
-  const res = await fetch(`${GRAPH_API}/${wabaId}/subscribed_apps`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
+  const attempts: Array<Record<string, unknown> | undefined> = [
+    {
+      subscribed_fields: [
+        "messages",
+        "account_update",
+        "message_template_status_update",
+      ],
     },
-    body: JSON.stringify({
-      subscribed_fields: ["messages"],
-    }),
-  });
+    { subscribed_fields: ["messages"] },
+    undefined,
+  ];
 
-  if (!res.ok) {
-    const raw = await res.text();
-    throw new Error(
-      friendlyMetaError(raw, "Could not subscribe WhatsApp webhooks")
-    );
+  let lastRaw = "";
+  for (const body of attempts) {
+    const res = await fetch(`${GRAPH_API}/${wabaId}/subscribed_apps`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+    if (res.ok) return;
+    lastRaw = await res.text();
   }
+
+  throw new Error(
+    friendlyMetaError(lastRaw, "Could not subscribe WhatsApp webhooks")
+  );
 }
 
 /** Best-effort Cloud API phone registration after Embedded Signup. */
@@ -366,31 +479,20 @@ export function getStoreWhatsAppCredentials(store: {
   whatsapp_phone_number_id: string | null;
   whatsapp_access_token: string | null;
 }): { phoneNumberId: string; accessToken: string } | null {
-  // Fallback to env for testing before embedded signup
-  const phoneNumberId =
-    store.whatsapp_phone_number_id ||
-    process.env.WHATSAPP_PHONE_NUMBER_ID ||
-    null;
+  const phoneNumberId = store.whatsapp_phone_number_id || null;
   const encryptedToken = store.whatsapp_access_token;
+  if (!phoneNumberId || !encryptedToken) return null;
 
-  let accessToken: string | null = null;
-  if (encryptedToken) {
-    try {
-      accessToken = decrypt(encryptedToken);
-    } catch {
-      console.error(
-        "WhatsApp token decrypt failed — ENCRYPTION_KEY may differ from when token was saved. Reconnect WhatsApp."
-      );
-      // Do not fall back to env if store has a token that won't decrypt —
-      // that would send from the wrong number / wrong app.
-      return null;
-    }
-  } else if (process.env.WHATSAPP_ACCESS_TOKEN) {
-    accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
+  try {
+    const accessToken = decrypt(encryptedToken);
+    if (!accessToken) return null;
+    return { phoneNumberId, accessToken };
+  } catch {
+    console.error(
+      "WhatsApp token decrypt failed — ENCRYPTION_KEY may differ from when token was saved. Reconnect WhatsApp."
+    );
+    return null;
   }
-
-  if (!phoneNumberId || !accessToken) return null;
-  return { phoneNumberId, accessToken };
 }
 
 export function formatOrderConfirmationParams(
