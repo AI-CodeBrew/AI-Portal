@@ -101,7 +101,14 @@ export function WhatsAppIntegrationPanel() {
   useEffect(() => {
     function handleMessage(event: MessageEvent) {
       const assets = readEmbeddedSignupFromMessageEvent(event);
-      if (assets) window.__waSignup = assets;
+      if (assets) {
+        window.__waSignup = {
+          waba_id: assets.waba_id || window.__waSignup?.waba_id || "",
+          phone_number_id:
+            assets.phone_number_id || window.__waSignup?.phone_number_id,
+          business_id: assets.business_id || window.__waSignup?.business_id,
+        };
+      }
       const signupError = readEmbeddedSignupErrorFromMessageEvent(event);
       if (signupError) window.__waSignupError = signupError;
     }
@@ -113,6 +120,7 @@ export function WhatsAppIntegrationPanel() {
     code?: string;
     phone_number_id?: string;
     waba_id?: string;
+    business_id?: string;
   }) {
     const res = await fetch("/api/whatsapp/connect", {
       method: "POST",
@@ -177,12 +185,13 @@ export function WhatsAppIntegrationPanel() {
         }
 
         const code = response.authResponse.code;
-        void waitForEmbeddedSignupAssets(2500)
+        void waitForEmbeddedSignupAssets(8000)
           .then((signup) =>
             finishConnect({
               code,
               phone_number_id: signup?.phone_number_id,
               waba_id: signup?.waba_id,
+              business_id: signup?.business_id,
             })
           )
           .catch((err) => {

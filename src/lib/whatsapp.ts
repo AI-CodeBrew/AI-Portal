@@ -282,13 +282,23 @@ export async function exchangeForLongLivedToken(
 export async function resolveWhatsAppAssetsFromToken(
   accessToken: string,
   creds: MetaAppCredentials,
-  hints?: { waba_id?: string; phone_number_id?: string }
+  hints?: { waba_id?: string; phone_number_id?: string; business_id?: string }
 ): Promise<{ waba_id: string | null; phone_number_id: string | null }> {
   let wabaId = hints?.waba_id?.trim() || null;
   let phoneNumberId = hints?.phone_number_id?.trim() || null;
 
+  if (!wabaId || !phoneNumberId) {
+    const fromToken = await inspectTokenWhatsAppTargets(accessToken, creds);
+    wabaId = wabaId || fromToken.waba_id;
+    phoneNumberId = phoneNumberId || fromToken.phone_number_id;
+  }
+
+  if (!wabaId && hints?.business_id) {
+    wabaId = await resolveWabaIdFromBusiness(hints.business_id, accessToken);
+  }
+
   if (!wabaId) {
-    wabaId = await resolveWabaIdFromDebugToken(accessToken, creds);
+    wabaId = await resolveWabaIdFromOwnedBusinesses(accessToken);
   }
 
   if (wabaId && !phoneNumberId) {
@@ -298,10 +308,27 @@ export async function resolveWhatsAppAssetsFromToken(
   return { waba_id: wabaId, phone_number_id: phoneNumberId };
 }
 
-async function resolveWabaIdFromDebugToken(
+function collectTargetIds(
+  scopes: Array<{ scope?: string; target_ids?: string[] }>
+): string[] {
+  const preferred = [
+    ...scopes.filter((s) => s.scope === "whatsapp_business_management"),
+    ...scopes.filter((s) => s.scope === "whatsapp_business_messaging"),
+    ...scopes.filter((s) => (s.scope ?? "").includes("whatsapp")),
+  ];
+  const ids: string[] = [];
+  for (const scope of preferred) {
+    for (const id of scope.target_ids ?? []) {
+      if (id && !ids.includes(id)) ids.push(id);
+    }
+  }
+  return ids;
+}
+
+async function inspectTokenWhatsAppTargets(
   accessToken: string,
   creds: MetaAppCredentials
-): Promise<string | null> {
+): Promise<{ waba_id: string | null; phone_number_id: string | null }> {
   try {
     const res = await fetch(
       `${GRAPH_API}/debug_token?` +
@@ -310,24 +337,102 @@ async function resolveWabaIdFromDebugToken(
           access_token: `${creds.appId}|${creds.appSecret}`,
         })
     );
-    if (!res.ok) return null;
+    if (!res.ok) {
+      console.warn("[whatsapp] debug_token failed:", await res.text());
+      return { waba_id: null, phone_number_id: null };
+    }
 
     const payload = (await res.json()) as {
       data?: {
         granular_scopes?: Array<{ scope?: string; target_ids?: string[] }>;
       };
     };
-    const scopes = payload.data?.granular_scopes ?? [];
-    const preferred =
-      scopes.find((s) => s.scope === "whatsapp_business_management")
-        ?.target_ids ??
-      scopes.find((s) => s.scope === "whatsapp_business_messaging")
-        ?.target_ids ??
-      [];
-    return preferred[preferred.length - 1] ?? preferred[0] ?? null;
-  } catch {
-    return null;
+    const ids = collectTargetIds(payload.data?.granular_scopes ?? []);
+    let wabaId: string | null = null;
+    let phoneNumberId: string | null = null;
+
+    for (const id of ids) {
+      const kind = await classifyWhatsAppAsset(id, accessToken);
+      if (kind === "waba" && !wabaId) wabaId = id;
+      if (kind === "phone" && !phoneNumberId) phoneNumberId = id;
+    }
+
+    if (!wabaId && ids.length > 0) {
+      wabaId = ids[ids.length - 1] ?? ids[0] ?? null;
+    }
+
+    return { waba_id: wabaId, phone_number_id: phoneNumberId };
+  } catch (err) {
+    console.warn("[whatsapp] debug_token:", err);
+    return { waba_id: null, phone_number_id: null };
   }
+}
+
+async function classifyWhatsAppAsset(
+  id: string,
+  accessToken: string
+): Promise<"waba" | "phone" | "unknown"> {
+  const phones = await resolvePhoneIdForWaba(id, accessToken);
+  if (phones) return "waba";
+
+  try {
+    const res = await fetch(
+      `${GRAPH_API}/${id}?fields=id,display_phone_number,verified_name`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+    if (!res.ok) return "unknown";
+    const data = (await res.json()) as { display_phone_number?: string };
+    if (data.display_phone_number) return "phone";
+  } catch {
+    // ignore
+  }
+  return "unknown";
+}
+
+async function graphListIds(
+  path: string,
+  accessToken: string
+): Promise<string[]> {
+  try {
+    const res = await fetch(`${GRAPH_API}/${path}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!res.ok) return [];
+    const payload = (await res.json()) as { data?: Array<{ id?: string }> };
+    return (payload.data ?? [])
+      .map((row) => row.id)
+      .filter((id): id is string => Boolean(id));
+  } catch {
+    return [];
+  }
+}
+
+async function resolveWabaIdFromBusiness(
+  businessId: string,
+  accessToken: string
+): Promise<string | null> {
+  const owned = await graphListIds(
+    `${businessId}/owned_whatsapp_business_accounts?fields=id`,
+    accessToken
+  );
+  if (owned.length) return owned[owned.length - 1] ?? owned[0] ?? null;
+
+  const client = await graphListIds(
+    `${businessId}/client_whatsapp_business_accounts?fields=id`,
+    accessToken
+  );
+  return client[client.length - 1] ?? client[0] ?? null;
+}
+
+async function resolveWabaIdFromOwnedBusinesses(
+  accessToken: string
+): Promise<string | null> {
+  const businesses = await graphListIds("me/businesses?fields=id", accessToken);
+  for (const businessId of businesses.slice().reverse()) {
+    const wabaId = await resolveWabaIdFromBusiness(businessId, accessToken);
+    if (wabaId) return wabaId;
+  }
+  return null;
 }
 
 async function resolvePhoneIdForWaba(

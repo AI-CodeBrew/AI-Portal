@@ -1,6 +1,7 @@
 export type EmbeddedSignupAssets = {
-  phone_number_id: string;
+  phone_number_id?: string;
   waba_id: string;
+  business_id?: string;
 };
 
 export type EmbeddedSignupFlowError = {
@@ -29,38 +30,77 @@ declare global {
 }
 
 function isFacebookOrigin(origin: string): boolean {
-  return origin === "https://www.facebook.com" || origin === "https://web.facebook.com"
-    || origin.endsWith(".facebook.com");
+  try {
+    const host = new URL(origin).hostname;
+    return host === "facebook.com" || host.endsWith(".facebook.com");
+  } catch {
+    return false;
+  }
+}
+
+function asMetaId(value: unknown): string | undefined {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return undefined;
+}
+
+function firstId(value: unknown): string | undefined {
+  const direct = asMetaId(value);
+  if (direct) return direct;
+  if (!Array.isArray(value)) return undefined;
+  for (const item of value) {
+    const id = asMetaId(item);
+    if (id) return id;
+  }
+  return undefined;
+}
+
+function unwrapObject(raw: unknown): Record<string, unknown> | null {
+  try {
+    let data: unknown = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (typeof data === "string") data = JSON.parse(data);
+    if (!data || typeof data !== "object") return null;
+    return data as Record<string, unknown>;
+  } catch {
+    return null;
+  }
 }
 
 /** Parse WA_EMBEDDED_SIGNUP postMessage (v2–v4 payload shapes). */
 export function parseEmbeddedSignupMessage(
   raw: unknown
 ): EmbeddedSignupAssets | null {
-  try {
-    const data = typeof raw === "string" ? JSON.parse(raw) : raw;
-    if (!data || typeof data !== "object") return null;
-    const event = data as {
-      type?: string;
-      data?: Record<string, unknown>;
-      phone_number_id?: unknown;
-      waba_id?: unknown;
-    };
-    if (event.type && event.type !== "WA_EMBEDDED_SIGNUP") return null;
+  const event = unwrapObject(raw);
+  if (!event) return null;
+  if (event.type && event.type !== "WA_EMBEDDED_SIGNUP") return null;
 
-    const payload =
-      event.data && typeof event.data === "object" ? event.data : event;
-    const phone_number_id =
-      typeof payload.phone_number_id === "string"
-        ? payload.phone_number_id
-        : undefined;
-    const waba_id =
-      typeof payload.waba_id === "string" ? payload.waba_id : undefined;
-    if (!phone_number_id || !waba_id) return null;
-    return { phone_number_id, waba_id };
-  } catch {
-    return null;
+  let payload: Record<string, unknown> =
+    event.data && typeof event.data === "object"
+      ? (event.data as Record<string, unknown>)
+      : event;
+  if (typeof event.data === "string") {
+    payload = unwrapObject(event.data) ?? payload;
   }
+
+  const waba_id =
+    firstId(payload.waba_id) ||
+    firstId(payload.wabaId) ||
+    firstId(payload.waba_ids) ||
+    firstId(payload.wabaIds);
+  if (!waba_id) return null;
+
+  const phone_number_id =
+    firstId(payload.phone_number_id) ||
+    firstId(payload.phoneNumberId) ||
+    firstId(payload.phone_number_ids);
+  const business_id =
+    firstId(payload.business_id) || firstId(payload.businessId);
+
+  return {
+    waba_id,
+    ...(phone_number_id ? { phone_number_id } : {}),
+    ...(business_id ? { business_id } : {}),
+  };
 }
 
 function parseRaw(raw: unknown): Record<string, unknown> | null {
@@ -127,15 +167,26 @@ export function readEmbeddedSignupErrorFromMessageEvent(
   return parseEmbeddedSignupError(event.data);
 }
 
+function mergeSignupAssets(
+  current: EmbeddedSignupAssets | undefined,
+  next: EmbeddedSignupAssets
+): EmbeddedSignupAssets {
+  return {
+    waba_id: next.waba_id || current?.waba_id || "",
+    phone_number_id: next.phone_number_id || current?.phone_number_id,
+    business_id: next.business_id || current?.business_id,
+  };
+}
+
 /**
- * Wait until Facebook posts WABA + phone IDs, or timeout.
+ * Wait until Facebook posts a WABA ID (phone is optional on v4), or timeout.
  * FB.login often resolves before the session-info postMessage.
  */
 export function waitForEmbeddedSignupAssets(
-  timeoutMs = 2500
+  timeoutMs = 8000
 ): Promise<EmbeddedSignupAssets | null> {
   const existing = window.__waSignup;
-  if (existing?.phone_number_id && existing?.waba_id) {
+  if (existing?.waba_id) {
     return Promise.resolve(existing);
   }
 
@@ -147,17 +198,14 @@ export function waitForEmbeddedSignupAssets(
     };
 
     const timer = window.setTimeout(() => {
-      const latest = window.__waSignup;
-      finish(
-        latest?.phone_number_id && latest?.waba_id ? latest : null
-      );
+      finish(window.__waSignup?.waba_id ? window.__waSignup : null);
     }, timeoutMs);
 
     function onMessage(event: MessageEvent) {
       const assets = readEmbeddedSignupFromMessageEvent(event);
       if (!assets) return;
-      window.__waSignup = assets;
-      finish(assets);
+      window.__waSignup = mergeSignupAssets(window.__waSignup, assets);
+      finish(window.__waSignup);
     }
 
     window.addEventListener("message", onMessage);

@@ -32,9 +32,27 @@ test("ignores other event types and incomplete payloads", () => {
   assert.equal(
     parseEmbeddedSignupMessage({
       type: "WA_EMBEDDED_SIGNUP",
-      data: { waba_id: "222" },
+      data: { phone_number_id: "111" },
     }),
     null
+  );
+});
+
+test("accepts WABA-only finish and numeric IDs", () => {
+  assert.deepEqual(
+    parseEmbeddedSignupMessage({
+      type: "WA_EMBEDDED_SIGNUP",
+      event: "FINISH_ONLY_WABA",
+      data: { waba_id: 222, business_id: 999 },
+    }),
+    { waba_id: "222", business_id: "999" }
+  );
+  assert.deepEqual(
+    parseEmbeddedSignupMessage({
+      type: "WA_EMBEDDED_SIGNUP",
+      data: { waba_ids: ["555"], phoneNumberId: 777 },
+    }),
+    { waba_id: "555", phone_number_id: "777" }
   );
 });
 

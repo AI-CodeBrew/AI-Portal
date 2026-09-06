@@ -19,10 +19,11 @@ export async function POST(request: NextRequest) {
       code?: string;
       phone_number_id?: string;
       waba_id?: string;
+      business_id?: string;
       access_token?: string;
     };
 
-    const { code, phone_number_id, waba_id, access_token } = body;
+    const { code, phone_number_id, waba_id, business_id, access_token } = body;
     const platformMeta = await getPlatformMetaCredentials();
 
     if (!platformMeta) {
@@ -64,7 +65,11 @@ export async function POST(request: NextRequest) {
             appId: platformMeta.appId,
             appSecret: platformMeta.appSecret,
           },
-          { waba_id: resolvedWabaId, phone_number_id: resolvedPhoneId }
+          {
+            waba_id: resolvedWabaId,
+            phone_number_id: resolvedPhoneId,
+            business_id: business_id?.trim(),
+          }
         );
         resolvedPhoneId = resolvedPhoneId || resolved.phone_number_id || undefined;
         resolvedWabaId = resolvedWabaId || resolved.waba_id || undefined;
@@ -73,11 +78,31 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    if (!token || !resolvedPhoneId || !resolvedWabaId) {
+    if (!token) {
       return NextResponse.json(
         {
           error:
-            "We could not finish connecting. Please try Connect WhatsApp again and complete every step.",
+            "Facebook login finished but we did not receive an access token. Try Connect WhatsApp again.",
+        },
+        { status: 400 }
+      );
+    }
+
+    if (!resolvedWabaId) {
+      return NextResponse.json(
+        {
+          error:
+            "Facebook did not share a WhatsApp Business account. Click Connect WhatsApp again, pick or create a WhatsApp account in the popup, and finish every screen.",
+        },
+        { status: 400 }
+      );
+    }
+
+    if (!resolvedPhoneId) {
+      return NextResponse.json(
+        {
+          error:
+            "WhatsApp account was created, but no phone number was added. Click Connect WhatsApp again and add + verify a new number in the Facebook popup.",
         },
         { status: 400 }
       );
