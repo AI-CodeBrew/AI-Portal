@@ -11,6 +11,9 @@ import { BrandIconBox } from "@/components/BrandIcons";
 import { useStoreStatus } from "@/hooks/useStoreStatus";
 import { WHATSAPP_GRAPH_API_VERSION } from "@/lib/whatsapp/graph";
 import {
+  describeEmbeddedSignupError,
+  EMBEDDED_SIGNUP_LOGIN_EXTRAS,
+  readEmbeddedSignupErrorFromMessageEvent,
   readEmbeddedSignupFromMessageEvent,
   waitForEmbeddedSignupAssets,
 } from "@/lib/whatsapp/embedded-signup-session";
@@ -99,6 +102,8 @@ export function WhatsAppIntegrationPanel() {
     function handleMessage(event: MessageEvent) {
       const assets = readEmbeddedSignupFromMessageEvent(event);
       if (assets) window.__waSignup = assets;
+      const signupError = readEmbeddedSignupErrorFromMessageEvent(event);
+      if (signupError) window.__waSignupError = signupError;
     }
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
@@ -152,16 +157,19 @@ export function WhatsAppIntegrationPanel() {
 
     setConnectStatus("connecting");
     window.__waSignup = undefined;
+    window.__waSignupError = undefined;
 
     window.FB.login(
       (response) => {
         if (!response.authResponse?.code) {
           setConnectStatus(store?.whatsapp_connected ? "connected" : "idle");
+          const metaError = window.__waSignupError;
           const status = response.status;
           setMessage({
             type: "error",
-            text:
-              status === "unknown" || status === "not_authorized"
+            text: metaError
+              ? describeEmbeddedSignupError(metaError)
+              : status === "unknown" || status === "not_authorized"
                 ? "Facebook blocked login for this account (often “Feature unavailable”). Your admin Facebook may work because it has an app role. Ask the platform admin to finish Meta Live setup: App Domains, User Data Deletion URL, Data Use Checkup, and Advanced Access for public_profile — or add your Facebook as an App Tester."
                 : "Signup was cancelled or Facebook Login failed. Try again, or use a different Facebook account.",
           });
@@ -192,10 +200,7 @@ export function WhatsAppIntegrationPanel() {
         config_id: platformConfigId,
         response_type: "code",
         override_default_response_type: true,
-        extras: {
-          version: "v4",
-          sessionInfoVersion: "3",
-        },
+        extras: { ...EMBEDDED_SIGNUP_LOGIN_EXTRAS },
       }
     );
   }
@@ -330,6 +335,12 @@ export function WhatsAppIntegrationPanel() {
               <p className="text-sm text-slate-600">
                 Connect your WhatsApp so customers can message you and receive
                 order updates. Takes about 2 minutes.
+              </p>
+              <p className="mt-2 text-xs text-slate-500">
+                Use this store owner’s Facebook — not the platform admin
+                account. In the Meta popup, create or pick a new business and
+                add a new phone number. Do not select a restricted WhatsApp
+                account.
               </p>
               <div className="mt-4 flex flex-wrap gap-2">
                 <button
