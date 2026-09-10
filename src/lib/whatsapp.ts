@@ -249,11 +249,9 @@ export async function exchangeEmbeddedSignupToken(
     throw new Error("Could not finish WhatsApp signup");
   }
 
-  const longLived = await exchangeForLongLivedToken(
-    shortLived.access_token,
-    creds
-  );
-  return { access_token: longLived ?? shortLived.access_token };
+  // Keep the Embedded Signup / BISU token as-is. fb_exchange_token is for
+  // user tokens and can strip WhatsApp granular_scopes / WABA target IDs.
+  return { access_token: shortLived.access_token };
 }
 
 /** Best-effort: short-lived ES tokens become 60-day tokens. Already-long-lived tokens stay as-is. */
@@ -279,46 +277,64 @@ export async function exchangeForLongLivedToken(
   }
 }
 
+export type WhatsAppTokenInspect = {
+  waba_id: string | null;
+  phone_number_id: string | null;
+  scopes: string[];
+  tokenType: string | null;
+  hasWhatsAppScope: boolean;
+  targetIdCount: number;
+};
+
 export async function resolveWhatsAppAssetsFromToken(
   accessToken: string,
   creds: MetaAppCredentials,
   hints?: { waba_id?: string; phone_number_id?: string; business_id?: string }
-): Promise<{ waba_id: string | null; phone_number_id: string | null }> {
+): Promise<WhatsAppTokenInspect> {
   let wabaId = hints?.waba_id?.trim() || null;
   let phoneNumberId = hints?.phone_number_id?.trim() || null;
 
-  if (!wabaId || !phoneNumberId) {
-    const fromToken = await inspectTokenWhatsAppTargets(accessToken, creds);
-    wabaId = wabaId || fromToken.waba_id;
-    phoneNumberId = phoneNumberId || fromToken.phone_number_id;
-  }
+  const fromToken = await inspectTokenWhatsAppTargets(accessToken, creds);
+  wabaId = wabaId || fromToken.waba_id;
+  phoneNumberId = phoneNumberId || fromToken.phone_number_id;
 
   if (!wabaId && hints?.business_id) {
     wabaId = await resolveWabaIdFromBusiness(hints.business_id, accessToken);
-  }
-
-  if (!wabaId) {
-    wabaId = await resolveWabaIdFromOwnedBusinesses(accessToken);
   }
 
   if (wabaId && !phoneNumberId) {
     phoneNumberId = await resolvePhoneIdForWaba(wabaId, accessToken);
   }
 
-  return { waba_id: wabaId, phone_number_id: phoneNumberId };
+  return {
+    waba_id: wabaId,
+    phone_number_id: phoneNumberId,
+    scopes: fromToken.scopes,
+    tokenType: fromToken.tokenType,
+    hasWhatsAppScope: fromToken.hasWhatsAppScope,
+    targetIdCount: fromToken.targetIdCount,
+  };
+}
+
+function asTargetId(value: unknown): string | null {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return null;
 }
 
 function collectTargetIds(
-  scopes: Array<{ scope?: string; target_ids?: string[] }>
+  scopes: Array<{ scope?: string; target_ids?: unknown[] }>
 ): string[] {
   const preferred = [
     ...scopes.filter((s) => s.scope === "whatsapp_business_management"),
     ...scopes.filter((s) => s.scope === "whatsapp_business_messaging"),
     ...scopes.filter((s) => (s.scope ?? "").includes("whatsapp")),
+    ...scopes,
   ];
   const ids: string[] = [];
   for (const scope of preferred) {
-    for (const id of scope.target_ids ?? []) {
+    for (const raw of scope.target_ids ?? []) {
+      const id = asTargetId(raw);
       if (id && !ids.includes(id)) ids.push(id);
     }
   }
@@ -328,7 +344,15 @@ function collectTargetIds(
 async function inspectTokenWhatsAppTargets(
   accessToken: string,
   creds: MetaAppCredentials
-): Promise<{ waba_id: string | null; phone_number_id: string | null }> {
+): Promise<WhatsAppTokenInspect> {
+  const empty: WhatsAppTokenInspect = {
+    waba_id: null,
+    phone_number_id: null,
+    scopes: [],
+    tokenType: null,
+    hasWhatsAppScope: false,
+    targetIdCount: 0,
+  };
   try {
     const res = await fetch(
       `${GRAPH_API}/debug_token?` +
@@ -339,15 +363,20 @@ async function inspectTokenWhatsAppTargets(
     );
     if (!res.ok) {
       console.warn("[whatsapp] debug_token failed:", await res.text());
-      return { waba_id: null, phone_number_id: null };
+      return empty;
     }
 
     const payload = (await res.json()) as {
       data?: {
-        granular_scopes?: Array<{ scope?: string; target_ids?: string[] }>;
+        type?: string;
+        scopes?: string[];
+        granular_scopes?: Array<{ scope?: string; target_ids?: unknown[] }>;
       };
     };
-    const ids = collectTargetIds(payload.data?.granular_scopes ?? []);
+    const scopes = payload.data?.scopes ?? [];
+    const granular = payload.data?.granular_scopes ?? [];
+    const ids = collectTargetIds(granular);
+    const hasWhatsAppScope = scopes.some((s) => s.includes("whatsapp"));
     let wabaId: string | null = null;
     let phoneNumberId: string | null = null;
 
@@ -357,14 +386,29 @@ async function inspectTokenWhatsAppTargets(
       if (kind === "phone" && !phoneNumberId) phoneNumberId = id;
     }
 
+    // Newest onboarded WABA is first in Meta's target_ids list.
     if (!wabaId && ids.length > 0) {
-      wabaId = ids[ids.length - 1] ?? ids[0] ?? null;
+      wabaId = ids[0] ?? null;
     }
 
-    return { waba_id: wabaId, phone_number_id: phoneNumberId };
+    console.info("[whatsapp] debug_token", {
+      type: payload.data?.type ?? null,
+      scopes,
+      hasWhatsAppScope,
+      targetIdCount: ids.length,
+    });
+
+    return {
+      waba_id: wabaId,
+      phone_number_id: phoneNumberId,
+      scopes,
+      tokenType: payload.data?.type ?? null,
+      hasWhatsAppScope,
+      targetIdCount: ids.length,
+    };
   } catch (err) {
     console.warn("[whatsapp] debug_token:", err);
-    return { waba_id: null, phone_number_id: null };
+    return empty;
   }
 }
 
@@ -422,17 +466,6 @@ async function resolveWabaIdFromBusiness(
     accessToken
   );
   return client[client.length - 1] ?? client[0] ?? null;
-}
-
-async function resolveWabaIdFromOwnedBusinesses(
-  accessToken: string
-): Promise<string | null> {
-  const businesses = await graphListIds("me/businesses?fields=id", accessToken);
-  for (const businessId of businesses.slice().reverse()) {
-    const wabaId = await resolveWabaIdFromBusiness(businessId, accessToken);
-    if (wabaId) return wabaId;
-  }
-  return null;
 }
 
 async function resolvePhoneIdForWaba(

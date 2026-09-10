@@ -205,7 +205,10 @@ export function AdminWhatsAppPlatformPanel() {
             Configuration ID, create a{" "}
             <strong>WhatsApp Embedded Signup v4</strong> configuration under{" "}
             <strong>Facebook Login for Business → Configurations</strong>{" "}
-            (v2/v3 configs stop working 15 Oct 2026).
+            (v2/v3 configs stop working 15 Oct 2026). Add{" "}
+            <strong>{webhookBase || "your live domain"}</strong> to App Domains,
+            Allowed domains, and Valid OAuth Redirect URIs or Facebook will
+            log in without sharing the WhatsApp account.
           </p>
         </div>
 

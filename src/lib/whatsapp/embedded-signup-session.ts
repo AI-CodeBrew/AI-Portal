@@ -26,6 +26,7 @@ declare global {
   interface Window {
     __waSignup?: EmbeddedSignupAssets;
     __waSignupError?: EmbeddedSignupFlowError;
+    __waSignupRaw?: unknown;
   }
 }
 
@@ -156,7 +157,6 @@ export function describeEmbeddedSignupError(
 export function readEmbeddedSignupFromMessageEvent(
   event: MessageEvent
 ): EmbeddedSignupAssets | null {
-  if (!isFacebookOrigin(event.origin)) return null;
   return parseEmbeddedSignupMessage(event.data);
 }
 

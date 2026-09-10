@@ -102,6 +102,7 @@ export function WhatsAppIntegrationPanel() {
     function handleMessage(event: MessageEvent) {
       const assets = readEmbeddedSignupFromMessageEvent(event);
       if (assets) {
+        window.__waSignupRaw = event.data;
         window.__waSignup = {
           waba_id: assets.waba_id || window.__waSignup?.waba_id || "",
           phone_number_id:
@@ -121,6 +122,7 @@ export function WhatsAppIntegrationPanel() {
     phone_number_id?: string;
     waba_id?: string;
     business_id?: string;
+    session?: unknown;
   }) {
     const res = await fetch("/api/whatsapp/connect", {
       method: "POST",
@@ -166,6 +168,7 @@ export function WhatsAppIntegrationPanel() {
     setConnectStatus("connecting");
     window.__waSignup = undefined;
     window.__waSignupError = undefined;
+    window.__waSignupRaw = undefined;
 
     window.FB.login(
       (response) => {
@@ -185,13 +188,16 @@ export function WhatsAppIntegrationPanel() {
         }
 
         const code = response.authResponse.code;
-        void waitForEmbeddedSignupAssets(8000)
+        // Code expires in ~30s — exchange immediately. Session IDs often
+        // arrive just before FB.login resolves; wait briefly then send both.
+        void waitForEmbeddedSignupAssets(400)
           .then((signup) =>
             finishConnect({
               code,
               phone_number_id: signup?.phone_number_id,
               waba_id: signup?.waba_id,
               business_id: signup?.business_id,
+              session: window.__waSignupRaw,
             })
           )
           .catch((err) => {

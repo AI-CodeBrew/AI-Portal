@@ -11,6 +11,7 @@ import {
   resolveWhatsAppAssetsFromToken,
   subscribeWabaWebhooks,
 } from "@/lib/whatsapp";
+import { parseEmbeddedSignupMessage } from "@/lib/whatsapp/embedded-signup-session";
 
 export async function POST(request: NextRequest) {
   try {
@@ -21,9 +22,11 @@ export async function POST(request: NextRequest) {
       waba_id?: string;
       business_id?: string;
       access_token?: string;
+      session?: unknown;
     };
 
-    const { code, phone_number_id, waba_id, business_id, access_token } = body;
+    const { code, phone_number_id, waba_id, business_id, access_token, session } =
+      body;
     const platformMeta = await getPlatformMetaCredentials();
 
     if (!platformMeta) {
@@ -54,8 +57,18 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    let resolvedPhoneId = phone_number_id?.trim() || undefined;
-    let resolvedWabaId = waba_id?.trim() || undefined;
+    const sessionAssets = parseEmbeddedSignupMessage(session);
+    let resolvedPhoneId =
+      phone_number_id?.trim() || sessionAssets?.phone_number_id || undefined;
+    let resolvedWabaId =
+      waba_id?.trim() || sessionAssets?.waba_id || undefined;
+    let resolvedBusinessId =
+      business_id?.trim() || sessionAssets?.business_id || undefined;
+    let inspect = {
+      scopes: [] as string[],
+      hasWhatsAppScope: false,
+      targetIdCount: 0,
+    };
 
     if (token && (!resolvedPhoneId || !resolvedWabaId)) {
       try {
@@ -68,9 +81,10 @@ export async function POST(request: NextRequest) {
           {
             waba_id: resolvedWabaId,
             phone_number_id: resolvedPhoneId,
-            business_id: business_id?.trim(),
+            business_id: resolvedBusinessId,
           }
         );
+        inspect = resolved;
         resolvedPhoneId = resolvedPhoneId || resolved.phone_number_id || undefined;
         resolvedWabaId = resolvedWabaId || resolved.waba_id || undefined;
       } catch (err) {
@@ -89,10 +103,12 @@ export async function POST(request: NextRequest) {
     }
 
     if (!resolvedWabaId) {
+      const missingWhatsAppPerms = !inspect.hasWhatsAppScope;
       return NextResponse.json(
         {
-          error:
-            "Facebook did not share a WhatsApp Business account. Click Connect WhatsApp again, pick or create a WhatsApp account in the popup, and finish every screen.",
+          error: missingWhatsAppPerms
+            ? "Facebook logged in but did not grant WhatsApp permissions. Add this Facebook user as an App Tester on the Arabia AI Meta app, add your portal domain under Facebook Login → Allowed domains / Valid OAuth Redirect URIs, then connect again and create a WhatsApp account in the popup."
+            : "Facebook did not attach a WhatsApp Business account to this login. Click Connect WhatsApp again, create or select a WhatsApp account (not a restricted one), add a number, and finish every screen.",
         },
         { status: 400 }
       );

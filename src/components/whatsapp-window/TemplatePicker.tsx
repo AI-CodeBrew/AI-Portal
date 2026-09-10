@@ -67,7 +67,7 @@ export function TemplatePicker({
       )}
 
       {selected && (
-        <div className="rounded-xl border border-slate-100 bg-slate-50 p-3 text-sm text-slate-700">
+        <div className="max-h-36 overflow-y-auto rounded-xl border border-slate-100 bg-slate-50 p-3 text-sm text-slate-700">
           {selected.header_text && (
             <p className="mb-1 font-semibold text-slate-900">
               {selected.header_text}

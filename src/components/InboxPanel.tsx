@@ -657,7 +657,7 @@ export function InboxPanel() {
             </div>
           )}
 
-          <div className="flex-1 space-y-2 overflow-y-auto px-4 py-3">
+          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-4 py-3">
             {!selected ? (
               <div className="flex h-full items-center justify-center text-sm text-slate-400">
                 Pick a conversation from the list
