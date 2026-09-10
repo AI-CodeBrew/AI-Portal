@@ -27,7 +27,7 @@ Multi-merchant e-commerce operations portal: Shopify order sync, WhatsApp confir
 4. Sign in at `/login` with the admin email/password → redirected to `/admin`
 
 ### Roles
-
+.
 | Role | Routes | Capabilities |
 |------|--------|--------------|
 | **Reseller** | `/dashboard/*` | Own store, orders, inbox, Shopify + WhatsApp connect |
