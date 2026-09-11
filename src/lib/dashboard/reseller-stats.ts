@@ -5,6 +5,13 @@ import { isLlmProviderConfigured } from "@/lib/platform/llm-settings";
 import { getStoreOrderTotals } from "@/lib/orders/store-order-totals";
 import { countStoreProducts } from "@/lib/products/products-service";
 import { getEffectiveStoreCurrency } from "@/lib/currency";
+import {
+  DASHBOARD_PERIODS,
+  type DashboardPeriodId,
+} from "@/lib/dashboard/period";
+
+export type { DashboardPeriodId };
+export { DASHBOARD_PERIODS };
 
 /** Hide leftover Shopify-synced orders when the store is disconnected. */
 function scopeOrdersQuery<T>(query: T, shopifyConnected: boolean): T {
@@ -68,7 +75,23 @@ export interface PeriodMetric {
   deltaPercent: number | null;
 }
 
+type ResolvedDashboardPeriod = {
+  id: DashboardPeriodId;
+  label: string;
+  compareLabel: string | null;
+  currentStartIso: string | null;
+  currentEndExclusiveIso: string | null;
+  previousStartIso: string | null;
+  previousEndExclusiveIso: string | null;
+  chart: { from: Date; buckets: number; grain: "hour" | "day" };
+};
+
 export interface ResellerDashboardStats {
+  range: {
+    id: DashboardPeriodId;
+    label: string;
+    compareLabel: string | null;
+  };
   store: {
     name: string;
     shop_domain: string | null;
@@ -152,13 +175,38 @@ function daysAgo(n: number): Date {
   return d;
 }
 
-function toDateKey(iso: string): string {
-  return iso.slice(0, 10);
+function addDays(d: Date, n: number): Date {
+  const x = new Date(d);
+  x.setDate(x.getDate() + n);
+  return x;
 }
 
-function dayLabel(dateKey: string): string {
+function localDateKey(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function weekdayLabel(dateKey: string): string {
   const d = new Date(`${dateKey}T12:00:00`);
   return d.toLocaleDateString(undefined, { weekday: "short" });
+}
+
+function shortDateLabel(dateKey: string): string {
+  const d = new Date(`${dateKey}T12:00:00`);
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function formatHourLabel(hour: number): string {
+  const h = hour % 12 || 12;
+  return `${h}${hour < 12 ? "am" : "pm"}`;
+}
+
+function pointKeyFromIso(iso: string, grain: "hour" | "day"): string {
+  const d = new Date(iso);
+  if (grain === "day") return localDateKey(d);
+  return `${localDateKey(d)}T${String(d.getHours()).padStart(2, "0")}`;
 }
 
 function deltaPercent(current: number, previous: number): number | null {
@@ -174,15 +222,117 @@ function periodMetric(current: number, previous: number): PeriodMetric {
   };
 }
 
-function emptyDaySeries(from: Date, days: number): DashboardDayPoint[] {
+function withCreatedAtRange<
+  Q extends { gte: (column: string, value: string) => Q; lt: (column: string, value: string) => Q },
+>(query: Q, startIso: string | null, endExclusiveIso: string | null): Q {
+  let next = query;
+  if (startIso) next = next.gte("created_at", startIso);
+  if (endExclusiveIso) next = next.lt("created_at", endExclusiveIso);
+  return next;
+}
+
+function resolveDashboardPeriod(
+  id: DashboardPeriodId,
+  storeCreatedAt?: string | null
+): ResolvedDashboardPeriod {
+  const today = startOfDay(new Date());
+  const tomorrow = addDays(today, 1);
+  const storeStart = storeCreatedAt
+    ? startOfDay(new Date(storeCreatedAt))
+    : daysAgo(89);
+  const meta = DASHBOARD_PERIODS.find((p) => p.id === id) ?? DASHBOARD_PERIODS[0];
+
+  const rolling = (days: number, compareLabel: string): ResolvedDashboardPeriod => {
+    const currentStart = daysAgo(days - 1);
+    return {
+      id,
+      label: meta.label,
+      compareLabel,
+      currentStartIso: currentStart.toISOString(),
+      currentEndExclusiveIso: tomorrow.toISOString(),
+      previousStartIso: daysAgo(days * 2 - 1).toISOString(),
+      previousEndExclusiveIso: currentStart.toISOString(),
+      chart: { from: currentStart, buckets: days, grain: "day" },
+    };
+  };
+
+  switch (id) {
+    case "today":
+      return {
+        id,
+        label: meta.label,
+        compareLabel: "vs yesterday",
+        currentStartIso: today.toISOString(),
+        currentEndExclusiveIso: tomorrow.toISOString(),
+        previousStartIso: daysAgo(1).toISOString(),
+        previousEndExclusiveIso: today.toISOString(),
+        chart: { from: today, buckets: 24, grain: "hour" },
+      };
+    case "yesterday":
+      return {
+        id,
+        label: meta.label,
+        compareLabel: "vs the day before",
+        currentStartIso: daysAgo(1).toISOString(),
+        currentEndExclusiveIso: today.toISOString(),
+        previousStartIso: daysAgo(2).toISOString(),
+        previousEndExclusiveIso: daysAgo(1).toISOString(),
+        chart: { from: daysAgo(1), buckets: 24, grain: "hour" },
+      };
+    case "7d":
+      return rolling(7, "vs previous 7 days");
+    case "30d":
+      return rolling(30, "vs previous 30 days");
+    case "90d":
+      return rolling(90, "vs previous 90 days");
+    case "all":
+    default: {
+      const from = storeStart.getTime() > today.getTime() ? today : storeStart;
+      const dayCount = Math.round((today.getTime() - from.getTime()) / 86_400_000) + 1;
+      const buckets = Math.min(90, Math.max(1, dayCount));
+      const chartFrom = addDays(today, -(buckets - 1));
+      return {
+        id: "all",
+        label: meta.label,
+        compareLabel: null,
+        currentStartIso: null,
+        currentEndExclusiveIso: null,
+        previousStartIso: null,
+        previousEndExclusiveIso: null,
+        chart: { from: chartFrom, buckets, grain: "day" },
+      };
+    }
+  }
+}
+
+function emptyChartSeries(range: ResolvedDashboardPeriod): DashboardDayPoint[] {
+  if (range.chart.grain === "hour") {
+    const keyDay = localDateKey(range.chart.from);
+    return Array.from({ length: 24 }, (_, hour) => ({
+      date: `${keyDay}T${String(hour).padStart(2, "0")}`,
+      label: hour % 3 === 0 ? formatHourLabel(hour) : "",
+      conversations: 0,
+      orders: 0,
+    }));
+  }
+
+  const labelEvery = Math.max(1, Math.ceil(range.chart.buckets / 7));
   const points: DashboardDayPoint[] = [];
-  for (let i = 0; i < days; i++) {
-    const d = new Date(from);
-    d.setDate(from.getDate() + i);
-    const key = d.toISOString().slice(0, 10);
+  for (let i = 0; i < range.chart.buckets; i++) {
+    const d = addDays(range.chart.from, i);
+    const key = localDateKey(d);
+    const showLabel =
+      range.chart.buckets <= 7 ||
+      i === 0 ||
+      i === range.chart.buckets - 1 ||
+      i % labelEvery === 0;
     points.push({
       date: key,
-      label: dayLabel(key),
+      label: showLabel
+        ? range.chart.buckets <= 7
+          ? weekdayLabel(key)
+          : shortDateLabel(key)
+        : "",
       conversations: 0,
       orders: 0,
     });
@@ -191,16 +341,10 @@ function emptyDaySeries(from: Date, days: number): DashboardDayPoint[] {
 }
 
 export async function getResellerDashboardStats(
-  storeId: string
+  storeId: string,
+  period: DashboardPeriodId = "all"
 ): Promise<ResellerDashboardStats> {
   const supabase = createAdminClient();
-
-  const currentStart = daysAgo(6);
-  const previousStart = daysAgo(13);
-  const previousEnd = daysAgo(7);
-  const currentStartIso = currentStart.toISOString();
-  const previousStartIso = previousStart.toISOString();
-  const previousEndIso = previousEnd.toISOString();
 
   // Authoritative store currency — revenue is only summed for orders that
   // actually match it, so stray mismatched-currency rows (e.g. from before
@@ -227,6 +371,8 @@ export async function getResellerDashboardStats(
   ]);
 
   const store = storeRes.data;
+  const range = resolveDashboardPeriod(period, store?.created_at);
+  const emptyCount = { count: 0, data: null, error: null };
 
   const shopifyConnected = Boolean(store?.shopify_access_token);
   const whatsappConnected = Boolean(
@@ -271,27 +417,39 @@ export async function getResellerDashboardStats(
     topOrdersRes,
   ] = await Promise.all([
     scopeOrdersQuery(
-      supabase
-        .from("orders")
-        .select("*", { count: "exact", head: true })
-        .eq("store_id", storeId)
-        .eq("status", "pending"),
+      withCreatedAtRange(
+        supabase
+          .from("orders")
+          .select("*", { count: "exact", head: true })
+          .eq("store_id", storeId)
+          .eq("status", "pending"),
+        range.currentStartIso,
+        range.currentEndExclusiveIso
+      ),
       shopifyConnected
     ),
     scopeOrdersQuery(
-      supabase
-        .from("orders")
-        .select("*", { count: "exact", head: true })
-        .eq("store_id", storeId)
-        .eq("status", "confirmed"),
+      withCreatedAtRange(
+        supabase
+          .from("orders")
+          .select("*", { count: "exact", head: true })
+          .eq("store_id", storeId)
+          .eq("status", "confirmed"),
+        range.currentStartIso,
+        range.currentEndExclusiveIso
+      ),
       shopifyConnected
     ),
     scopeOrdersQuery(
-      supabase
-        .from("orders")
-        .select("*", { count: "exact", head: true })
-        .eq("store_id", storeId)
-        .eq("status", "cancelled"),
+      withCreatedAtRange(
+        supabase
+          .from("orders")
+          .select("*", { count: "exact", head: true })
+          .eq("store_id", storeId)
+          .eq("status", "cancelled"),
+        range.currentStartIso,
+        range.currentEndExclusiveIso
+      ),
       shopifyConnected
     ),
     scopeOrdersQuery(
@@ -350,83 +508,119 @@ export async function getResellerDashboardStats(
       store?.shopify_access_token
     ),
     countStoreProducts(storeId),
-    supabase
-      .from("whatsapp_conversations")
-      .select("*", { count: "exact", head: true })
-      .eq("store_id", storeId)
-      .gte("created_at", currentStartIso),
-    supabase
-      .from("whatsapp_conversations")
-      .select("*", { count: "exact", head: true })
-      .eq("store_id", storeId)
-      .gte("created_at", previousStartIso)
-      .lt("created_at", previousEndIso),
-    scopeOrdersQuery(
+    withCreatedAtRange(
       supabase
-        .from("orders")
+        .from("whatsapp_conversations")
         .select("*", { count: "exact", head: true })
-        .eq("store_id", storeId)
-        .gte("created_at", currentStartIso),
+        .eq("store_id", storeId),
+      range.currentStartIso,
+      range.currentEndExclusiveIso
+    ),
+    range.previousStartIso
+      ? withCreatedAtRange(
+          supabase
+            .from("whatsapp_conversations")
+            .select("*", { count: "exact", head: true })
+            .eq("store_id", storeId),
+          range.previousStartIso,
+          range.previousEndExclusiveIso
+        )
+      : Promise.resolve(emptyCount),
+    scopeOrdersQuery(
+      withCreatedAtRange(
+        supabase
+          .from("orders")
+          .select("*", { count: "exact", head: true })
+          .eq("store_id", storeId),
+        range.currentStartIso,
+        range.currentEndExclusiveIso
+      ),
       shopifyConnected
     ),
+    range.previousStartIso
+      ? scopeOrdersQuery(
+          withCreatedAtRange(
+            supabase
+              .from("orders")
+              .select("*", { count: "exact", head: true })
+              .eq("store_id", storeId),
+            range.previousStartIso,
+            range.previousEndExclusiveIso
+          ),
+          shopifyConnected
+        )
+      : Promise.resolve(emptyCount),
     scopeOrdersQuery(
-      supabase
-        .from("orders")
-        .select("*", { count: "exact", head: true })
-        .eq("store_id", storeId)
-        .gte("created_at", previousStartIso)
-        .lt("created_at", previousEndIso),
+      withCreatedAtRange(
+        supabase
+          .from("orders")
+          .select("*", { count: "exact", head: true })
+          .eq("store_id", storeId)
+          .eq("status", "confirmed"),
+        range.currentStartIso,
+        range.currentEndExclusiveIso
+      ),
       shopifyConnected
     ),
+    range.previousStartIso
+      ? scopeOrdersQuery(
+          withCreatedAtRange(
+            supabase
+              .from("orders")
+              .select("*", { count: "exact", head: true })
+              .eq("store_id", storeId)
+              .eq("status", "confirmed"),
+            range.previousStartIso,
+            range.previousEndExclusiveIso
+          ),
+          shopifyConnected
+        )
+      : Promise.resolve(emptyCount),
     scopeOrdersQuery(
-      supabase
-        .from("orders")
-        .select("*", { count: "exact", head: true })
-        .eq("store_id", storeId)
-        .eq("status", "confirmed")
-        .gte("created_at", currentStartIso),
+      withCreatedAtRange(
+        supabase
+          .from("orders")
+          .select("total, currency")
+          .eq("store_id", storeId)
+          .eq("status", "confirmed"),
+        range.currentStartIso,
+        range.currentEndExclusiveIso
+      ),
       shopifyConnected
     ),
-    scopeOrdersQuery(
+    range.previousStartIso
+      ? scopeOrdersQuery(
+          withCreatedAtRange(
+            supabase
+              .from("orders")
+              .select("total, currency")
+              .eq("store_id", storeId)
+              .eq("status", "confirmed"),
+            range.previousStartIso,
+            range.previousEndExclusiveIso
+          ),
+          shopifyConnected
+        )
+      : Promise.resolve({ data: [], error: null }),
+    withCreatedAtRange(
       supabase
-        .from("orders")
-        .select("*", { count: "exact", head: true })
-        .eq("store_id", storeId)
-        .eq("status", "confirmed")
-        .gte("created_at", previousStartIso)
-        .lt("created_at", previousEndIso),
-      shopifyConnected
-    ),
-    scopeOrdersQuery(
-      supabase
-        .from("orders")
-        .select("total, currency")
-        .eq("store_id", storeId)
-        .eq("status", "confirmed")
-        .gte("created_at", currentStartIso),
-      shopifyConnected
-    ),
-    scopeOrdersQuery(
-      supabase
-        .from("orders")
-        .select("total, currency")
-        .eq("store_id", storeId)
-        .eq("status", "confirmed")
-        .gte("created_at", previousStartIso)
-        .lt("created_at", previousEndIso),
-      shopifyConnected
-    ),
-    supabase
-      .from("whatsapp_conversations")
-      .select("created_at")
-      .eq("store_id", storeId)
-      .gte("created_at", currentStartIso),
-    scopeOrdersQuery(
-      supabase
-        .from("orders")
+        .from("whatsapp_conversations")
         .select("created_at")
         .eq("store_id", storeId)
-        .gte("created_at", currentStartIso),
+        .limit(5000),
+      range.currentStartIso,
+      range.currentEndExclusiveIso
+    ),
+    scopeOrdersQuery(
+      withCreatedAtRange(
+        supabase
+          .from("orders")
+          .select("created_at")
+          .eq("store_id", storeId)
+          .limit(5000),
+        range.currentStartIso,
+        range.currentEndExclusiveIso
+      ),
       shopifyConnected
     ),
     scopeOrdersQuery(
@@ -591,16 +785,16 @@ export async function getResellerDashboardStats(
   const conversionPrevious =
     convPrevious > 0 ? (ordersPrevious / convPrevious) * 100 : 0;
 
-  const chart = emptyDaySeries(currentStart, 7);
+  const chart = emptyChartSeries(range);
   const chartIndex = new Map(chart.map((p, i) => [p.date, i]));
 
   for (const row of chartConvRes.data ?? []) {
-    const key = toDateKey(row.created_at as string);
+    const key = pointKeyFromIso(row.created_at as string, range.chart.grain);
     const idx = chartIndex.get(key);
     if (idx != null) chart[idx].conversations += 1;
   }
   for (const row of chartOrdersRes.data ?? []) {
-    const key = toDateKey(row.created_at as string);
+    const key = pointKeyFromIso(row.created_at as string, range.chart.grain);
     const idx = chartIndex.get(key);
     if (idx != null) chart[idx].orders += 1;
   }
@@ -696,6 +890,11 @@ export async function getResellerDashboardStats(
     .slice(0, 6);
 
   return {
+    range: {
+      id: range.id,
+      label: range.label,
+      compareLabel: range.compareLabel,
+    },
     store: {
       name: store?.store_name || store?.shop_domain || "My Store",
       shop_domain: store?.shop_domain ?? null,

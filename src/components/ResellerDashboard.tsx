@@ -8,16 +8,24 @@ import type {
   ResellerDashboardStats,
 } from "@/lib/dashboard/reseller-stats";
 import {
+  DASHBOARD_PERIODS,
+  type DashboardPeriodId,
+} from "@/lib/dashboard/period";
+import {
   cachedJsonFetch,
   peekCachedJson,
 } from "@/lib/client-fetch-cache";
 
-function formatDelta(metric: PeriodMetric, suffix = "%"): string {
+function formatDelta(
+  metric: PeriodMetric,
+  compareLabel: string | null
+): string | null {
+  if (!compareLabel) return null;
   if (metric.deltaPercent == null) {
-    return metric.current > 0 ? `New vs last 7 days` : `vs last 7 days`;
+    return metric.current > 0 ? `New ${compareLabel}` : compareLabel;
   }
   const sign = metric.deltaPercent > 0 ? "+" : "";
-  return `${sign}${metric.deltaPercent}${suffix} vs last 7 days`;
+  return `${sign}${metric.deltaPercent}% ${compareLabel}`;
 }
 
 function deltaColor(metric: PeriodMetric): string {
@@ -31,12 +39,14 @@ function StatCard({
   label,
   value,
   metric,
+  compareLabel,
   href,
   accent = "slate",
 }: {
   label: string;
   value: string | number;
   metric?: PeriodMetric;
+  compareLabel?: string | null;
   href?: string;
   accent?: "blue" | "emerald" | "amber" | "violet" | "slate";
 }) {
@@ -48,6 +58,9 @@ function StatCard({
     slate: "border-l-slate-300",
   }[accent];
 
+  const deltaText =
+    metric && compareLabel ? formatDelta(metric, compareLabel) : null;
+
   const inner = (
     <div
       className={`rounded-xl border border-slate-200 border-l-4 bg-white p-4 shadow-sm md:p-5 ${accentBorder} ${
@@ -56,9 +69,9 @@ function StatCard({
     >
       <p className="text-sm font-medium text-slate-600">{label}</p>
       <p className="mt-1 text-2xl font-bold text-slate-900 lg:text-3xl">{value}</p>
-      {metric && (
-        <p className={`mt-1 text-xs font-medium ${deltaColor(metric)}`}>
-          {formatDelta(metric)}
+      {deltaText && (
+        <p className={`mt-1 text-xs font-medium ${deltaColor(metric!)}`}>
+          {deltaText}
         </p>
       )}
     </div>
@@ -86,28 +99,39 @@ function MiniBarChart({
 
   return (
     <div className="mt-4">
-      <div className="flex h-28 items-end gap-1.5 md:h-36 md:gap-2 lg:h-40">
-        {points.map((p) => (
-          <div key={p.date} className="flex min-w-0 flex-1 flex-col items-center gap-1">
-            <div className="flex h-20 w-full items-end justify-center gap-0.5 md:h-28 lg:h-32">
-              <div
-                className="w-2 rounded-t bg-blue-400/90 md:w-2.5"
-                style={{
-                  height: `${Math.max(4, (p.conversations / max) * 100)}%`,
-                }}
-                title={`${p.conversations} conversations`}
-              />
-              <div
-                className="w-2 rounded-t bg-emerald-500 md:w-2.5"
-                style={{ height: `${Math.max(4, (p.orders / max) * 100)}%` }}
-                title={`${p.orders} orders`}
-              />
+      <div className="overflow-x-auto">
+        <div
+          className={`flex h-28 items-end gap-1.5 md:h-36 md:gap-2 lg:h-40 ${
+            points.length > 14 ? "min-w-max" : ""
+          }`}
+        >
+          {points.map((p) => (
+            <div
+              key={p.date}
+              className={`flex flex-col items-center gap-1 ${
+                points.length > 14 ? "w-4 shrink-0 md:w-5" : "min-w-0 flex-1"
+              }`}
+            >
+              <div className="flex h-20 w-full items-end justify-center gap-0.5 md:h-28 lg:h-32">
+                <div
+                  className="w-1.5 rounded-t bg-blue-400/90 md:w-2"
+                  style={{
+                    height: `${Math.max(4, (p.conversations / max) * 100)}%`,
+                  }}
+                  title={`${p.conversations} conversations`}
+                />
+                <div
+                  className="w-1.5 rounded-t bg-emerald-500 md:w-2"
+                  style={{ height: `${Math.max(4, (p.orders / max) * 100)}%` }}
+                  title={`${p.orders} orders`}
+                />
+              </div>
+              <span className="h-6 text-center text-[9px] font-medium leading-tight text-slate-500 md:text-[10px]">
+                {p.label}
+              </span>
             </div>
-            <span className="text-[10px] font-medium text-slate-500">
-              {p.label}
-            </span>
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
       <div className="mt-3 flex gap-4 text-xs text-slate-500">
         <span className="inline-flex items-center gap-1.5">
@@ -168,8 +192,10 @@ function OrderStatusBars({
 const DASHBOARD_STATS_KEY = "dashboard:stats";
 
 export function ResellerDashboard() {
+  const [period, setPeriod] = useState<DashboardPeriodId>("all");
+  const cacheKey = `${DASHBOARD_STATS_KEY}:${period}`;
   const cached = peekCachedJson<{ stats?: ResellerDashboardStats; error?: string }>(
-    DASHBOARD_STATS_KEY
+    cacheKey
   );
   const [stats, setStats] = useState<ResellerDashboardStats | null>(
     cached?.stats ?? null
@@ -178,22 +204,44 @@ export function ResellerDashboard() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
+    const key = `${DASHBOARD_STATS_KEY}:${period}`;
+    const cachedPeriod = peekCachedJson<{
+      stats?: ResellerDashboardStats;
+      error?: string;
+    }>(key);
+    if (cachedPeriod?.stats) {
+      setStats(cachedPeriod.stats);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
+    setError(null);
+
     void cachedJsonFetch<{ stats?: ResellerDashboardStats; error?: string }>(
-      DASHBOARD_STATS_KEY,
-      "/api/dashboard/stats",
+      key,
+      `/api/dashboard/stats?period=${period}`,
       { ttlMs: 45_000, staleWhileRevalidate: true }
     )
       .then(({ data }) => {
+        if (cancelled) return;
         if (data.error) throw new Error(data.error);
         if (data.stats) setStats(data.stats);
       })
-      .catch((err) =>
-        setError(err instanceof Error ? err.message : "Failed to load")
-      )
-      .finally(() => setLoading(false));
-  }, []);
+      .catch((err) => {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : "Failed to load");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
 
-  if (loading) {
+    return () => {
+      cancelled = true;
+    };
+  }, [period]);
+
+  if (loading && !stats) {
     return (
       <div className="rounded-xl border border-slate-200 bg-white p-8 text-sm text-slate-600">
         Loading dashboard...
@@ -201,7 +249,7 @@ export function ResellerDashboard() {
     );
   }
 
-  if (error || !stats) {
+  if ((error && !stats) || !stats) {
     return (
       <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-sm text-red-800">
         {error ?? "Could not load dashboard"}
@@ -213,66 +261,85 @@ export function ResellerDashboard() {
     (p) => p.conversations > 0 || p.orders > 0
   );
   const currency = stats.period.revenue.currency || stats.store.currency || "AED";
+  const compareLabel = stats.range.compareLabel;
+  const periodLabel = stats.range.label;
 
   return (
-    <div className="space-y-6">
+    <div className={`space-y-6 ${loading ? "opacity-70" : ""}`}>
       {/* Welcome */}
       <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:p-6 lg:p-8">
-        <div>
-          <h2 className="text-xl font-bold text-slate-900">
-            Welcome back, {stats.store.name}
-          </h2>
-          <p className="mt-1 text-sm text-slate-600">
-            {stats.store.shop_domain ??
-              "Complete setup to start selling on WhatsApp"}
-          </p>
-          <div className="mt-4 flex flex-wrap gap-2">
-            <span
-              className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-                stats.store.shopify_connected
-                  ? "bg-emerald-100 text-emerald-800"
-                  : "bg-slate-100 text-slate-600"
-              }`}
-            >
-              Shopify {stats.store.shopify_connected ? "on" : "off"}
-            </span>
-            <span
-              className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-                stats.store.whatsapp_connected
-                  ? "bg-emerald-100 text-emerald-800"
-                  : "bg-slate-100 text-slate-600"
-              }`}
-            >
-              WhatsApp {stats.store.whatsapp_connected ? "on" : "off"}
-            </span>
-            <span
-              className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-                stats.store.meta_connected
-                  ? "bg-emerald-100 text-emerald-800"
-                  : "bg-slate-100 text-slate-600"
-              }`}
-            >
-              Meta {stats.store.meta_connected ? "on" : "off"}
-            </span>
-            <span
-              className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-                stats.ai.platformConfigured
-                  ? "bg-blue-100 text-blue-800"
-                  : "bg-amber-100 text-amber-800"
-              }`}
-            >
-              AI {stats.ai.platformConfigured ? "active" : "not configured"}
-            </span>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 className="text-xl font-bold text-slate-900">
+              Welcome back, {stats.store.name}
+            </h2>
+            <p className="mt-1 text-sm text-slate-600">
+              {stats.store.shop_domain ??
+                "Complete setup to start selling on WhatsApp"}
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <span
+                className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                  stats.store.shopify_connected
+                    ? "bg-emerald-100 text-emerald-800"
+                    : "bg-slate-100 text-slate-600"
+                }`}
+              >
+                Shopify {stats.store.shopify_connected ? "on" : "off"}
+              </span>
+              <span
+                className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                  stats.store.whatsapp_connected
+                    ? "bg-emerald-100 text-emerald-800"
+                    : "bg-slate-100 text-slate-600"
+                }`}
+              >
+                WhatsApp {stats.store.whatsapp_connected ? "on" : "off"}
+              </span>
+              <span
+                className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                  stats.store.meta_connected
+                    ? "bg-emerald-100 text-emerald-800"
+                    : "bg-slate-100 text-slate-600"
+                }`}
+              >
+                Meta {stats.store.meta_connected ? "on" : "off"}
+              </span>
+              <span
+                className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                  stats.ai.platformConfigured
+                    ? "bg-blue-100 text-blue-800"
+                    : "bg-amber-100 text-amber-800"
+                }`}
+              >
+                AI {stats.ai.platformConfigured ? "active" : "not configured"}
+              </span>
+            </div>
           </div>
+          <label className="shrink-0 sm:pt-1">
+            <span className="sr-only">Dashboard period</span>
+            <select
+              value={period}
+              onChange={(e) => setPeriod(e.target.value as DashboardPeriodId)}
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 sm:w-auto"
+            >
+              {DASHBOARD_PERIODS.map((option) => (
+                <option key={option.id} value={option.id}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
       </div>
 
-      {/* 7-day KPIs */}
+      {/* KPIs */}
       <div className="grid gap-3 md:grid-cols-2 md:gap-4 lg:grid-cols-5">
         <StatCard
           label="Total Conversations"
           value={stats.period.conversations.current.toLocaleString()}
           metric={stats.period.conversations}
+          compareLabel={compareLabel}
           href="/dashboard/inbox"
           accent="blue"
         />
@@ -280,6 +347,7 @@ export function ResellerDashboard() {
           label="Orders Created"
           value={stats.period.ordersCreated.current.toLocaleString()}
           metric={stats.period.ordersCreated}
+          compareLabel={compareLabel}
           href="/dashboard/orders"
           accent="slate"
         />
@@ -287,6 +355,7 @@ export function ResellerDashboard() {
           label="Confirmed Orders"
           value={stats.period.confirmedOrders.current.toLocaleString()}
           metric={stats.period.confirmedOrders}
+          compareLabel={compareLabel}
           href="/dashboard/orders"
           accent="emerald"
         />
@@ -294,6 +363,7 @@ export function ResellerDashboard() {
           label="Conversion Rate"
           value={`${stats.period.conversionRate.current.toFixed(1)}%`}
           metric={stats.period.conversionRate}
+          compareLabel={compareLabel}
           accent="violet"
         />
         <StatCard
@@ -302,6 +372,7 @@ export function ResellerDashboard() {
             whole: true,
           })}
           metric={stats.period.revenue}
+          compareLabel={compareLabel}
           href="/dashboard/orders"
           accent="amber"
         />
@@ -313,7 +384,7 @@ export function ResellerDashboard() {
           <div className="flex items-center justify-between gap-2">
             <div className="min-w-0">
               <h3 className="font-bold text-slate-900">Conversations & Orders</h3>
-              <p className="text-xs text-slate-500">Last 7 days</p>
+              <p className="text-xs text-slate-500">{periodLabel}</p>
             </div>
             <Link
               href="/dashboard/inbox"
@@ -328,7 +399,8 @@ export function ResellerDashboard() {
             <div className="mt-8 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-10 text-center">
               <p className="text-sm font-medium text-slate-700">No traffic yet</p>
               <p className="mt-1 text-xs text-slate-500">
-                Conversations and orders from the last 7 days will show here.
+                Conversations and orders for {periodLabel.toLowerCase()} will show
+                here.
               </p>
             </div>
           )}
@@ -337,7 +409,7 @@ export function ResellerDashboard() {
         {/* Order status */}
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:p-5 lg:p-6">
           <h3 className="font-bold text-slate-900">Order Status</h3>
-          <p className="text-xs text-slate-500">All time</p>
+          <p className="text-xs text-slate-500">{periodLabel}</p>
           <OrderStatusBars
             pending={stats.orderStatus.pending}
             confirmed={stats.orderStatus.confirmed}
