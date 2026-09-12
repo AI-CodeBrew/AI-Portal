@@ -538,6 +538,97 @@ export interface ShopifyCatalogProductDetail {
   updatedAt: string | null;
 }
 
+export type ShopifyRestProductPayload = {
+  id: number;
+  title?: string;
+  handle?: string;
+  status?: string;
+  vendor?: string;
+  product_type?: string;
+  tags?: string;
+  body_html?: string | null;
+  created_at?: string;
+  updated_at?: string;
+  image?: { src?: string } | null;
+  images?: Array<{ src?: string; alt?: string | null }>;
+  variants?: Array<{
+    id?: number;
+    title?: string;
+    sku?: string | null;
+    price?: string;
+    compare_at_price?: string | null;
+    inventory_quantity?: number;
+    barcode?: string | null;
+  }>;
+};
+
+export function mapShopifyRestProduct(
+  p: ShopifyRestProductPayload
+): ShopifyCatalogProductDetail {
+  return {
+    id: Number(p.id),
+    title: p.title ?? "",
+    handle: p.handle ?? null,
+    status: p.status ?? null,
+    vendor: p.vendor ?? null,
+    productType: p.product_type ?? null,
+    tags: p.tags
+      ? p.tags
+          .split(",")
+          .map((t) => t.trim())
+          .filter(Boolean)
+      : [],
+    description: p.body_html ? stripHtml(p.body_html).slice(0, 2000) : null,
+    descriptionHtml: p.body_html ?? null,
+    images: (p.images ?? [])
+      .filter((img) => Boolean(img.src))
+      .map((img) => ({
+        url: img.src as string,
+        alt: img.alt ?? null,
+      })),
+    variants: (p.variants ?? [])
+      .filter((v) => v.id != null)
+      .map((v) => ({
+        id: Number(v.id),
+        title: v.title ?? "Default",
+        sku: v.sku ?? null,
+        price: v.price ?? "0",
+        compareAtPrice: v.compare_at_price ?? null,
+        inventoryQuantity: v.inventory_quantity ?? 0,
+        inStock: (v.inventory_quantity ?? 0) > 0,
+        barcode: v.barcode ?? null,
+      })),
+    createdAt: p.created_at ?? null,
+    updatedAt: p.updated_at ?? null,
+  };
+}
+
+/** Page through Shopify REST for a full catalog snapshot (sync only). */
+export async function fetchAllShopifyProductsRest(
+  shopDomain: string,
+  encryptedToken: string
+): Promise<ShopifyRestProductPayload[]> {
+  const all: ShopifyRestProductPayload[] = [];
+  let pageInfo: string | undefined;
+
+  while (true) {
+    const path = pageInfo
+      ? `/products.json?limit=250&page_info=${encodeURIComponent(pageInfo)}`
+      : "/products.json?limit=250";
+    const res = await shopifyAdminFetch(shopDomain, encryptedToken, path);
+    if (!res.ok) {
+      throw new Error(`Product catalog fetch failed: ${await res.text()}`);
+    }
+    const data = (await res.json()) as { products?: ShopifyRestProductPayload[] };
+    all.push(...(data.products ?? []));
+    const { next } = parsePageInfoFromLink(res.headers.get("link"));
+    if (!next) break;
+    pageInfo = next;
+  }
+
+  return all;
+}
+
 export async function listShopifyCatalogProducts(
   shopDomain: string,
   encryptedToken: string,
@@ -869,64 +960,8 @@ export async function getShopifyCatalogProduct(
     throw new Error(`Product fetch failed: ${await res.text()}`);
   }
 
-  const data = (await res.json()) as {
-    product: {
-      id: number;
-      title: string;
-      handle?: string;
-      status?: string;
-      vendor?: string;
-      product_type?: string;
-      tags?: string;
-      body_html?: string | null;
-      created_at?: string;
-      updated_at?: string;
-      images?: Array<{ src: string; alt?: string | null }>;
-      variants?: Array<{
-        id: number;
-        title: string;
-        sku?: string | null;
-        price: string;
-        compare_at_price?: string | null;
-        inventory_quantity?: number;
-        barcode?: string | null;
-      }>;
-    };
-  };
-
-  const p = data.product;
-  return {
-    id: p.id,
-    title: p.title,
-    handle: p.handle ?? null,
-    status: p.status ?? null,
-    vendor: p.vendor ?? null,
-    productType: p.product_type ?? null,
-    tags: p.tags
-      ? p.tags
-          .split(",")
-          .map((t) => t.trim())
-          .filter(Boolean)
-      : [],
-    description: p.body_html ? stripHtml(p.body_html).slice(0, 2000) : null,
-    descriptionHtml: p.body_html ?? null,
-    images: (p.images ?? []).map((img) => ({
-      url: img.src,
-      alt: img.alt ?? null,
-    })),
-    variants: (p.variants ?? []).map((v) => ({
-      id: v.id,
-      title: v.title,
-      sku: v.sku ?? null,
-      price: v.price,
-      compareAtPrice: v.compare_at_price ?? null,
-      inventoryQuantity: v.inventory_quantity ?? 0,
-      inStock: (v.inventory_quantity ?? 0) > 0,
-      barcode: v.barcode ?? null,
-    })),
-    createdAt: p.created_at ?? null,
-    updatedAt: p.updated_at ?? null,
-  };
+  const data = (await res.json()) as { product: ShopifyRestProductPayload };
+  return mapShopifyRestProduct(data.product);
 }
 
 export async function checkStock(

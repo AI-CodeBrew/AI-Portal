@@ -4,6 +4,7 @@ import { requireResellerStore } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { DEFAULT_SHOPIFY_SCOPES } from "@/lib/shopify";
 import { clearStoreShopifyOrders } from "@/lib/orders/clear-shopify-orders";
+import { clearStoreShopifyProductsCache } from "@/lib/shopify-sync-products";
 import { assertShopifyPlanAllowed } from "@/lib/store/plan-access";
 
 export async function POST(request: NextRequest) {
@@ -73,6 +74,7 @@ export async function POST(request: NextRequest) {
       if (cleared.error) {
         return NextResponse.json({ error: cleared.error }, { status: 500 });
       }
+      await clearStoreShopifyProductsCache(supabase, storeId);
     }
 
     const updatePayload: Record<string, string | null> = {
@@ -124,6 +126,7 @@ export async function DELETE() {
     if (cleared.error) {
       return NextResponse.json({ error: cleared.error }, { status: 500 });
     }
+    await clearStoreShopifyProductsCache(supabase, storeId);
 
     const { error } = await supabase
       .from("stores")

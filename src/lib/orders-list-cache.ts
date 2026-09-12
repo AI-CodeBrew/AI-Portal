@@ -39,6 +39,41 @@ export const ORDERS_PAGE_SIZE = 10;
 export const ORDERS_PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
 
 let cache: OrdersListCache | null = null;
+const ORDERS_STORAGE_KEY = "portal:orders-list-cache:v1";
+
+let ordersHydrationEnabled = false;
+
+function hydrateOrdersCache() {
+  if (!ordersHydrationEnabled || cache || typeof sessionStorage === "undefined") {
+    return;
+  }
+  try {
+    const raw = sessionStorage.getItem(ORDERS_STORAGE_KEY);
+    if (!raw) return;
+    cache = JSON.parse(raw) as OrdersListCache;
+  } catch {
+    cache = null;
+  }
+}
+
+/** Call after mount so SSR/first paint cannot read sessionStorage. */
+export function enableOrdersListCacheHydration() {
+  ordersHydrationEnabled = true;
+  hydrateOrdersCache();
+}
+
+function persistOrdersCache() {
+  if (typeof sessionStorage === "undefined") return;
+  try {
+    if (!cache) {
+      sessionStorage.removeItem(ORDERS_STORAGE_KEY);
+      return;
+    }
+    sessionStorage.setItem(ORDERS_STORAGE_KEY, JSON.stringify(cache));
+  } catch {
+    // quota / private mode
+  }
+}
 
 export function pageCacheKey(
   source: SourceFilter,
@@ -52,11 +87,13 @@ export function pageCacheKey(
 }
 
 export function getOrdersListCache(): OrdersListCache | null {
+  hydrateOrdersCache();
   return cache;
 }
 
 export function setOrdersListCache(next: OrdersListCache): void {
   cache = next;
+  persistOrdersCache();
 }
 
 export function getCachedPage(
@@ -71,7 +108,6 @@ export function getCachedPage(
   const entry =
     cache.pages[pageCacheKey(source, status, dateFrom, dateTo, page, pageSize)];
   if (!entry) return null;
-  if (Date.now() - entry.fetchedAt > PAGE_TTL_MS) return null;
   return entry;
 }
 
@@ -131,6 +167,7 @@ export function setCachedPage(
     lastPage: meta?.lastPage ?? page,
     fetchedAt: Date.now(),
   };
+  persistOrdersCache();
 }
 
 export function isOrdersCacheFresh(): boolean {
@@ -138,8 +175,39 @@ export function isOrdersCacheFresh(): boolean {
   return Date.now() - cache.fetchedAt < PAGE_TTL_MS;
 }
 
+export function patchCachedOrder(order: Partial<Order> & { id: string }): void {
+  if (!cache) return;
+  const pages = { ...cache.pages };
+  for (const [key, page] of Object.entries(pages)) {
+    const idx = page.orders.findIndex((o) => o.id === order.id);
+    if (idx < 0) continue;
+    const nextOrders = [...page.orders];
+    nextOrders[idx] = { ...nextOrders[idx], ...order };
+    pages[key] = { ...page, orders: nextOrders, fetchedAt: Date.now() };
+  }
+  cache = { ...cache, pages, fetchedAt: Date.now() };
+  persistOrdersCache();
+}
+
+export function removeCachedOrder(orderId: string): void {
+  if (!cache) return;
+  const pages = { ...cache.pages };
+  for (const [key, page] of Object.entries(pages)) {
+    if (!page.orders.some((o) => o.id === orderId)) continue;
+    pages[key] = {
+      ...page,
+      orders: page.orders.filter((o) => o.id !== orderId),
+      filteredTotal: Math.max(0, page.filteredTotal - 1),
+      fetchedAt: Date.now(),
+    };
+  }
+  cache = { ...cache, pages, fetchedAt: Date.now() };
+  persistOrdersCache();
+}
+
 export function clearOrdersListCache(): void {
   cache = null;
+  persistOrdersCache();
 }
 
 export function dateRangeFromPreset(

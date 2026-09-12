@@ -15,6 +15,8 @@ import {
   cachedJsonFetch,
   peekCachedJson,
 } from "@/lib/client-fetch-cache";
+import { createClient } from "@/lib/supabase/client";
+import { useStoreStatus } from "@/hooks/useStoreStatus";
 
 function formatDelta(
   metric: PeriodMetric,
@@ -192,6 +194,7 @@ function OrderStatusBars({
 const DASHBOARD_STATS_KEY = "dashboard:stats";
 
 export function ResellerDashboard() {
+  const { store } = useStoreStatus();
   const [period, setPeriod] = useState<DashboardPeriodId>("all");
   const cacheKey = `${DASHBOARD_STATS_KEY}:${period}`;
   const cached = peekCachedJson<{ stats?: ResellerDashboardStats; error?: string }>(
@@ -213,15 +216,16 @@ export function ResellerDashboard() {
     if (cachedPeriod?.stats) {
       setStats(cachedPeriod.stats);
       setLoading(false);
-    } else {
-      setLoading(true);
+      return;
     }
+
+    setLoading(true);
     setError(null);
 
     void cachedJsonFetch<{ stats?: ResellerDashboardStats; error?: string }>(
       key,
       `/api/dashboard/stats?period=${period}`,
-      { ttlMs: 45_000, staleWhileRevalidate: true }
+      { ttlMs: 24 * 60 * 60_000, staleWhileRevalidate: false }
     )
       .then(({ data }) => {
         if (cancelled) return;
@@ -240,6 +244,57 @@ export function ResellerDashboard() {
       cancelled = true;
     };
   }, [period]);
+
+  useEffect(() => {
+    if (!store?.id) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const refreshStats = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        const key = `${DASHBOARD_STATS_KEY}:${period}`;
+        void cachedJsonFetch<{
+          stats?: ResellerDashboardStats;
+          error?: string;
+        }>(key, `/api/dashboard/stats?period=${period}`, {
+          ttlMs: 24 * 60 * 60_000,
+          staleWhileRevalidate: false,
+          force: true,
+        }).then(({ data }) => {
+          if (data.stats) setStats(data.stats);
+        });
+      }, 400);
+    };
+
+    const supabase = createClient();
+    const channel = supabase
+      .channel(`dashboard-stats-${store.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "orders",
+          filter: `store_id=eq.${store.id}`,
+        },
+        refreshStats
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "whatsapp_conversations",
+          filter: `store_id=eq.${store.id}`,
+        },
+        refreshStats
+      )
+      .subscribe();
+
+    return () => {
+      if (timer) clearTimeout(timer);
+      void supabase.removeChannel(channel);
+    };
+  }, [store?.id, period]);
 
   if (loading && !stats) {
     return (

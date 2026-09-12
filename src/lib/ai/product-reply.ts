@@ -13,8 +13,8 @@ import {
   isRealVariantTitle,
   productHasSelectableVariants,
 } from "@/lib/products/variant-titles";
-import { getShopCurrency, listShopifyCatalogProducts } from "@/lib/shopify";
-import { formatMoney } from "@/lib/currency";
+import { sampleCachedShopifyProducts } from "@/lib/shopify/cached-catalog";
+import { formatMoney, getEffectiveStoreCurrency } from "@/lib/currency";
 import { type AgentContext } from "./sales-tools";
 import { extractCatalogBrowseShownProducts } from "./catalog-browse-pick";
 
@@ -364,18 +364,22 @@ async function loadCatalogSampleProducts(
 
   if (mapped.length >= count) return mapped.slice(0, count);
 
-  const shopDomain = ctx.store.shop_domain;
-  const token = ctx.store.shopify_access_token;
-  if (!shopDomain || !token) return mapped;
+  if (!ctx.store.shop_domain || !ctx.store.shopify_access_token) return mapped;
 
   try {
     let currency = ctx.storeCurrency;
     if (!currency) {
-      currency = await getShopCurrency(shopDomain, token);
+      currency = await getEffectiveStoreCurrency(ctx.store.id);
     }
-    const { products } = await listShopifyCatalogProducts(shopDomain, token, {
-      limit: 30,
-    });
+    const rows = await sampleCachedShopifyProducts(ctx.store.id, 30);
+    const products = rows.map((row) => ({
+      id: row.id,
+      title: row.title,
+      description: row.description,
+      imageUrl: row.image_url,
+      priceFrom: row.price_from,
+      currency: row.currency,
+    }));
     const excludeSku = new Set(
       (exclude?.skus ?? []).map((s) => skuMatchKey(s)).filter(Boolean)
     );

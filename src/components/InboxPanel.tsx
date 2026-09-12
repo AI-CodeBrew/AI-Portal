@@ -1,9 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { cachedJsonFetch, invalidateCachedJson } from "@/lib/client-fetch-cache";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  cachedJsonFetch,
+  invalidateCachedJson,
+  peekCachedJson,
+  setCachedJson,
+} from "@/lib/client-fetch-cache";
 import { ChatMessageBody } from "@/components/ChatMessageBody";
 import { createClient } from "@/lib/supabase/client";
+import { useStoreStatus } from "@/hooks/useStoreStatus";
 import type { WhatsappConversation, WhatsappMessage } from "@/lib/types";
 import { ConversationComposer } from "@/components/whatsapp-window/ConversationComposer";
 import { ConversationListRow } from "@/components/whatsapp-window/ConversationListRow";
@@ -13,6 +19,96 @@ import { useWindowCountdown } from "@/components/whatsapp-window/useWindowCountd
 type InboxFilter = "all" | "ai" | "handoff" | "exhausted" | "closing_soon";
 
 const INBOX_PAGE_SIZE = 10;
+const INBOX_LIST_TTL_MS = 60_000;
+const INBOX_MESSAGES_TTL_MS = 120_000;
+const SELECTED_CHAT_KEY = "inbox:selectedId";
+
+type InboxListPayload = {
+  conversations?: WhatsappConversation[];
+  total?: number;
+  totalPages?: number;
+  page?: number;
+  limit?: number;
+};
+
+function inboxListKey(
+  filter: InboxFilter,
+  page: number,
+  limit: number,
+  search: string
+) {
+  const params = new URLSearchParams({
+    filter,
+    page: String(page),
+    limit: String(limit),
+  });
+  if (search) params.set("q", search);
+  return { key: `inbox:list:${params.toString()}`, params };
+}
+
+function inboxMessagesKey(conversationId: string) {
+  return `inbox:messages:${conversationId}`;
+}
+
+function conversationMatchesFilter(
+  conv: WhatsappConversation,
+  filter: InboxFilter
+) {
+  if (conv.status === "closed") return false;
+  if (filter === "ai") return conv.status === "ai_handling";
+  if (filter === "handoff") {
+    return conv.status === "human_handoff" && !conv.ai_exhausted;
+  }
+  if (filter === "exhausted") return Boolean(conv.ai_exhausted);
+  if (filter === "closing_soon") return false;
+  return true;
+}
+
+function mapRealtimeConversation(
+  row: Record<string, unknown>,
+  previous?: WhatsappConversation
+): WhatsappConversation {
+  return {
+    id: String(row.id ?? previous?.id ?? ""),
+    store_id: String(row.store_id ?? previous?.store_id ?? ""),
+    customer_id:
+      (row.customer_id as string | null | undefined) ??
+      previous?.customer_id ??
+      null,
+    customer_phone: String(
+      row.customer_phone ?? previous?.customer_phone ?? ""
+    ),
+    customer_name: previous?.customer_name ?? null,
+    status: (row.status as WhatsappConversation["status"]) ??
+      previous?.status ??
+      "ai_handling",
+    created_at: String(row.created_at ?? previous?.created_at ?? ""),
+    updated_at: String(row.updated_at ?? previous?.updated_at ?? ""),
+    ai_exhausted:
+      (row.ai_exhausted as boolean | null | undefined) ??
+      previous?.ai_exhausted ??
+      null,
+    last_customer_message_at:
+      (row.last_customer_message_at as string | null | undefined) ??
+      previous?.last_customer_message_at ??
+      null,
+    window_type:
+      (row.window_type as WhatsappConversation["window_type"]) ??
+      previous?.window_type ??
+      "service",
+    marketing_opt_in: Boolean(
+      row.marketing_opt_in ?? previous?.marketing_opt_in ?? false
+    ),
+  };
+}
+
+function sortConversations(list: WhatsappConversation[]) {
+  return [...list].sort(
+    (a, b) =>
+      new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+  );
+}
+
 const FILTERS: { key: InboxFilter; label: string }[] = [
   { key: "all", label: "All" },
   { key: "ai", label: "AI" },
@@ -145,26 +241,45 @@ function ChatWindowHeader({
 }
 
 export function InboxPanel() {
+  const { store } = useStoreStatus();
+  const initialList = peekCachedJson<InboxListPayload>(
+    inboxListKey("all", 1, INBOX_PAGE_SIZE, "").key
+  );
+  const initialSelected =
+    (typeof sessionStorage !== "undefined"
+      ? sessionStorage.getItem(SELECTED_CHAT_KEY)
+      : null) ??
+    initialList?.conversations?.[0]?.id ??
+    null;
+  const initialMessages = initialSelected
+    ? peekCachedJson<{ messages?: WhatsappMessage[] }>(
+        inboxMessagesKey(initialSelected)
+      )?.messages ?? []
+    : [];
+
   const [filter, setFilter] = useState<InboxFilter>("all");
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [conversations, setConversations] = useState<WhatsappConversation[]>(
-    []
+    initialList?.conversations ?? []
   );
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(INBOX_PAGE_SIZE);
   const [pageSizeInput, setPageSizeInput] = useState(String(INBOX_PAGE_SIZE));
-  const [total, setTotal] = useState(0);
-  const [totalPages, setTotalPages] = useState(1);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<WhatsappMessage[]>([]);
+  const [total, setTotal] = useState(initialList?.total ?? 0);
+  const [totalPages, setTotalPages] = useState(initialList?.totalPages ?? 1);
+  const [selectedId, setSelectedId] = useState<string | null>(initialSelected);
+  const [messages, setMessages] = useState<WhatsappMessage[]>(initialMessages);
   const [sending, setSending] = useState(false);
   const [switchingMode, setSwitchingMode] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!initialList?.conversations);
   const [sendError, setSendError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const selectedIdRef = useRef(selectedId);
+  selectedIdRef.current = selectedId;
+  const listKeyRef = useRef(inboxListKey("all", 1, INBOX_PAGE_SIZE, "").key);
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(search.trim()), 250);
@@ -175,55 +290,67 @@ export function InboxPanel() {
     setPage(1);
   }, [debouncedSearch]);
 
+  const applyList = useCallback(
+    (data: InboxListPayload, limit: number) => {
+      const list = (data.conversations ?? []) as WhatsappConversation[];
+      const nextTotal = data.total ?? list.length;
+      const nextPages = Math.max(
+        1,
+        data.totalPages ?? (Math.ceil(nextTotal / limit) || 1)
+      );
+      setConversations(list);
+      setTotal(nextTotal);
+      setTotalPages(nextPages);
+      setSelectedId((prev) => {
+        if (prev && list.some((c) => c.id === prev)) return prev;
+        if (prev && !list.length) return prev;
+        if (list.length && !list.some((c) => c.id === prev)) {
+          return prev ?? list[0]!.id;
+        }
+        if (!list.length) return prev;
+        return prev;
+      });
+    },
+    []
+  );
+
   const fetchConversations = useCallback(
     async (opts?: { page?: number; limit?: number; silent?: boolean; force?: boolean }) => {
       const p = opts?.page ?? page;
       const limit = opts?.limit ?? pageSize;
-      const params = new URLSearchParams({
+      const { key: cacheKey, params } = inboxListKey(
         filter,
-        page: String(p),
-        limit: String(limit),
-      });
-      if (debouncedSearch) params.set("q", debouncedSearch);
-      const cacheKey = `inbox:list:${params.toString()}`;
-      if (!opts?.silent) setLoading(true);
+        p,
+        limit,
+        debouncedSearch
+      );
+      listKeyRef.current = cacheKey;
+
+      const cached = peekCachedJson<InboxListPayload>(cacheKey);
+      if (cached?.conversations && !opts?.force) {
+        applyList(cached, limit);
+        setLoading(false);
+        return;
+      } else if (!opts?.silent && !cached?.conversations) {
+        setLoading(true);
+      }
 
       try {
-        const { data } = await cachedJsonFetch<{
-          conversations?: WhatsappConversation[];
-          total?: number;
-          totalPages?: number;
-          page?: number;
-          limit?: number;
-        }>(cacheKey, `/api/inbox?${params}`, {
-          ttlMs: 15_000,
-          staleWhileRevalidate: !opts?.force,
-          force: opts?.force ?? false,
-        });
-
-        const list = (data.conversations ?? []) as WhatsappConversation[];
-        const nextTotal = data.total ?? list.length;
-        const nextPages = Math.max(
-          1,
-          data.totalPages ?? (Math.ceil(nextTotal / limit) || 1)
-        );
-
-        setConversations(list);
-        setTotal(nextTotal);
-        setTotalPages(nextPages);
-        setSelectedId((prev) => {
-          if (list.length && !list.some((c) => c.id === prev)) {
-            return list[0]!.id;
+        const { data } = await cachedJsonFetch<InboxListPayload>(
+          cacheKey,
+          `/api/inbox?${params}`,
+          {
+            ttlMs: 24 * 60 * 60_000,
+            staleWhileRevalidate: false,
+            force: opts?.force ?? false,
           }
-          if (!list.length) return null;
-          return prev;
-        });
-        if (!list.length) setMessages([]);
+        );
+        applyList(data, limit);
       } finally {
-        if (!opts?.silent) setLoading(false);
+        setLoading(false);
       }
     },
-    [filter, debouncedSearch, page, pageSize]
+    [filter, debouncedSearch, page, pageSize, applyList]
   );
 
   useEffect(() => {
@@ -236,7 +363,27 @@ export function InboxPanel() {
     void fetchConversations({ page, limit: pageSize });
   }, [page, pageSize, filter, debouncedSearch, fetchConversations]);
 
-  const storeId = conversations[0]?.store_id;
+  const storeId = store?.id ?? conversations[0]?.store_id;
+
+  const persistListCache = useCallback(
+    (list: WhatsappConversation[], nextTotal: number) => {
+      const key = listKeyRef.current;
+      const current = peekCachedJson<InboxListPayload>(key) ?? {};
+      setCachedJson(
+        key,
+        {
+          ...current,
+          conversations: list,
+          total: nextTotal,
+          totalPages: Math.max(1, Math.ceil(nextTotal / pageSize) || 1),
+          page,
+          limit: pageSize,
+        },
+        INBOX_LIST_TTL_MS
+      );
+    },
+    [page, pageSize]
+  );
 
   useEffect(() => {
     if (!storeId) return;
@@ -252,9 +399,51 @@ export function InboxPanel() {
           table: "whatsapp_conversations",
           filter: `store_id=eq.${storeId}`,
         },
-        () => {
-          invalidateCachedJson(`inbox:list:`);
-          void fetchConversations({ silent: true });
+        (payload) => {
+          const event = payload.eventType;
+          const nextRow = payload.new as Record<string, unknown> | undefined;
+          const oldRow = payload.old as Record<string, unknown> | undefined;
+          const id = String(nextRow?.id ?? oldRow?.id ?? "");
+          if (!id) return;
+
+          if (event === "DELETE") {
+            setConversations((prev) => {
+              const list = prev.filter((c) => c.id !== id);
+              persistListCache(list, Math.max(0, total - (prev.length - list.length)));
+              return list;
+            });
+            if (selectedIdRef.current === id) {
+              setSelectedId(null);
+              setMessages([]);
+            }
+            return;
+          }
+
+          if (!nextRow) return;
+          setConversations((prev) => {
+            const existing = prev.find((c) => c.id === id);
+            const mapped = mapRealtimeConversation(nextRow, existing);
+            if (!conversationMatchesFilter(mapped, filter)) {
+              const list = prev.filter((c) => c.id !== id);
+              if (list.length !== prev.length) {
+                persistListCache(list, Math.max(0, total - 1));
+              }
+              return list;
+            }
+            let list: WhatsappConversation[];
+            if (existing) {
+              list = sortConversations(
+                prev.map((c) => (c.id === id ? mapped : c))
+              );
+              persistListCache(list, total);
+              return list;
+            }
+            if (page !== 1 || Boolean(debouncedSearch)) return prev;
+            list = sortConversations([mapped, ...prev]).slice(0, pageSize);
+            persistListCache(list, total + 1);
+            setTotal((n) => n + 1);
+            return list;
+          });
         }
       )
       .subscribe();
@@ -262,14 +451,52 @@ export function InboxPanel() {
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [storeId, fetchConversations]);
+  }, [
+    storeId,
+    filter,
+    page,
+    pageSize,
+    debouncedSearch,
+    total,
+    persistListCache,
+  ]);
+
+  const fetchMessages = useCallback(
+    async (conversationId: string, opts?: { force?: boolean }) => {
+      const key = inboxMessagesKey(conversationId);
+      const cached = peekCachedJson<{ messages?: WhatsappMessage[] }>(key);
+      if (cached?.messages && !opts?.force) {
+        if (selectedIdRef.current === conversationId) {
+          setMessages(cached.messages);
+        }
+        return;
+      }
+
+      const { data } = await cachedJsonFetch<{ messages?: WhatsappMessage[] }>(
+        key,
+        `/api/inbox/messages?conversationId=${conversationId}`,
+        {
+          ttlMs: 24 * 60 * 60_000,
+          staleWhileRevalidate: false,
+          force: opts?.force ?? false,
+        }
+      );
+      if (selectedIdRef.current === conversationId) {
+        setMessages(data.messages ?? []);
+      }
+    },
+    []
+  );
 
   useEffect(() => {
     if (selectedId) {
       setSendError(null);
+      if (typeof sessionStorage !== "undefined") {
+        sessionStorage.setItem(SELECTED_CHAT_KEY, selectedId);
+      }
       void fetchMessages(selectedId);
     }
-  }, [selectedId]);
+  }, [selectedId, fetchMessages]);
 
   useEffect(() => {
     if (!selectedId) return;
@@ -285,9 +512,54 @@ export function InboxPanel() {
           table: "whatsapp_messages",
           filter: `conversation_id=eq.${selectedId}`,
         },
-        () => {
-          void fetchMessages(selectedId);
-          void fetchConversations({ silent: true });
+        (payload) => {
+          const event = payload.eventType;
+          const nextRow = payload.new as WhatsappMessage | undefined;
+          const oldRow = payload.old as { id?: string } | undefined;
+
+          setMessages((prev) => {
+            let next = prev;
+            if (event === "DELETE" && oldRow?.id) {
+              next = prev.filter((m) => m.id !== oldRow.id);
+            } else if (nextRow?.id) {
+              const idx = prev.findIndex((m) => m.id === nextRow.id);
+              if (idx >= 0) {
+                next = [...prev];
+                next[idx] = { ...prev[idx], ...nextRow };
+              } else {
+                next = [...prev, nextRow].sort((a, b) =>
+                  a.created_at.localeCompare(b.created_at)
+                );
+              }
+            }
+            setCachedJson(
+              inboxMessagesKey(selectedId),
+              { messages: next },
+              INBOX_MESSAGES_TTL_MS
+            );
+            return next;
+          });
+
+          if (event === "INSERT" && nextRow) {
+            setConversations((prev) => {
+              const list = sortConversations(
+                prev.map((c) =>
+                  c.id === selectedId
+                    ? {
+                        ...c,
+                        updated_at: nextRow.created_at,
+                        last_customer_message_at:
+                          nextRow.direction === "in"
+                            ? nextRow.created_at
+                            : c.last_customer_message_at,
+                      }
+                    : c
+                )
+              );
+              persistListCache(list, total);
+              return list;
+            });
+          }
         }
       )
       .subscribe();
@@ -295,21 +567,11 @@ export function InboxPanel() {
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [selectedId, fetchConversations]);
-
-  async function fetchMessages(conversationId: string) {
-    const res = await fetch(
-      `/api/inbox/messages?conversationId=${conversationId}`
-    );
-    const data = await res.json();
-    setMessages(data.messages ?? []);
-  }
+  }, [selectedId, persistListCache, total]);
 
   async function refreshAfterSend() {
     if (!selectedId) return;
-    await fetchMessages(selectedId);
-    invalidateCachedJson(`inbox:list:`);
-    await fetchConversations({ silent: true });
+    await fetchMessages(selectedId, { force: true });
   }
 
   async function switchMode(mode: "ai" | "manual") {
@@ -325,8 +587,21 @@ export function InboxPanel() {
         const data = await res.json();
         throw new Error(data.error ?? "Failed to update mode");
       }
-      invalidateCachedJson(`inbox:list:`);
-      await fetchConversations({ silent: true });
+      setConversations((prev) => {
+        const list = prev.map((c) =>
+          c.id === selectedId
+            ? {
+                ...c,
+                status:
+                  mode === "manual"
+                    ? ("human_handoff" as const)
+                    : ("ai_handling" as const),
+              }
+            : c
+        );
+        persistListCache(list, total);
+        return list;
+      });
     } finally {
       setSwitchingMode(false);
     }
@@ -555,9 +830,9 @@ export function InboxPanel() {
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto">
-            {loading ? (
+            {loading && conversations.length === 0 ? (
               <p className="px-4 py-6 text-center text-xs text-slate-500">
-                {conversations.length === 0 ? "Loading inbox…" : "Updating…"}
+                Loading inbox…
               </p>
             ) : null}
             {!loading && conversations.length === 0 ? (

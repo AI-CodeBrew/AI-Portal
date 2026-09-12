@@ -11,14 +11,17 @@ import {
   getOrdersListCache,
   getCachedPage,
   setCachedPage,
+  patchCachedOrder,
+  removeCachedOrder,
   clearOrdersListCache,
-  AUTO_REFRESH_MS,
   ORDERS_PAGE_SIZE,
   dateRangeFromPreset,
   type StatusFilter,
   type SourceFilter,
   type DatePreset,
 } from "@/lib/orders-list-cache";
+import { createClient } from "@/lib/supabase/client";
+import { invalidateCachedJson } from "@/lib/client-fetch-cache";
 import { OrderTrackingModal } from "@/components/OrderTrackingModal";
 import { OrderFollowUpModal } from "@/components/OrderFollowUpModal";
 import type { WhatsAppMessageTemplate } from "@/lib/whatsapp/message-templates";
@@ -765,24 +768,74 @@ export function OrdersList() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [store?.id]);
 
-  useEffect(() => {
-    if (!store) return;
-    const interval = setInterval(() => {
-      loadPage(page, sourceFilter, statusFilter, {
-        force: true,
-        showLoading: false,
-        backgroundSync: false,
-      });
-    }, AUTO_REFRESH_MS);
-    return () => clearInterval(interval);
-  }, [store, page, pageSize, statusFilter, sourceFilter, loadPage]);
 
   useEffect(() => {
+    if (!store?.id) return;
+    const supabase = createClient();
+    const channel = supabase
+      .channel(`orders-list-${store.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "orders",
+          filter: `store_id=eq.${store.id}`,
+        },
+        (payload) => {
+          invalidateCachedJson("dashboard:stats");
+          const event = payload.eventType;
+          const next = payload.new as Order | undefined;
+          const old = payload.old as { id?: string } | undefined;
+
+          if (event === "DELETE" && old?.id) {
+            removeCachedOrder(old.id);
+            setOrders((prev) => prev.filter((o) => o.id !== old.id));
+            setFilteredTotal((n) => Math.max(0, n - 1));
+            return;
+          }
+
+          if (!next?.id) return;
+          patchCachedOrder(next);
+          setOrders((prev) => {
+            const idx = prev.findIndex((o) => o.id === next.id);
+            if (idx >= 0) {
+              const copy = [...prev];
+              copy[idx] = { ...copy[idx], ...next };
+              return copy;
+            }
+            if (page === 1 && !debouncedSearch) {
+              return [next, ...prev];
+            }
+            return prev;
+          });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [store?.id, page, debouncedSearch]);
+
+  const searchReadyRef = useRef(false);
+  useEffect(() => {
     if (!store) return;
+    if (!searchReadyRef.current) {
+      searchReadyRef.current = true;
+      return;
+    }
     setPage(1);
     void loadPage(1, sourceFilter, statusFilter, {
       force: true,
-      showLoading: true,
+      showLoading: !getCachedPage(
+        sourceFilter,
+        statusFilter,
+        dateRangeFromPreset(datePreset, customFrom, customTo).dateFrom,
+        dateRangeFromPreset(datePreset, customFrom, customTo).dateTo,
+        1,
+        pageSize
+      ),
       backgroundSync: false,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps

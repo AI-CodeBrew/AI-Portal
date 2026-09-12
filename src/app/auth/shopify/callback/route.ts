@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { cookies } from "next/headers";
 import { encrypt } from "@/lib/crypto";
 import {
@@ -10,6 +10,10 @@ import {
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getAuthUser } from "@/lib/auth";
 import { clearStoreShopifyOrders } from "@/lib/orders/clear-shopify-orders";
+import {
+  clearStoreShopifyProductsCache,
+  syncAllShopifyProducts,
+} from "@/lib/shopify-sync-products";
 
 export async function GET(request: NextRequest) {
   const user = await getAuthUser();
@@ -101,6 +105,21 @@ export async function GET(request: NextRequest) {
 
     const appUrl = getAppUrl(request.url);
     await registerShopifyWebhooks(shopDomain, encryptedToken, appUrl);
+
+    await clearStoreShopifyProductsCache(supabase, user.storeId);
+    const storeId = user.storeId;
+    after(async () => {
+      try {
+        await syncAllShopifyProducts(
+          createAdminClient(),
+          storeId,
+          shopDomain,
+          encryptedToken
+        );
+      } catch (err) {
+        console.error("[shopify-connect] catalog sync failed:", err);
+      }
+    });
 
     cookieStore.delete("shopify_oauth_state");
     cookieStore.delete("shopify_oauth_shop");

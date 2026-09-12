@@ -5,11 +5,12 @@ import {
   searchPortalProducts,
 } from "@/lib/products/products-service";
 import {
-  getShopCurrency,
-  getShopifyCatalogProduct,
-  listShopifyCatalogProducts,
-  searchProducts,
-} from "@/lib/shopify";
+  cacheRowToDetail,
+  getCachedShopifyProduct,
+  sampleCachedShopifyProducts,
+  searchCachedShopifyProducts,
+} from "@/lib/shopify/cached-catalog";
+import { getEffectiveStoreCurrency } from "@/lib/currency";
 import type { Store } from "@/lib/types";
 
 export type InboxCatalogProduct = {
@@ -80,16 +81,7 @@ export async function searchInboxCatalogProducts(
     store.shop_domain && store.shopify_access_token
   );
 
-  let currency = "PKR";
-  if (shopifyConnected) {
-    try {
-      currency =
-        (await getShopCurrency(store.shop_domain!, store.shopify_access_token!)) ??
-        "USD";
-    } catch {
-      currency = "USD";
-    }
-  }
+  const currency = await getEffectiveStoreCurrency(store.id);
 
   const portalHits = trimmed
     ? await searchPortalProducts(store.id, trimmed)
@@ -104,46 +96,51 @@ export async function searchInboxCatalogProducts(
   let shopifyMapped: InboxCatalogProduct[] = [];
 
   if (trimmed) {
-    const shopifyHits = await searchProducts(
-      store.shop_domain!,
-      store.shopify_access_token!,
-      trimmed
+    const shopifyHits = await searchCachedShopifyProducts(
+      store.id,
+      trimmed,
+      limit
     );
     shopifyMapped = shopifyHits.map((p) => ({
       key: `shopify:${p.id}`,
       source: "shopify" as const,
       id: String(p.id),
       title: p.title,
-      sku: null,
-      price: p.variants[0]?.price ?? "0",
-      currency,
+      sku: p.variants[0]?.sku ?? null,
+      price: p.variants[0]?.price ?? p.priceFrom ?? "0",
+      currency: p.currency ?? currency,
       imageUrl: p.imageUrl,
       variants: p.variants.map((v) => ({
         id: String(v.id),
         title: v.title,
-        sku: null,
+        sku: v.sku,
         price: v.price,
-        priceFormatted: formatPrice(v.price, currency),
+        priceFormatted: formatPrice(v.price, p.currency ?? currency),
       })),
     }));
   } else {
-    const { products } = await listShopifyCatalogProducts(
-      store.shop_domain!,
-      store.shopify_access_token!,
-      { limit: Math.max(limit, 8) }
-    );
-
-    shopifyMapped = products.map((p) => ({
-      key: `shopify:${p.id}`,
-      source: "shopify" as const,
-      id: String(p.id),
-      title: p.title,
-      sku: null,
-      price: p.priceFrom ?? "0",
-      currency: p.currency ?? currency,
-      imageUrl: p.imageUrl,
-      variants: [],
-    }));
+    const rows = await sampleCachedShopifyProducts(store.id, Math.max(limit, 8));
+    shopifyMapped = rows.map((row) => {
+      const detail = cacheRowToDetail(row);
+      const productCurrency = row.currency ?? currency;
+      return {
+        key: `shopify:${row.id}`,
+        source: "shopify" as const,
+        id: String(row.id),
+        title: row.title,
+        sku: detail.variants[0]?.sku ?? null,
+        price: row.price_from ?? "0",
+        currency: productCurrency,
+        imageUrl: row.image_url,
+        variants: detail.variants.map((v) => ({
+          id: String(v.id),
+          title: v.title,
+          sku: v.sku,
+          price: v.price,
+          priceFormatted: formatPrice(v.price, productCurrency),
+        })),
+      };
+    });
   }
 
   const merged = [...portalMapped, ...shopifyMapped];
@@ -166,28 +163,14 @@ export async function loadShopifyProductForInboxSend(
   productId: string,
   variantId?: string
 ): Promise<InboxCatalogProduct | null> {
-  if (!store.shop_domain || !store.shopify_access_token) return null;
-
   const numericId = Number(productId);
   if (!Number.isFinite(numericId) || numericId <= 0) return null;
 
-  const full = await getShopifyCatalogProduct(
-    store.shop_domain,
-    store.shopify_access_token,
-    numericId
-  );
-  if (!full) return null;
+  const cached = await getCachedShopifyProduct(store.id, numericId);
+  if (!cached) return null;
 
-  let currency = "USD";
-  try {
-    currency =
-      (await getShopCurrency(store.shop_domain, store.shopify_access_token)) ??
-      "USD";
-  } catch {
-    /* keep default */
-  }
-
-  const variants = full.variants.map((v) => ({
+  const currency = cached.currency;
+  const variants = cached.product.variants.map((v) => ({
     id: String(v.id),
     title: v.title,
     sku: v.sku,
@@ -199,14 +182,14 @@ export async function loadShopifyProductForInboxSend(
     (variantId && variants.find((v) => v.id === variantId)) || variants[0];
 
   return {
-    key: `shopify:${full.id}`,
+    key: `shopify:${cached.product.id}`,
     source: "shopify",
-    id: String(full.id),
-    title: full.title,
+    id: String(cached.product.id),
+    title: cached.product.title,
     sku: chosen?.sku ?? null,
     price: chosen?.price ?? "0",
     currency,
-    imageUrl: full.images[0]?.url ?? null,
+    imageUrl: cached.product.images[0]?.url ?? null,
     variants,
   };
 }

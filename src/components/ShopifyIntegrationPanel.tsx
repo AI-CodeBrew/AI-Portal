@@ -73,9 +73,10 @@ export function ShopifyIntegrationPanel({ appUrl }: { appUrl: string }) {
     } else if (connected === "shopify") {
       setMessage({
         type: "success",
-        text: "Shopify connected! New orders will sync to the Orders tab.",
+        text: "Shopify connected. Catalog and orders are syncing into the portal — the Shopify Products tab loads from the database.",
       });
       refreshStore();
+      void fetch("/api/store/shopify-products/sync", { method: "POST" });
     }
   }, [searchParams, refreshStore]);
 

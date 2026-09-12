@@ -3,6 +3,17 @@ import { requireResellerStore } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getStoreWithIntegrations } from "@/lib/ads/ad-links-service";
 import { syncAllShopifyProducts } from "@/lib/shopify-sync-products";
+import { getShopifyCatalogSyncState } from "@/lib/shopify/cached-catalog";
+
+export async function GET() {
+  try {
+    const { storeId } = await requireResellerStore();
+    const state = await getShopifyCatalogSyncState(storeId);
+    return NextResponse.json(state);
+  } catch {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+}
 
 export async function POST() {
   try {
@@ -31,7 +42,12 @@ export async function POST() {
       );
     }
 
-    return NextResponse.json({ ok: true, count: result.count });
+    return NextResponse.json({
+      ok: true,
+      count: result.count,
+      skipped: result.skipped ?? false,
+      lastSyncedAt: new Date().toISOString(),
+    });
   } catch {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

@@ -4,6 +4,35 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ArabiaAILogo } from "@/components/ArabiaAILogo";
 import { useMobileNav } from "@/components/MobileNavContext";
+import { prefetchJson } from "@/lib/client-fetch-cache";
+
+function prefetchTab(href: string) {
+  if (href === "/dashboard") {
+    prefetchJson("dashboard:stats:all", "/api/dashboard/stats?period=all");
+    return;
+  }
+  if (href === "/dashboard/inbox") {
+    prefetchJson(
+      "inbox:list:filter=all&page=1&limit=10",
+      "/api/inbox?filter=all&page=1&limit=10"
+    );
+    return;
+  }
+  if (href === "/dashboard/products") {
+    prefetchJson("store:products", "/api/store/products");
+    return;
+  }
+  if (href === "/dashboard/ai") {
+    prefetchJson("store:ai-settings", "/api/store/ai-settings");
+    return;
+  }
+  if (href === "/dashboard/ads") {
+    prefetchJson(
+      "shopify-products::1:10",
+      "/api/store/shopify-products?limit=10&page=1"
+    );
+  }
+}
 
 type NavItem = {
   href: string;
@@ -211,6 +240,8 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
                       href={item.href}
                       aria-current={active ? "page" : undefined}
                       onClick={onNavigate}
+                      onMouseEnter={() => prefetchTab(item.href)}
+                      onFocus={() => prefetchTab(item.href)}
                       className={`flex min-h-11 items-center gap-3 rounded-lg px-3 text-sm font-medium transition-colors ${
                         active
                           ? "bg-emerald-600 text-white"

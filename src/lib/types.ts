@@ -27,6 +27,7 @@ export interface Store {
   owner_id: string | null;
   plan_id?: string | null;
   currency?: string | null;
+  shopify_currency?: string | null;
   created_at: string;
 }
 

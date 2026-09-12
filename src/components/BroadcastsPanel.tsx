@@ -6,6 +6,13 @@ import type {
   BroadcastListItem,
   BroadcastRecipient,
 } from "@/lib/broadcasts";
+import {
+  cachedJsonFetch,
+  invalidateCachedJson,
+  peekCachedJson,
+} from "@/lib/client-fetch-cache";
+
+const BROADCASTS_CACHE_KEY = "store:broadcasts";
 
 type ApprovedTemplate = {
   id: string;
@@ -18,9 +25,14 @@ type ApprovedTemplate = {
 type View = "list" | "create" | "detail";
 
 export function BroadcastsPanel() {
+  const cachedBroadcasts = peekCachedJson<{ broadcasts?: BroadcastListItem[] }>(
+    BROADCASTS_CACHE_KEY
+  );
   const [view, setView] = useState<View>("list");
-  const [broadcasts, setBroadcasts] = useState<BroadcastListItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [broadcasts, setBroadcasts] = useState<BroadcastListItem[]>(
+    cachedBroadcasts?.broadcasts ?? []
+  );
+  const [loading, setLoading] = useState(!cachedBroadcasts?.broadcasts);
   const [error, setError] = useState<string | null>(null);
 
   const [contacts, setContacts] = useState<BroadcastContact[]>([]);
@@ -38,13 +50,27 @@ export function BroadcastsPanel() {
   const [recipients, setRecipients] = useState<BroadcastRecipient[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
 
-  const loadBroadcasts = useCallback(async () => {
-    setLoading(true);
+  const loadBroadcasts = useCallback(async (force = false) => {
+    const hit = peekCachedJson<{ broadcasts?: BroadcastListItem[]; error?: string }>(
+      BROADCASTS_CACHE_KEY
+    );
+    if (hit?.broadcasts && !force) {
+      setBroadcasts(hit.broadcasts);
+      setLoading(false);
+    } else if (!hit?.broadcasts) {
+      setLoading(true);
+    }
     setError(null);
     try {
-      const res = await fetch("/api/store/broadcasts");
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Failed to load broadcasts");
+      const { data } = await cachedJsonFetch<{
+        broadcasts?: BroadcastListItem[];
+        error?: string;
+      }>(BROADCASTS_CACHE_KEY, "/api/store/broadcasts", {
+        ttlMs: 60_000,
+        staleWhileRevalidate: !force,
+        force,
+      });
+      if (data.error) throw new Error(data.error);
       setBroadcasts(data.broadcasts ?? []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load");
@@ -162,7 +188,8 @@ export function BroadcastsPanel() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Broadcast failed");
-      await loadBroadcasts();
+      invalidateCachedJson(BROADCASTS_CACHE_KEY);
+      await loadBroadcasts(true);
       if (data.broadcast?.id) {
         await openDetail(data.broadcast.id);
       } else {

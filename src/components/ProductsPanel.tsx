@@ -9,6 +9,13 @@ import type {
 } from "@/lib/products/types";
 import { PlanUpgradeLink } from "@/components/PlanFeaturesList";
 import Link from "next/link";
+import {
+  cachedJsonFetch,
+  invalidateCachedJson,
+  peekCachedJson,
+} from "@/lib/client-fetch-cache";
+
+const PRODUCTS_CACHE_KEY = "store:products";
 
 type ProductQuota = {
   planId: string;
@@ -123,8 +130,14 @@ function fillFormFromProduct(product: StoreProduct) {
 }
 
 export function ProductsPanel() {
-  const [products, setProducts] = useState<StoreProductSummary[]>([]);
-  const [loading, setLoading] = useState(true);
+  const cached = peekCachedJson<{
+    products?: StoreProductSummary[];
+    quota?: ProductQuota | null;
+  }>(PRODUCTS_CACHE_KEY);
+  const [products, setProducts] = useState<StoreProductSummary[]>(
+    cached?.products ?? []
+  );
+  const [loading, setLoading] = useState(!cached?.products);
   const [error, setError] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<StoreProduct | null>(null);
@@ -135,15 +148,32 @@ export function ProductsPanel() {
   const [uploading, setUploading] = useState(false);
   const [createdLink, setCreatedLink] = useState<string | null>(null);
   const [skuTouched, setSkuTouched] = useState(false);
-  const [quota, setQuota] = useState<ProductQuota | null>(null);
+  const [quota, setQuota] = useState<ProductQuota | null>(cached?.quota ?? null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (force = false) => {
+    const hit = peekCachedJson<{
+      products?: StoreProductSummary[];
+      quota?: ProductQuota | null;
+    }>(PRODUCTS_CACHE_KEY);
+    if (hit?.products && !force) {
+      setProducts(hit.products);
+      setQuota(hit.quota ?? null);
+      setLoading(false);
+    } else if (!hit?.products) {
+      setLoading(true);
+    }
     setError(null);
     try {
-      const res = await fetch("/api/store/products");
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Failed to load products");
+      const { data } = await cachedJsonFetch<{
+        products?: StoreProductSummary[];
+        quota?: ProductQuota | null;
+        error?: string;
+      }>(PRODUCTS_CACHE_KEY, "/api/store/products", {
+        ttlMs: 60_000,
+        staleWhileRevalidate: !force,
+        force,
+      });
+      if (data.error) throw new Error(data.error);
       setProducts(data.products ?? []);
       setQuota(data.quota ?? null);
     } catch (err) {
@@ -283,7 +313,8 @@ export function ProductsPanel() {
       if (!res.ok) throw new Error(data.error ?? "Save failed");
 
       setCreatedLink(data.whatsapp_url ?? data.product?.ad_link?.whatsapp_url ?? null);
-      await load();
+      invalidateCachedJson(PRODUCTS_CACHE_KEY);
+      await load(true);
       if (data.whatsapp_url) {
         // keep modal open briefly to show link
       } else {
@@ -299,7 +330,10 @@ export function ProductsPanel() {
   async function removeProduct(id: string) {
     if (!confirm("Delete this product?")) return;
     const res = await fetch(`/api/store/products/${id}`, { method: "DELETE" });
-    if (res.ok) load();
+    if (res.ok) {
+      invalidateCachedJson(PRODUCTS_CACHE_KEY);
+      load(true);
+    }
   }
 
   async function copyLink(url: string) {

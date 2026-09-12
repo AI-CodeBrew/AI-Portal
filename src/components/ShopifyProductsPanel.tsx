@@ -2,6 +2,14 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { formatMoney } from "@/lib/currency";
+import {
+  cachedJsonFetch,
+  invalidateCachedJson,
+  peekCachedJson,
+  setCachedJson,
+} from "@/lib/client-fetch-cache";
+import { createClient } from "@/lib/supabase/client";
+import { useStoreStatus } from "@/hooks/useStoreStatus";
 
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100] as const;
 
@@ -41,6 +49,38 @@ type ProductDetail = {
   updatedAt: string | null;
 };
 
+type ShopifyListPayload = {
+  products?: ListProduct[];
+  currency?: string;
+  hasNextPage?: boolean;
+  hasPreviousPage?: boolean;
+  totalCount?: number;
+  connected?: boolean;
+  lastSyncedAt?: string | null;
+  syncing?: boolean;
+  error?: string;
+};
+
+function mapCacheRowToListProduct(row: Record<string, unknown>): ListProduct {
+  return {
+    id: Number(row.id),
+    title: String(row.title ?? ""),
+    handle: (row.handle as string | null) ?? null,
+    status: (row.status as string | null) ?? null,
+    vendor: (row.vendor as string | null) ?? null,
+    productType: (row.product_type as string | null) ?? null,
+    description: (row.description as string | null) ?? null,
+    imageUrl: (row.image_url as string | null) ?? null,
+    priceFrom: (row.price_from as string | null) ?? null,
+    currency: (row.currency as string | null) ?? null,
+    variantCount: Number(row.variant_count ?? 1),
+  };
+}
+
+function shopifyProductsKey(q: string, pageNum: number, limit: number) {
+  return `shopify-products:${q}:${pageNum}:${limit}`;
+}
+
 function CopyButton({ text, label }: { text: string; label: string }) {
   const [copied, setCopied] = useState(false);
 
@@ -71,10 +111,23 @@ function pageWindow(current: number, total: number): number[] {
 }
 
 export function ShopifyProductsPanel() {
+  const { store } = useStoreStatus();
+  const storeId = store?.id ?? null;
   const [query, setQuery] = useState("");
   const [appliedQuery, setAppliedQuery] = useState("");
-  const [products, setProducts] = useState<ListProduct[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [connected, setConnected] = useState(Boolean(store?.shopify_connected));
+  const [syncingRemote, setSyncingRemote] = useState(false);
+  const selectedIdRef = useRef<number | null>(null);
+  const initialShopify = peekCachedJson<ShopifyListPayload>(
+    shopifyProductsKey("", 1, 10)
+  );
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(
+    initialShopify?.lastSyncedAt ?? null
+  );
+  const [products, setProducts] = useState<ListProduct[]>(
+    initialShopify?.products ?? []
+  );
+  const [loading, setLoading] = useState(!initialShopify?.products);
   const [error, setError] = useState<string | null>(null);
   const [currency, setCurrency] = useState("USD");
   const [hasNextPage, setHasNextPage] = useState(false);
@@ -110,20 +163,45 @@ export function ShopifyProductsPanel() {
       q?: string;
       pageNum?: number;
       limit?: number;
+      force?: boolean;
     }) => {
-      setLoading(true);
+      const lim = opts.limit ?? pageSize;
+      const pg = opts.pageNum ?? 1;
+      const params = new URLSearchParams();
+      if (opts.q) params.set("q", opts.q);
+      params.set("limit", String(lim));
+      params.set("page", String(pg));
+      const cacheKey = shopifyProductsKey(opts.q ?? "", pg, lim);
+      const hit = peekCachedJson<ShopifyListPayload>(cacheKey);
+      if (hit?.products && !opts.force) {
+        setProducts(hit.products);
+        setCurrency(hit.currency ?? "USD");
+        setHasNextPage(Boolean(hit.hasNextPage));
+        setHasPreviousPage(Boolean(hit.hasPreviousPage));
+        setTotalCount(
+          typeof hit.totalCount === "number" ? hit.totalCount : null
+        );
+        if (typeof hit.connected === "boolean") setConnected(hit.connected);
+        setSyncingRemote(Boolean(hit.syncing));
+        if (hit.lastSyncedAt) setLastSyncedAt(hit.lastSyncedAt);
+        setPage(pg);
+        setLoading(false);
+        return;
+      } else if (!hit?.products) {
+        setLoading(true);
+      }
       setError(null);
       try {
-        const lim = opts.limit ?? pageSize;
-        const pg = opts.pageNum ?? 1;
-        const params = new URLSearchParams();
-        if (opts.q) params.set("q", opts.q);
-        params.set("limit", String(lim));
-        params.set("page", String(pg));
-
-        const res = await fetch(`/api/store/shopify-products?${params}`);
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error ?? "Failed to load products");
+        const { data } = await cachedJsonFetch<ShopifyListPayload>(
+          cacheKey,
+          `/api/store/shopify-products?${params}`,
+          {
+            ttlMs: 24 * 60 * 60_000,
+            staleWhileRevalidate: false,
+            force: opts.force ?? false,
+          }
+        );
+        if (data.error) throw new Error(data.error);
 
         setProducts(data.products ?? []);
         setCurrency(data.currency ?? "USD");
@@ -132,10 +210,13 @@ export function ShopifyProductsPanel() {
         setTotalCount(
           typeof data.totalCount === "number" ? data.totalCount : null
         );
+        setConnected(Boolean(data.connected));
+        setSyncingRemote(Boolean(data.syncing));
+        setLastSyncedAt(data.lastSyncedAt ?? null);
         setPage(pg);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load products");
-        setProducts([]);
+        if (!hit?.products) setProducts([]);
       } finally {
         setLoading(false);
       }
@@ -149,11 +230,20 @@ export function ShopifyProductsPanel() {
       const res = await fetch("/api/store/shopify-products/sync", {
         method: "POST",
       });
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        lastSyncedAt?: string;
+      };
       if (!res.ok) {
-        const data = await res.json();
         throw new Error(data.error ?? "Sync failed");
       }
-      await loadProducts({ q: appliedQuery || undefined, pageNum: 1 });
+      setLastSyncedAt(data.lastSyncedAt ?? new Date().toISOString());
+      invalidateCachedJson("shopify-products:");
+      await loadProducts({
+        q: appliedQuery || undefined,
+        pageNum: 1,
+        force: true,
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Sync failed");
     } finally {
@@ -167,6 +257,100 @@ export function ShopifyProductsPanel() {
     loadProducts({ pageNum: 1, limit: pageSize });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- initial load only
   }, []);
+
+  const autoSyncStarted = useRef(false);
+  useEffect(() => {
+    if (autoSyncStarted.current) return;
+    if (!connected || loading || lastSyncedAt || products.length > 0) return;
+    autoSyncStarted.current = true;
+    void handleSync();
+  }, [connected, products.length, loading, lastSyncedAt, handleSync]);
+
+  useEffect(() => {
+    selectedIdRef.current = selectedId;
+  }, [selectedId]);
+
+  useEffect(() => {
+    if (!storeId) return;
+    const supabase = createClient();
+    const channel = supabase
+      .channel(`shopify-products-cache-${storeId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "shopify_products_cache",
+          filter: `store_id=eq.${storeId}`,
+        },
+        (payload) => {
+          const event = payload.eventType;
+          const nextRow = payload.new as Record<string, unknown> | undefined;
+          const oldRow = payload.old as Record<string, unknown> | undefined;
+          const id = Number(nextRow?.id ?? oldRow?.id);
+          if (!Number.isFinite(id) || id <= 0) return;
+
+          if (event === "DELETE") {
+            setProducts((prev) => {
+              const list = prev.filter((p) => p.id !== id);
+              const cacheKey = shopifyProductsKey(appliedQuery, page, pageSize);
+              const current = peekCachedJson<ShopifyListPayload>(cacheKey);
+              if (current) {
+                setCachedJson(
+                  cacheKey,
+                  {
+                    ...current,
+                    products: list,
+                    totalCount: Math.max(0, (current.totalCount ?? list.length) - 1),
+                  },
+                  60_000
+                );
+              }
+              return list;
+            });
+            setTotalCount((n) => (n == null ? n : Math.max(0, n - 1)));
+            if (selectedIdRef.current === id) {
+              setSelectedId(null);
+              setDetail(null);
+            }
+            return;
+          }
+
+          if (!nextRow) return;
+          const mapped = mapCacheRowToListProduct(nextRow);
+          const matchesSearch =
+            !appliedQuery ||
+            mapped.title.toLowerCase().includes(appliedQuery.toLowerCase());
+
+          setProducts((prev) => {
+            const existing = prev.find((p) => p.id === id);
+            let list = prev;
+            if (existing) {
+              if (!matchesSearch) {
+                list = prev.filter((p) => p.id !== id);
+              } else {
+                list = prev.map((p) => (p.id === id ? mapped : p));
+              }
+            } else if (matchesSearch && page === 1 && !appliedQuery) {
+              list = [mapped, ...prev].slice(0, pageSize);
+              setTotalCount((n) => (n == null ? n : n + 1));
+            }
+            const cacheKey = shopifyProductsKey(appliedQuery, page, pageSize);
+            const current = peekCachedJson<ShopifyListPayload>(cacheKey);
+            if (current) {
+              setCachedJson(cacheKey, { ...current, products: list }, 60_000);
+            }
+            return list;
+          });
+
+        }
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [storeId, appliedQuery, page, pageSize]);
 
   function onSearchChange(value: string) {
     setQuery(value);
@@ -257,8 +441,8 @@ export function ShopifyProductsPanel() {
             Shopify products
           </h2>
           <p className="mt-1 text-sm text-slate-600">
-            Browse your catalog and generate a unique portal SKU for each
-            product.
+            Synced from Shopify into your portal. Tab loads are from the
+            database — new Shopify changes appear here automatically.
           </p>
         </div>
 
@@ -282,10 +466,10 @@ export function ShopifyProductsPanel() {
           <button
             type="button"
             onClick={handleSync}
-            disabled={syncing}
+            disabled={syncing || syncingRemote}
             className="rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
           >
-            {syncing ? "Syncing…" : "⟳ Sync"}
+            {syncing || syncingRemote ? "Syncing…" : "⟳ Sync"}
           </button>
           <label className="flex items-center gap-2 text-sm text-slate-600">
             <span className="whitespace-nowrap">Rows</span>
@@ -322,7 +506,11 @@ export function ShopifyProductsPanel() {
             <p className="py-10 text-center text-sm text-slate-500">
               {appliedQuery
                 ? `No products match “${appliedQuery}”.`
-                : "No active Shopify products found."}
+                : !connected
+                  ? "Connect Shopify in Integrations to sync your catalog."
+                  : syncing || syncingRemote
+                    ? "Syncing your Shopify catalog into the portal…"
+                    : "No Shopify products in the portal yet. Click Sync."}
             </p>
           ) : (
             <div className="overflow-hidden rounded-xl border border-slate-200">

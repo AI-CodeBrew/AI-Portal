@@ -24,8 +24,8 @@ const EFFECTIVE_CURRENCY_TTL_MS = 5 * 60 * 1000;
 /**
  * The single authoritative currency for a store — used for every product
  * quote, order total, and confirmation message, portal and Shopify alike.
- * Priority: reseller-configured `stores.currency` > connected Shopify shop's
- * currency > PKR.
+ * Priority: reseller-configured `stores.currency` > synced Shopify shop
+ * currency (`stores.shopify_currency`) > PKR.
  */
 export function invalidateEffectiveStoreCurrency(storeId: string): void {
   effectiveCurrencyCache.delete(storeId);
@@ -43,22 +43,13 @@ export async function getEffectiveStoreCurrency(
   const supabase = createAdminClient();
   const { data } = await supabase
     .from("stores")
-    .select("currency, shop_domain, shopify_access_token")
+    .select("currency, shopify_currency")
     .eq("id", storeId)
     .maybeSingle();
 
   let currency = (data?.currency as string | null)?.trim().toUpperCase();
-
-  if (!currency && data?.shop_domain && data?.shopify_access_token) {
-    try {
-      const { getShopCurrency } = await import("@/lib/shopify");
-      currency = await getShopCurrency(
-        data.shop_domain as string,
-        data.shopify_access_token as string
-      );
-    } catch {
-      // fall through to default
-    }
+  if (!currency) {
+    currency = (data?.shopify_currency as string | null)?.trim().toUpperCase();
   }
 
   currency = currency || DEFAULT_STORE_CURRENCY;

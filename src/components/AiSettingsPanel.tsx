@@ -11,6 +11,20 @@ import {
 import { SUPPORTED_STORE_CURRENCIES } from "@/lib/currency";
 import type { WhatsAppMessageTemplate } from "@/lib/whatsapp/message-templates";
 import Link from "next/link";
+import {
+  cachedJsonFetch,
+  invalidateCachedJson,
+  peekCachedJson,
+} from "@/lib/client-fetch-cache";
+
+const AI_SETTINGS_CACHE_KEY = "store:ai-settings";
+
+type AiSettingsPayload = {
+  settings?: StoreAiSettings;
+  approvedWhatsAppTemplates?: WhatsAppMessageTemplate[];
+  platformDefaults?: StoreAiSettings | null;
+  error?: string;
+};
 
 type TabId = "general" | "modes";
 
@@ -18,8 +32,9 @@ const DEFAULT_OPENING =
   "Hi! Welcome to {store_name} 👋 I'm {agent_name}. How can I help you today?";
 
 export function AiSettingsPanel() {
+  const cachedAi = peekCachedJson<AiSettingsPayload>(AI_SETTINGS_CACHE_KEY);
   const [tab, setTab] = useState<TabId>("general");
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!cachedAi?.settings);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -52,52 +67,69 @@ export function AiSettingsPanel() {
   const [conversationReplyWindowHours, setConversationReplyWindowHours] =
     useState("");
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const applyPayload = useCallback((data: AiSettingsPayload) => {
+    if (!data.settings) return;
+    const s = data.settings;
+    setSettings(s);
+    setApprovedWaTemplates(data.approvedWhatsAppTemplates ?? []);
+    setPlatformDefaults(data.platformDefaults ?? null);
+    setAgentName(s.agentName ?? "");
+    setCurrency(s.currency ?? "");
+    setSendOpeningMessage(s.sendOpeningMessage !== false);
+    setOpeningMessage(s.openingMessage ?? "");
+    setReplyLength(s.replyLength ?? "medium");
+    setWhatsappOrderTemplateId(s.whatsappOrderTemplateId ?? null);
+    setWhatsappSalesInstructions(s.whatsappSalesInstructions ?? "");
+    setShopifyConfirmInstructions(s.shopifyConfirmInstructions ?? "");
+    setRecoveryDiscountPercent(
+      s.recoveryDiscountPercent != null
+        ? String(s.recoveryDiscountPercent)
+        : ""
+    );
+    setRecoveryBundleDiscountPercent(
+      s.recoveryBundleDiscountPercent != null
+        ? String(s.recoveryBundleDiscountPercent)
+        : ""
+    );
+    setConversationReplyLimit(
+      s.conversationReplyLimit != null
+        ? String(s.conversationReplyLimit)
+        : ""
+    );
+    setConversationReplyWindowHours(
+      s.conversationReplyWindowHours != null
+        ? String(s.conversationReplyWindowHours)
+        : ""
+    );
+  }, []);
+
+  const load = useCallback(async (force = false) => {
+    const hit = peekCachedJson<AiSettingsPayload>(AI_SETTINGS_CACHE_KEY);
+    if (hit?.settings && !force) {
+      applyPayload(hit);
+      setLoading(false);
+    } else if (!hit?.settings) {
+      setLoading(true);
+    }
     setError(null);
     try {
-      const res = await fetch("/api/store/ai-settings");
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Failed to load settings");
-
-      const s = data.settings as StoreAiSettings;
-      setSettings(s);
-      setApprovedWaTemplates(data.approvedWhatsAppTemplates ?? []);
-      setPlatformDefaults(data.platformDefaults ?? null);
-      setAgentName(s.agentName ?? "");
-      setCurrency(s.currency ?? "");
-      setSendOpeningMessage(s.sendOpeningMessage !== false);
-      setOpeningMessage(s.openingMessage ?? "");
-      setReplyLength(s.replyLength ?? "medium");
-      setWhatsappOrderTemplateId(s.whatsappOrderTemplateId ?? null);
-      setWhatsappSalesInstructions(s.whatsappSalesInstructions ?? "");
-      setShopifyConfirmInstructions(s.shopifyConfirmInstructions ?? "");
-      setRecoveryDiscountPercent(
-        s.recoveryDiscountPercent != null
-          ? String(s.recoveryDiscountPercent)
-          : ""
+      const { data } = await cachedJsonFetch<AiSettingsPayload>(
+        AI_SETTINGS_CACHE_KEY,
+        "/api/store/ai-settings",
+        {
+          ttlMs: 60_000,
+          staleWhileRevalidate: !force,
+          force,
+        }
       );
-      setRecoveryBundleDiscountPercent(
-        s.recoveryBundleDiscountPercent != null
-          ? String(s.recoveryBundleDiscountPercent)
-          : ""
-      );
-      setConversationReplyLimit(
-        s.conversationReplyLimit != null
-          ? String(s.conversationReplyLimit)
-          : ""
-      );
-      setConversationReplyWindowHours(
-        s.conversationReplyWindowHours != null
-          ? String(s.conversationReplyWindowHours)
-          : ""
-      );
+      if (data.error) throw new Error(data.error);
+      applyPayload(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [applyPayload]);
 
   useEffect(() => {
     load();
@@ -202,6 +234,7 @@ export function AiSettingsPanel() {
           ? String(s.conversationReplyWindowHours)
           : ""
       );
+      invalidateCachedJson(AI_SETTINGS_CACHE_KEY);
       setSuccess("AI settings saved.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Save failed");
@@ -232,6 +265,7 @@ export function AiSettingsPanel() {
       setShopifyConfirmInstructions(
         data.settings.shopifyConfirmInstructions ?? ""
       );
+      invalidateCachedJson(AI_SETTINGS_CACHE_KEY);
       setSuccess("Agent mode instructions saved.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Save failed");

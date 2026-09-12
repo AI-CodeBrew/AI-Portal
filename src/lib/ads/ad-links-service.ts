@@ -1,13 +1,14 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
-  getShopCurrency,
-  searchProducts,
-  shopifyAdminFetch,
-  listShopifyCatalogProducts,
-  getShopifyCatalogProduct,
   type ShopifyCatalogProductDetail,
   type ShopifyCatalogProductListItem,
 } from "@/lib/shopify";
+import {
+  getCachedShopifyProduct,
+  listCachedShopifyProducts,
+  searchCachedShopifyProducts,
+} from "@/lib/shopify/cached-catalog";
+import { getEffectiveStoreCurrency } from "@/lib/currency";
 import {
   getStoreWhatsAppCredentials,
   getWhatsAppDisplayPhone,
@@ -64,37 +65,24 @@ export async function listStoreShopifyProducts(
     return { error: "Connect Shopify in Integrations first." };
   }
 
-  let currency = "USD";
-  try {
-    currency =
-      (await getShopCurrency(store.shop_domain, store.shopify_access_token)) ||
-      "USD";
-  } catch {
-    currency = "USD";
-  }
-
   const pageSize = Math.min(Math.max(options.limit ?? 10, 1), 100);
-  const page = await listShopifyCatalogProducts(
-    store.shop_domain,
-    store.shopify_access_token,
-    {
-      limit: pageSize,
-      query: options.query,
-      cursor: options.cursor,
-      direction: options.direction,
-    }
-  );
+  const page = await listCachedShopifyProducts(storeId, {
+    query: options.query,
+    limit: pageSize,
+    page: 1,
+  });
 
   const waCreds = getStoreWhatsAppCredentials(store);
 
   return {
-    ...page,
+    products: page.products,
+    nextCursor: null,
+    previousCursor: null,
+    hasNextPage: page.hasNextPage,
+    hasPreviousPage: page.hasPreviousPage,
+    totalCount: page.totalCount,
     pageSize,
-    products: page.products.map((p) => ({
-      ...p,
-      currency: p.currency ?? currency,
-    })),
-    currency,
+    currency: page.currency,
     whatsappConnected: Boolean(waCreds?.phoneNumberId),
   };
 }
@@ -116,23 +104,12 @@ export async function getStoreShopifyProduct(
     return { error: "Connect Shopify in Integrations first." };
   }
 
-  const product = await getShopifyCatalogProduct(
-    store.shop_domain,
-    store.shopify_access_token,
-    productId
-  );
-  if (!product) {
-    return { error: "Product not found on Shopify." };
+  const cached = await getCachedShopifyProduct(storeId, productId);
+  if (!cached) {
+    return { error: "Product not found. Sync Shopify products first." };
   }
-
-  let currency = "USD";
-  try {
-    currency =
-      (await getShopCurrency(store.shop_domain, store.shopify_access_token)) ||
-      "USD";
-  } catch {
-    currency = "USD";
-  }
+  const product = cached.product;
+  const currency = cached.currency;
 
   const waCreds = getStoreWhatsAppCredentials(store);
   let existingLink: AdWhatsAppLink | null = null;
@@ -185,20 +162,9 @@ export async function searchAdProducts(
     return { error: "Connect Shopify in Integrations first." };
   }
 
-  let currency = "USD";
-  try {
-    currency =
-      (await getShopCurrency(store.shop_domain, store.shopify_access_token)) ||
-      "USD";
-  } catch {
-    currency = "USD";
-  }
-
-  const products = await searchProducts(
-    store.shop_domain,
-    store.shopify_access_token,
-    query
-  );
+  const products = await searchCachedShopifyProducts(storeId, query, 10);
+  const currency =
+    products[0]?.currency ?? (await getEffectiveStoreCurrency(storeId));
 
   return {
     currency,
@@ -206,12 +172,12 @@ export async function searchAdProducts(
       id: p.id,
       title: p.title,
       description: p.description,
-      imageUrl: null,
+      imageUrl: p.imageUrl,
       variants: p.variants.map((v) => ({
         id: v.id,
         title: v.title,
         price: v.price,
-        in_stock: v.in_stock,
+        in_stock: v.inStock,
       })),
     })),
   };
@@ -242,29 +208,12 @@ export async function createAdWhatsAppLink(
     };
   }
 
-  const res = await shopifyAdminFetch(
-    store.shop_domain,
-    store.shopify_access_token,
-    `/products/${input.productId}.json`
-  );
-  if (!res.ok) {
-    return { error: "Product not found on Shopify." };
+  const cached = await getCachedShopifyProduct(storeId, input.productId);
+  if (!cached) {
+    return { error: "Product not found. Sync Shopify products first." };
   }
 
-  const data = (await res.json()) as {
-    product: {
-      id: number;
-      title: string;
-      body_html: string | null;
-      variants: Array<{
-        id: number;
-        title: string;
-        price: string;
-      }>;
-    };
-  };
-
-  const product = data.product;
+  const product = cached.product;
   const variant =
     product.variants.find((v) => v.id === input.variantId) ??
     product.variants[0];
@@ -273,19 +222,8 @@ export async function createAdWhatsAppLink(
     return { error: "Product has no variants." };
   }
 
-  let currency: string | null = null;
-  try {
-    currency = await getShopCurrency(
-      store.shop_domain,
-      store.shopify_access_token
-    );
-  } catch {
-    currency = null;
-  }
-
-  const description = product.body_html
-    ? product.body_html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 500)
-    : null;
+  const currency = cached.currency;
+  const description = product.description?.slice(0, 500) ?? null;
 
   const supabase = createAdminClient();
   let slug = generateAdSlug();

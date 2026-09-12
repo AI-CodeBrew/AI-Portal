@@ -1,10 +1,10 @@
+import { getOrderStatus } from "@/lib/shopify";
 import {
-  searchProducts,
-  checkStock,
-  getOrderStatus,
-  getShopCurrency,
-  getShopifyCatalogProduct,
-} from "@/lib/shopify";
+  findCachedShopifyVariant,
+  getCachedShopifyProduct,
+  searchCachedShopifyProducts,
+} from "@/lib/shopify/cached-catalog";
+import { getEffectiveStoreCurrency } from "@/lib/currency";
 import { formatMoney } from "@/lib/currency";
 import { validateOrderPhone } from "@/lib/phone";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -537,11 +537,11 @@ export async function executeSalesTool(
   const shopifyToken = store.shopify_access_token ?? "";
 
   let currency = ctx.storeCurrency ?? null;
-  if (!currency && shopifyConnected) {
+  if (!currency) {
     try {
-      currency = await getShopCurrency(shopDomain, shopifyToken);
+      currency = await getEffectiveStoreCurrency(store.id);
     } catch (err) {
-      console.error("[sales-agent] Failed to fetch shop currency:", err);
+      console.error("[sales-agent] Failed to load store currency:", err);
     }
   }
 
@@ -718,21 +718,26 @@ export async function executeSalesTool(
 
         let shopifyMapped: Array<Record<string, unknown>> = [];
         if (shopifyConnected) {
-          const products = await searchProducts(
-            shopDomain,
-            shopifyToken,
-            query
+          const products = await searchCachedShopifyProducts(
+            store.id,
+            query,
+            10
           );
           shopifyMapped = products.map((p) => ({
-            ...p,
+            id: p.id,
+            title: p.title,
+            description: p.description,
             imageUrl: p.imageUrl ?? null,
             source: "shopify",
-            currency,
+            currency: p.currency ?? currency,
             variants: p.variants.map((v) => ({
               ...v,
-              in_stock: true,
-              currency,
-              price_formatted: formatVariantPrice(v.price, currency ?? "USD"),
+              in_stock: v.inStock,
+              currency: p.currency ?? currency,
+              price_formatted: formatVariantPrice(
+                v.price,
+                p.currency ?? currency ?? "USD"
+              ),
             })),
           }));
 
@@ -755,12 +760,8 @@ export async function executeSalesTool(
             let imageUrl: string | null = null;
 
             if (variantId) {
-              try {
-                const stock = await checkStock(
-                  shopDomain,
-                  shopifyToken,
-                  variantId
-                );
+              const stock = await findCachedShopifyVariant(store.id, variantId);
+              if (stock) {
                 price = stock.price;
                 priceFormatted = formatVariantPrice(
                   stock.price,
@@ -769,29 +770,14 @@ export async function executeSalesTool(
                 if (stock.title && stock.title !== "Default Title") {
                   variantTitle = stock.title;
                 }
-              } catch (err) {
-                console.error(
-                  `[search_products] SKU registry price fetch failed for ${variantId}:`,
-                  err
-                );
+                imageUrl = stock.imageUrl;
               }
             }
 
             const numericPid = Number(pid);
-            if (Number.isFinite(numericPid) && numericPid > 0) {
-              try {
-                const full = await getShopifyCatalogProduct(
-                  shopDomain,
-                  shopifyToken,
-                  numericPid
-                );
-                imageUrl = full?.images?.[0]?.url ?? null;
-              } catch (err) {
-                console.error(
-                  `[search_products] SKU registry image fetch failed for ${pid}:`,
-                  err
-                );
-              }
+            if (!imageUrl && Number.isFinite(numericPid) && numericPid > 0) {
+              const full = await getCachedShopifyProduct(store.id, numericPid);
+              imageUrl = full?.product.images?.[0]?.url ?? null;
             }
 
             shopifyMapped.unshift({
@@ -843,14 +829,26 @@ export async function executeSalesTool(
       }
 
       case "check_stock": {
-        const stock = await checkStock(
-          shopDomain,
-          shopifyToken,
-          input.variant_id as string
+        const stock = await findCachedShopifyVariant(
+          store.id,
+          String(input.variant_id ?? "")
         );
+        if (!stock) {
+          return {
+            result: {
+              found: false,
+              error: "Variant not found in synced Shopify catalog.",
+            },
+          };
+        }
         return {
           result: {
-            ...stock,
+            variant_id: Number(input.variant_id),
+            title: stock.title,
+            price: stock.price,
+            inventory_quantity: stock.inventoryQuantity,
+            product_id: stock.productId,
+            in_stock: stock.inStock,
             currency,
             price_formatted: formatVariantPrice(
               stock.price,
